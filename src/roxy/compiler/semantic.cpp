@@ -2617,9 +2617,16 @@ bool SemanticAnalyzer::type_implements_printable(Type* type) {
     if (type->is_type_param() && m_generic_calls.has_active_bounds()) {
         return m_generic_calls.bound_includes_trait(type, m_type_env.printable_type());
     }
-    // Container arm (List<T> printable iff T is; Map iff K and V are) lands
-    // with the synthesized container to_string — until the IR-side conversion
-    // exists, accepting a container here would silently drop the part.
+    // Containers recurse here (in addition to implements_trait's concrete
+    // container arm) so element/key/value TypeParams consult bounds too —
+    // f"{xs}" for xs: List<T> inside a <T: Printable> template body.
+    if (type->is_list()) {
+        return type_implements_printable(type->list_info.element_type);
+    }
+    if (type->is_map()) {
+        return type_implements_printable(type->map_info.key_type)
+            && type_implements_printable(type->map_info.value_type);
+    }
     return m_types.implements_trait(type, m_type_env.printable_type());
 }
 
@@ -3743,7 +3750,7 @@ void SemanticAnalyzer::populate_coro_methods(Type* type) {
 }
 
 void SemanticAnalyzer::populate_container_methods(
-        const char* registry_name, Span<Type*> type_args,
+        const char* registry_name, Span<Type*> type_args, Type* container_type,
         Span<MethodInfo>& out_methods,
         StringView& out_alloc_name, StringView& out_copy_name) {
     if (out_methods.size() > 0) return;
@@ -3754,12 +3761,26 @@ void SemanticAnalyzer::populate_container_methods(
     out_methods = registry->instantiate_generic_methods(registry_name, type_args, m_allocator, m_types);
     out_alloc_name = registry->get_generic_alloc_name(registry_name);
     out_copy_name = registry->get_generic_copy_name(registry_name);
+
+    // Append the synthesized per-instantiation to_string ("List$i32$$to_string").
+    // Registered unconditionally (interned-type population must be
+    // order-independent of trait visibility); the Printable gate is at the call
+    // site. The IR builder intercepts container to_string calls BY NAME and
+    // mints the (module-local-wrapped) synthesized function itself — this
+    // native_name records the unwrapped canonical spelling.
+    Vector<MethodInfo> methods;
+    for (const MethodInfo& method : out_methods) methods.push_back(method);
+    StringView to_string_name = rx::mangle_method(
+        m_allocator, mangle_type_name(m_allocator, container_type), "to_string"_sv);
+    methods.push_back(make_method("to_string"_sv, Span<Type*>(), m_types.string_type(),
+                                  to_string_name));
+    out_methods = m_allocator.alloc_span(methods);
 }
 
 void SemanticAnalyzer::populate_list_methods(Type* type) {
     assert(type && type->is_list());
     Type* type_args[] = { type->list_info.element_type };
-    populate_container_methods("List", Span<Type*>(type_args, 1),
+    populate_container_methods("List", Span<Type*>(type_args, 1), type,
                                type->list_info.methods,
                                type->list_info.alloc_native_name,
                                type->list_info.copy_native_name);
@@ -3830,7 +3851,7 @@ bool SemanticAnalyzer::is_hashable_key_type(Type* type) {
 void SemanticAnalyzer::populate_map_methods(Type* type) {
     assert(type && type->is_map());
     Type* type_args[] = { type->map_info.key_type, type->map_info.value_type };
-    populate_container_methods("Map", Span<Type*>(type_args, 2),
+    populate_container_methods("Map", Span<Type*>(type_args, 2), type,
                                type->map_info.methods,
                                type->map_info.alloc_native_name,
                                type->map_info.copy_native_name);
@@ -4210,13 +4231,31 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
 
             if (base_type && base_type->is_list()) {
                 const MethodInfo* mi = lookup_list_method(base_type->list_info, get_expr.name);
-                if (mi) return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
+                if (mi) {
+                    // to_string is registered unconditionally but only usable
+                    // when the element type is itself Printable.
+                    if (mi->name == "to_string"_sv && !type_implements_printable(base_type)) {
+                        error_fmt(expr->loc,
+                                 "type '{}' does not implement Printable (element type has no to_string)",
+                                 m_checker.type_string(base_type).data());
+                        return m_types.error_type();
+                    }
+                    return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
+                }
                 error_fmt(expr->loc, "List has no method '{}'", get_expr.name);
                 return m_types.error_type();
             }
             if (base_type && base_type->is_map()) {
                 const MethodInfo* mi = lookup_map_method(base_type->map_info, get_expr.name);
-                if (mi) return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
+                if (mi) {
+                    if (mi->name == "to_string"_sv && !type_implements_printable(base_type)) {
+                        error_fmt(expr->loc,
+                                 "type '{}' does not implement Printable (key or value type has no to_string)",
+                                 m_checker.type_string(base_type).data());
+                        return m_types.error_type();
+                    }
+                    return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
+                }
                 error_fmt(expr->loc, "Map has no method '{}'", get_expr.name);
                 return m_types.error_type();
             }

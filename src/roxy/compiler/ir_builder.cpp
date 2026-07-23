@@ -11,6 +11,7 @@
 
 #include "ir_builder_internal.hpp"
 #include "roxy/compiler/mangling.hpp"
+#include "roxy/vm/binding/registry.hpp"
 
 namespace rx {
 
@@ -91,6 +92,12 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
     if (IRFunction* shutdown_fn = build_module_shutdown()) {
         m_module->functions.push_back(shutdown_fn);
     }
+    if (m_has_error) return nullptr;
+
+    // Drain synthesized container to_string requests LAST — every phase above
+    // can seed the worklist (call sites only need the callee's name; both
+    // backends resolve call-by-name order-independently).
+    build_container_to_strings();
     if (m_has_error) return nullptr;
 
     collect_backend_types(program);
@@ -959,6 +966,268 @@ IRFunction* IRBuilder::build_cleanup_wrapper(Type* noncopyable_type, u32 wrapper
         m_current_block->terminator.return_value = ValueId::invalid();
     }
 
+    return finish_ir_function();
+}
+
+StringView IRBuilder::request_container_to_string(Type* container_type) {
+    container_type = container_type->base_type();
+    auto it = m_container_tostring_names.find(container_type);
+    if (it != m_container_tostring_names.end()) return it->second;
+
+    // "List$i32$$to_string", module-local-wrapped like any non-pub function
+    // (each module synthesizes its own private copy — no merge collisions).
+    StringView name = mangle_module_local(
+        mangle_method(rx::mangle_type_name(m_allocator, container_type), "to_string"_sv));
+    m_container_tostring_names[container_type] = name;
+    m_container_tostring_pending.push_back(container_type);
+    return name;
+}
+
+void IRBuilder::build_container_to_strings() {
+    // Index loop, not iterators: building one body can request nested
+    // instantiations (List<List<i32>> requests List<i32>), growing the
+    // pending vector mid-drain.
+    for (u32 i = 0; i < m_container_tostring_pending.size(); i++) {
+        Type* container_type = m_container_tostring_pending[i];
+        StringView name = m_container_tostring_names[container_type];
+        IRFunction* func = build_container_to_string(container_type, name);
+        if (func) m_module->functions.push_back(func);
+    }
+}
+
+// Synthesize `<Container>$$to_string(self) -> string`, e.g. "[1, 2, 3]" /
+// "{potion: 3, elixir: 1}". Follows the build_cleanup_wrapper shape (NOT
+// begin_function_body — that would ownership-track the borrowed container
+// param and delete the caller's container at scope exit). String temp
+// discipline is explicit: every fold releases the previous accumulator and
+// each owned element piece; string literals are immortal so releasing the
+// initial "["/"{" accumulator is a no-op and "[]"/"{}" fall out.
+IRFunction* IRBuilder::build_container_to_string(Type* container_type, StringView name) {
+    Type* string_type = m_types.string_type();
+    Type* i32_type = m_types.i32_type();
+    Type* bool_type = m_types.bool_type();
+
+    StringView concat_name = "str_concat"_sv;
+    i32 concat_idx = m_registry.get_index(concat_name);
+    if (concat_idx < 0) {
+        report_error("Internal error: str_concat native missing");
+        return nullptr;
+    }
+    auto concat = [&](ValueId a, ValueId b) -> ValueId {
+        return emit_call_native(concat_name, alloc_span({a, b}), string_type,
+                                static_cast<u32>(concat_idx));
+    };
+    // Convert one element/key/value to a string part and fold it into the
+    // accumulator, releasing the previous accumulator and any owned piece.
+    auto fold_part = [&](ValueId acc, ValueId val, Type* type) -> ValueId {
+        bool owned = false;
+        ValueId piece = emit_to_string_value(val, type, &owned);
+        if (!piece.is_valid()) {
+            report_error("Internal error: unprintable container element in to_string");
+            return acc;
+        }
+        ValueId next_acc = concat(acc, piece);
+        emit_str_release(acc);
+        if (owned) emit_str_release(piece);
+        return next_acc;
+    };
+
+    begin_ir_function(name, /*is_pub=*/false, 0);
+    m_current_func->return_type = string_type;
+    // Clears m_param_is_ptr / m_ref_params / m_call_borrow_cleanups so the
+    // low-level emitters (and finish_block_return's ref-param decrements)
+    // see clean state from the previously built function.
+    setup_parameters(Span<Param>(), nullptr);
+
+    BlockParam self_param;
+    self_param.value = m_current_func->new_value();
+    self_param.type = container_type;
+    self_param.name = "self"_sv;
+    m_current_func->params.push_back(self_param);
+    m_current_func->param_is_ptr.push_back(false);
+
+    // NOTE: the param is NOT pushed into the entry block's params — function
+    // params arrive through the function ABI (C function parameters / the
+    // VM call window), and the C emitter only declares blockN_argM variables
+    // for blocks that are jumped to with args.
+    m_current_block = create_block("entry"_sv);
+    ValueId self_val = self_param.value;
+
+    // Pin for the duration: an element's user to_string reaching back into
+    // this container (via a global) and mutating/freeing it traps instead of
+    // dangling the interior pointers we hold during iteration.
+    emit_container_pin(self_val);
+
+    ValueId zero = emit_const_int(0, i32_type);
+    ValueId one = emit_const_int(1, i32_type);
+
+    if (container_type->is_list()) {
+        Type* elem_type = container_type->list_info.element_type;
+        StringView len_name = "List$$len"_sv;
+        i32 len_idx = m_registry.get_index(len_name);
+        assert(len_idx >= 0);
+
+        ValueId len = emit_call_native(len_name, alloc_span({self_val}), i32_type,
+                                       static_cast<u32>(len_idx));
+        ValueId lbracket = emit_const_string("["_sv);
+
+        IRBlock* header = create_block("ts_header"_sv);
+        IRBlock* sepcheck = create_block("ts_sepcheck"_sv);
+        IRBlock* sep = create_block("ts_sep"_sv);
+        IRBlock* elem_block = create_block("ts_elem"_sv);
+        IRBlock* exit_block = create_block("ts_exit"_sv);
+
+        // Loop-carried: i (element index) and acc (accumulated string).
+        ValueId i_param = m_current_func->new_value();
+        ValueId acc_param = m_current_func->new_value();
+        header->params.push_back({i_param, i32_type, "__ts_i"_sv});
+        header->params.push_back({acc_param, string_type, "__ts_acc"_sv});
+
+        Vector<BlockArgPair> entry_args;
+        entry_args.push_back({zero});
+        entry_args.push_back({lbracket});
+        finish_block_goto(header->id, alloc_span(entry_args));
+
+        set_current_block(header);
+        ValueId cond = emit_binary(IROp::LtI, i_param, len, bool_type);
+        finish_block_branch(cond, sepcheck->id, exit_block->id);
+
+        // elem_block's param: the accumulator with separator applied (or not,
+        // on the first iteration).
+        ValueId acc1_param = m_current_func->new_value();
+        elem_block->params.push_back({acc1_param, string_type, "__ts_acc1"_sv});
+
+        set_current_block(sepcheck);
+        ValueId is_first = emit_binary(IROp::EqI, i_param, zero, bool_type);
+        Vector<BlockArgPair> first_args;
+        first_args.push_back({acc_param});
+        finish_block_branch(is_first, elem_block->id, sep->id,
+                            alloc_span(first_args), Span<BlockArgPair>());
+
+        set_current_block(sep);
+        ValueId comma = emit_const_string(", "_sv);
+        ValueId acc_sep = concat(acc_param, comma);
+        emit_str_release(acc_param);
+        Vector<BlockArgPair> sep_args;
+        sep_args.push_back({acc_sep});
+        finish_block_goto(elem_block->id, alloc_span(sep_args));
+
+        set_current_block(elem_block);
+        ValueId elem = emit_index_get(self_val, i_param, ContainerKind::List, elem_type);
+        ValueId acc_elem = fold_part(acc1_param, elem, elem_type);
+        ValueId i_next = emit_binary(IROp::AddI, i_param, one, i32_type);
+        Vector<BlockArgPair> back_args;
+        back_args.push_back({i_next});
+        back_args.push_back({acc_elem});
+        finish_block_goto(header->id, alloc_span(back_args));
+
+        set_current_block(exit_block);
+        ValueId rbracket = emit_const_string("]"_sv);
+        ValueId result = concat(acc_param, rbracket);
+        emit_str_release(acc_param);
+        emit_container_unpin(self_val);
+        finish_block_return(result);
+    } else if (container_type->is_map()) {
+        Type* key_type = container_type->map_info.key_type;
+        Type* value_type = container_type->map_info.value_type;
+
+        StringView cap_name = "__map_iter_capacity"_sv;
+        StringView next_name = "__map_iter_next_occupied"_sv;
+        i32 cap_idx = m_registry.get_index(cap_name);
+        i32 next_idx = m_registry.get_index(next_name);
+        assert(cap_idx >= 0 && next_idx >= 0);
+
+        // Struct keys/values live inline in the bucket arrays at any slot
+        // count — fetch an interior pointer (matching to_string's self
+        // convention). Everything else is ≤2 inline slots and comes back
+        // packed by value.
+        auto fetch = [&](bool is_key, ValueId bucket_idx, Type* type) -> ValueId {
+            StringView fetch_name = type->is_struct()
+                ? (is_key ? "__map_iter_key_ptr_at"_sv : "__map_iter_value_ptr_at"_sv)
+                : (is_key ? "__map_iter_key_at"_sv : "__map_iter_value_at"_sv);
+            i32 fetch_idx = m_registry.get_index(fetch_name);
+            assert(fetch_idx >= 0);
+            return emit_call_native(fetch_name, alloc_span({self_val, bucket_idx}), type,
+                                    static_cast<u32>(fetch_idx));
+        };
+
+        ValueId cap = emit_call_native(cap_name, alloc_span({self_val}), i32_type,
+                                       static_cast<u32>(cap_idx));
+        ValueId lbrace = emit_const_string("{"_sv);
+
+        IRBlock* header = create_block("ts_header"_sv);
+        IRBlock* sepcheck = create_block("ts_sepcheck"_sv);
+        IRBlock* sep = create_block("ts_sep"_sv);
+        IRBlock* kv_block = create_block("ts_kv"_sv);
+        IRBlock* exit_block = create_block("ts_exit"_sv);
+
+        // Loop-carried: idx (bucket scan cursor), n (entries emitted), acc.
+        ValueId idx_param = m_current_func->new_value();
+        ValueId n_param = m_current_func->new_value();
+        ValueId acc_param = m_current_func->new_value();
+        header->params.push_back({idx_param, i32_type, "__ts_idx"_sv});
+        header->params.push_back({n_param, i32_type, "__ts_n"_sv});
+        header->params.push_back({acc_param, string_type, "__ts_acc"_sv});
+
+        Vector<BlockArgPair> entry_args;
+        entry_args.push_back({zero});
+        entry_args.push_back({zero});
+        entry_args.push_back({lbrace});
+        finish_block_goto(header->id, alloc_span(entry_args));
+
+        set_current_block(header);
+        ValueId next = emit_call_native(next_name, alloc_span({self_val, idx_param}), i32_type,
+                                        static_cast<u32>(next_idx));
+        ValueId cond = emit_binary(IROp::LtI, next, cap, bool_type);
+        finish_block_branch(cond, sepcheck->id, exit_block->id);
+
+        ValueId acc1_param = m_current_func->new_value();
+        kv_block->params.push_back({acc1_param, string_type, "__ts_acc1"_sv});
+
+        set_current_block(sepcheck);
+        ValueId is_first = emit_binary(IROp::EqI, n_param, zero, bool_type);
+        Vector<BlockArgPair> first_args;
+        first_args.push_back({acc_param});
+        finish_block_branch(is_first, kv_block->id, sep->id,
+                            alloc_span(first_args), Span<BlockArgPair>());
+
+        set_current_block(sep);
+        ValueId comma = emit_const_string(", "_sv);
+        ValueId acc_sep = concat(acc_param, comma);
+        emit_str_release(acc_param);
+        Vector<BlockArgPair> sep_args;
+        sep_args.push_back({acc_sep});
+        finish_block_goto(kv_block->id, alloc_span(sep_args));
+
+        set_current_block(kv_block);
+        ValueId key_val = fetch(/*is_key=*/true, next, key_type);
+        ValueId acc_key = fold_part(acc1_param, key_val, key_type);
+        ValueId colon = emit_const_string(": "_sv);
+        ValueId acc_colon = concat(acc_key, colon);
+        emit_str_release(acc_key);
+        ValueId value_val = fetch(/*is_key=*/false, next, value_type);
+        ValueId acc_value = fold_part(acc_colon, value_val, value_type);
+        ValueId idx_next = emit_binary(IROp::AddI, next, one, i32_type);
+        ValueId n_next = emit_binary(IROp::AddI, n_param, one, i32_type);
+        Vector<BlockArgPair> back_args;
+        back_args.push_back({idx_next});
+        back_args.push_back({n_next});
+        back_args.push_back({acc_value});
+        finish_block_goto(header->id, alloc_span(back_args));
+
+        set_current_block(exit_block);
+        ValueId rbrace = emit_const_string("}"_sv);
+        ValueId result = concat(acc_param, rbrace);
+        emit_str_release(acc_param);
+        emit_container_unpin(self_val);
+        finish_block_return(result);
+    } else {
+        report_error("Internal error: container to_string on non-container type");
+        return nullptr;
+    }
+
+    // Normally done by end_function_body — required before lowering.
+    m_current_func->reorder_blocks_rpo();
     return finish_ir_function();
 }
 

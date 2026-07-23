@@ -582,4 +582,138 @@ TEST_SUITE("E2E Lists") {
         CHECK(result.stdout_output == "inner 10\ninner 20\n");
     }
 
+    // ------------------------------------------------------------------------
+    // List Printable: synthesized per-instantiation to_string
+    // ------------------------------------------------------------------------
+
+    TEST_CASE_TEMPLATE("List to_string: primitives via f-string and method", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var xs: List<i32> = List<i32>();
+            xs.push(1); xs.push(2); xs.push(3);
+            print(f"{xs}");
+            print(xs.to_string());
+            var empty: List<i32> = List<i32>();
+            print(f"{empty}");
+            var ds: List<f64> = List<f64>();
+            ds.push(1.5); ds.push(2.5);
+            print(f"{ds}");
+            var bs: List<bool> = List<bool>();
+            bs.push(true); bs.push(false);
+            print(f"{bs}");
+            print(f"items: {xs}!");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output ==
+              "[1, 2, 3]\n[1, 2, 3]\n[]\n[1.5, 2.5]\n[true, false]\nitems: [1, 2, 3]!\n");
+    }
+
+    TEST_CASE_TEMPLATE("List to_string: string elements (borrowed)", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var names: List<string> = List<string>();
+            names.push("Arwen");
+            names.push("Frodo");
+            print(f"{names}");
+            // Elements are borrowed by the conversion — the list still owns them.
+            print(f"{names[0]}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "[Arwen, Frodo]\nArwen\n");
+    }
+
+    TEST_CASE_TEMPLATE("List to_string: struct and enum elements", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Vec { x: i32; }
+        fun Vec.to_string(): string for Printable { return f"Vec[{self.x}]"; }
+
+        enum Color { Red, Green, Blue }
+
+        fun main(): i32 {
+            var vs: List<Vec> = List<Vec>();
+            vs.push(Vec { x = 7 });
+            vs.push(Vec { x = 9 });
+            print(f"{vs}");
+            var cs: List<Color> = List<Color>();
+            cs.push(Color::Red);
+            cs.push(Color::Blue);
+            print(f"{cs}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "[Vec[7], Vec[9]]\n[0, 2]\n");
+    }
+
+    TEST_CASE_TEMPLATE("List to_string: nested lists", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var nested: List<List<i32>> = List<List<i32>>();
+            var inner1: List<i32> = List<i32>();
+            inner1.push(1); inner1.push(2);
+            var inner2: List<i32> = List<i32>();
+            inner2.push(3);
+            nested.push(inner1);
+            nested.push(inner2);
+            print(f"{nested}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "[[1, 2], [3]]\n");
+    }
+
+    TEST_CASE_TEMPLATE("List to_string: repeated in loop (release balance)", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var xs: List<i32> = List<i32>();
+            xs.push(1); xs.push(2);
+            for (var i: i32 = 0; i < 50; i = i + 1) {
+                var s: string = xs.to_string();
+            }
+            print(f"{xs}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "[1, 2]\n");
+    }
+
+    TEST_CASE_TEMPLATE("List to_string: passed as param and stored in struct", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Bag { items: List<i32>; }
+
+        fun show(items: inout List<i32>): string {
+            return f"{items}";
+        }
+
+        fun main(): i32 {
+            var xs: List<i32> = List<i32>();
+            xs.push(4); xs.push(5);
+            print(show(inout xs));
+            var bag: Bag = Bag { items = xs };
+            print(f"{bag.items}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "[4, 5]\n[4, 5]\n");
+    }
+
 }  // TEST_SUITE("E2E Lists")

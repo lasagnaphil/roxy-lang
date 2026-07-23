@@ -1376,3 +1376,17 @@ uint64_t roxy_map_iter_value_at(void* self, int32_t idx) {
            sizeof(uint32_t) * copy_slots);
     return packed;
 }
+
+void* roxy_map_iter_key_ptr_at(void* self, int32_t idx) {
+    // Interior pointer to the key's inline slots — for struct keys (any slot
+    // count), where the packed _at form can't carry the data. Used by the
+    // synthesized container to_string.
+    auto* hdr = map_hdr(self);
+    return hdr->keys + static_cast<size_t>(idx) * hdr->key_slot_count;
+}
+
+void* roxy_map_iter_value_ptr_at(void* self, int32_t idx) {
+    // Interior pointer to the value's inline slots (struct values).
+    auto* hdr = map_hdr(self);
+    return hdr->values + static_cast<size_t>(idx) * hdr->value_slot_count;
+}

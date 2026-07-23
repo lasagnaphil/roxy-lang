@@ -498,6 +498,8 @@ int32_t roxy_map_iter_capacity(void* self);
 int32_t roxy_map_iter_next_occupied(void* self, int32_t idx);
 uint64_t roxy_map_iter_key_at(void* self, int32_t idx);
 uint64_t roxy_map_iter_value_at(void* self, int32_t idx);
+void* roxy_map_iter_key_ptr_at(void* self, int32_t idx);
+void* roxy_map_iter_value_ptr_at(void* self, int32_t idx);
 
 // ===== Hash Functions =====
 

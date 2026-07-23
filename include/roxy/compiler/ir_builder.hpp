@@ -112,6 +112,17 @@ private:
     ValueId emit_global_addr(u32 slot_offset, Type* type);
     ValueId gen_global_read(u32 global_index, Type* result_type);
 
+    // Synthesized per-instantiation container to_string ("List$i32$$to_string",
+    // module-local-wrapped). request_container_to_string mints + memoizes the
+    // name and queues the container for synthesis; build_container_to_strings
+    // drains the queue AFTER all other function builds (call sites only need
+    // the name — call-by-name resolution is order-independent in both
+    // backends). The drain loop's vector grows as nested container bodies
+    // request inner instantiations (List<List<i32>> triggers List<i32>).
+    StringView request_container_to_string(Type* container_type);
+    void build_container_to_strings();
+    IRFunction* build_container_to_string(Type* container_type, StringView name);
+
     // Block management
     IRBlock* create_block(StringView name = {});
     void set_current_block(IRBlock* block);
@@ -664,6 +675,12 @@ private:
     };
     tsl::robin_map<StringView, FunctionRefInfo> m_function_refs;
     u32 m_funref_id_counter = 0;
+
+    // Synthesized container to_string bookkeeping (see
+    // request_container_to_string). Keyed by the interned container Type*
+    // (containers are interned per element type, so pointer identity works).
+    tsl::robin_map<Type*, StringView> m_container_tostring_names;
+    Vector<Type*> m_container_tostring_pending;
 
     // Consume a temporary noncopyable value (ownership transferred to callee/variable).
     // Finds the temporary OwnedLocalInfo entry by ValueId and marks it moved.

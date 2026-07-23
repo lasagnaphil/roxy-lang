@@ -97,6 +97,8 @@ void TraitSystem::register_builtin_traits() {
             Span<Type*>(nullptr, 0), m_types.string_type(),
             Span<TypeKind>(prim_kinds, 8), /*register_trait_on_primitives=*/true);
         m_type_env.set_printable_type(printable_type);
+        // Enables implements_trait's structural container arm (List<T>/Map<K,V>).
+        m_types.set_printable_trait(printable_type);
     }
 
     if (!m_type_env.hash_type()) {

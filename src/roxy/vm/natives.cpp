@@ -921,6 +921,28 @@ static void native_map_iter_value_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) 
     regs[dst] = packed;
 }
 
+static void native_map_iter_key_ptr_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    // Interior pointer to the key's inline slots — for struct keys (any slot
+    // count), where the packed _at form can't carry the data. Used by the
+    // synthesized container to_string.
+    u64* regs = vm->call_stack_back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    i32 idx = static_cast<i32>(regs[first_arg + 1]);
+    const MapHeader* header = get_map_header(map_ptr);
+    regs[dst] = reinterpret_cast<u64>(
+        header->keys + static_cast<size_t>(idx) * header->key_slot_count);
+}
+
+static void native_map_iter_value_ptr_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    // Interior pointer to the value's inline slots (struct values).
+    u64* regs = vm->call_stack_back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    i32 idx = static_cast<i32>(regs[first_arg + 1]);
+    const MapHeader* header = get_map_header(map_ptr);
+    regs[dst] = reinterpret_cast<u64>(
+        header->values + static_cast<size_t>(idx) * header->value_slot_count);
+}
+
 // Native function: str_char_at(s: string, i: i32) -> i32
 // Returns the ASCII code of the character at the given index.
 static void native_str_char_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
@@ -1150,6 +1172,8 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_native("__map_iter_next_occupied", native_map_iter_next_occupied, "fun __map_iter_next_occupied(map: i64, idx: i32): i32");
     registry.bind_native("__map_iter_key_at",        native_map_iter_key_at,        "fun __map_iter_key_at(map: i64, idx: i32): i64");
     registry.bind_native("__map_iter_value_at",      native_map_iter_value_at,      "fun __map_iter_value_at(map: i64, idx: i32): i64");
+    registry.bind_native("__map_iter_key_ptr_at",    native_map_iter_key_ptr_at,    "fun __map_iter_key_ptr_at(map: i64, idx: i32): i64");
+    registry.bind_native("__map_iter_value_ptr_at",  native_map_iter_value_ptr_at,  "fun __map_iter_value_ptr_at(map: i64, idx: i32): i64");
 }
 
 }

@@ -1750,6 +1750,14 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
 
     // List/Map builtin native method.
     if (struct_type && struct_type->is_container()) {
+        // Synthesized to_string — intercept BY NAME before the generic
+        // native-call path below (its registry lookup would come back -1 for
+        // the synthesized name). The owned string result is tracked by
+        // gen_expr's ExprCall arm like any string-returning call.
+        if (get_expr.name == "to_string"_sv) {
+            StringView fn_name = request_container_to_string(struct_type);
+            return emit_call(fn_name, alloc_span({obj}), expr->resolved_type);
+        }
         // Pushing a `ref` element into a List makes the container hold a counted
         // borrow — increment it. The hold is released when the element leaves
         // (container destroy / overwrite). lifetimes.md "Applying the model".
@@ -3120,6 +3128,13 @@ ValueId IRBuilder::emit_to_string_value(ValueId val, Type* type, bool* out_owned
         // rvalues and would error with "expression is not a valid lvalue".
         StringView mangled = mangle_method(type->struct_info.name, "to_string"_sv);
         return emit_call_resolved(mangled, alloc_span({val}), string_type);
+    }
+    if (type->is_container()) {
+        // Synthesized per-instantiation container to_string ("[1, 2, 3]" /
+        // "{a: 1}"); the function itself is built in the
+        // build_container_to_strings drain phase.
+        StringView fn_name = request_container_to_string(type);
+        return emit_call(fn_name, alloc_span({val}), string_type);
     }
     return ValueId::invalid();
 }

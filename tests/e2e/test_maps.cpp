@@ -705,4 +705,108 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.stdout_output == "delkey 5\n");
     }
 
+    // ------------------------------------------------------------------------
+    // Map Printable: synthesized per-instantiation to_string
+    // ------------------------------------------------------------------------
+
+    TEST_CASE_TEMPLATE("Map to_string: single entry and empty", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var m: Map<string, i32> = Map<string, i32>();
+            m.insert("potion", 3);
+            print(f"{m}");
+            print(m.to_string());
+            var empty: Map<string, i32> = Map<string, i32>();
+            print(f"{empty}");
+            var im: Map<i32, i32> = Map<i32, i32>();
+            im.insert(7, 42);
+            print(f"{im}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "{potion: 3}\n{potion: 3}\n{}\n{7: 42}\n");
+    }
+
+    TEST_CASE_TEMPLATE("Map to_string: two entries (order-agnostic)", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var m: Map<string, i32> = Map<string, i32>();
+            m.insert("a", 1);
+            m.insert("b", 2);
+            print(f"{m}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        // Robin-Hood bucket order is unspecified — assert shape + both entries.
+        bool ordered_ab = result.stdout_output == "{a: 1, b: 2}\n";
+        bool ordered_ba = result.stdout_output == "{b: 2, a: 1}\n";
+        CHECK((ordered_ab || ordered_ba));
+    }
+
+    TEST_CASE_TEMPLATE("Map to_string: struct keys and struct values", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Point { x: i32; y: i32; }
+        fun Point.to_string(): string for Printable { return f"P[{self.x},{self.y}]"; }
+
+        fun main(): i32 {
+            var m: Map<Point, i32> = Map<Point, i32>();
+            m.insert(Point { x = 1, y = 2 }, 10);
+            print(f"{m}");
+            var vm2: Map<i32, Point> = Map<i32, Point>();
+            vm2.insert(5, Point { x = 3, y = 4 });
+            print(f"{vm2}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "{P[1,2]: 10}\n{5: P[3,4]}\n");
+    }
+
+    TEST_CASE_TEMPLATE("Map to_string: enum keys and container values", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        enum Color { Red, Green, Blue }
+
+        fun main(): i32 {
+            var m: Map<Color, i32> = Map<Color, i32>();
+            m.insert(Color::Blue, 9);
+            print(f"{m}");
+            var lm: Map<string, List<i32>> = Map<string, List<i32>>();
+            var xs: List<i32> = List<i32>();
+            xs.push(1); xs.push(2);
+            lm.insert("nums", xs);
+            print(f"{lm}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "{2: 9}\n{nums: [1, 2]}\n");
+    }
+
+    TEST_CASE_TEMPLATE("Map to_string: float keys keep their bits", Backend, RX_E2E_BACKENDS) {
+        // Regression fence for the C backend's packed-u64 iter natives: a
+        // float key's bits must be reinterpreted, not value-converted.
+        const char* source = R"(
+        fun main(): i32 {
+            var m: Map<f64, i32> = Map<f64, i32>();
+            m.insert(1.5, 7);
+            print(f"{m}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "{1.5: 7}\n");
+    }
+
 }  // TEST_SUITE("E2E Maps")

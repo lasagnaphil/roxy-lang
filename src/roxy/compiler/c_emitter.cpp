@@ -309,7 +309,12 @@ void CEmitter::collect_value_types(const IRFunction* func) {
                         memcmp(s.data() + s.size() - sl, suffix, sl) == 0;
                 };
                 if (ends_with(fn, "$$get") || ends_with(fn, "$$index") ||
-                    ends_with(fn, "$$pop")) {
+                    ends_with(fn, "$$pop") ||
+                    fn == "__map_iter_key_ptr_at"_sv ||
+                    fn == "__map_iter_value_ptr_at"_sv) {
+                    // The iter _ptr_at natives return an interior pointer to a
+                    // struct key/value's inline slots (synthesized container
+                    // to_string).
                     m_pointer_values.insert(inst->result.id);
                 }
             }
@@ -3421,6 +3426,8 @@ static const char* lookup_static_native_mapping(StringView name) {
         {"__map_iter_next_occupied", "roxy_map_iter_next_occupied"},
         {"__map_iter_key_at", "roxy_map_iter_key_at"},
         {"__map_iter_value_at", "roxy_map_iter_value_at"},
+        {"__map_iter_key_ptr_at", "roxy_map_iter_key_ptr_at"},
+        {"__map_iter_value_ptr_at", "roxy_map_iter_value_ptr_at"},
     };
 
     // Bare method name -> runtime function, shared by the unparameterized name
@@ -3567,6 +3574,8 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
     bool is_map_remove = name_eq(c_func_name, "roxy_map_remove");
     bool is_map_iter_key_at = name_eq(c_func_name, "roxy_map_iter_key_at");
     bool is_map_iter_value_at = name_eq(c_func_name, "roxy_map_iter_value_at");
+    bool is_map_iter_ptr_at = name_eq(c_func_name, "roxy_map_iter_key_ptr_at") ||
+                              name_eq(c_func_name, "roxy_map_iter_value_ptr_at");
     bool is_map_alloc = name_eq(c_func_name, "roxy_map_alloc");
 
     // Pointer-passing natives: which arg slots receive `const void*` to
@@ -3596,7 +3605,8 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
     // For struct return type → cast to (T*); for primitive → deref via *(T*).
     // map_iter_key_at / map_iter_value_at return uint64_t directly (need a
     // C-style cast to inst->type so e.g. an int32_t result narrows correctly).
-    bool returns_value_ptr = is_list_pop || is_list_get || is_map_get || is_map_index;
+    bool returns_value_ptr = is_list_pop || is_list_get || is_map_get || is_map_index ||
+                             is_map_iter_ptr_at;
     bool returns_value_u64 = is_map_iter_key_at || is_map_iter_value_at;
     bool result_is_struct = inst->type && inst->type->is_struct();
 
@@ -3628,7 +3638,14 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
     }
 
     bool has_result = inst->result.is_valid() && inst->type && inst->type->kind != TypeKind::Void;
-    if (has_result) {
+    // A packed-u64 iter native whose result is a float carries the float's
+    // BITS in the u64 — `(float)pack` would value-convert. Bounce through a
+    // memcpy instead (matches the VM, whose register holds the raw bits).
+    bool u64_bits_to_float = has_result && returns_value_u64 && inst->type &&
+        (inst->type->kind == TypeKind::F32 || inst->type->kind == TypeKind::F64);
+    if (u64_bits_to_float) {
+        out.append("{ uint64_t _pk = ");
+    } else if (has_result) {
         emit_value(inst->result, out);
         out.append(" = ");
         if (returns_value_ptr) {
@@ -3707,6 +3724,13 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
     }
 
     out.append(");");
+    if (u64_bits_to_float) {
+        out.append(" memcpy(&");
+        emit_value(inst->result, out);
+        out.append(", &_pk, sizeof(");
+        emit_value(inst->result, out);
+        out.append(")); }");
+    }
     if (needs_brace) out.append(" }");
     out.append("\n");
 }

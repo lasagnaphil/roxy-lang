@@ -1281,6 +1281,64 @@ TEST_SUITE("Semantic") {
         CHECK(ok);
     }
 
+    TEST_CASE("Containers: Printable iff element/key/value types are") {
+        SemanticTestHelper t;
+        bool ok = t.run(R"(
+            struct Vec { x: i32; }
+            fun Vec.to_string(): string for Printable { return f"v{self.x}"; }
+            fun main() {
+                var xs: List<i32> = List<i32>();
+                var s1: string = f"{xs}";
+                var s2: string = xs.to_string();
+                var vs: List<Vec> = List<Vec>();
+                var s3: string = f"{vs}";
+                var m: Map<string, List<i32>> = Map<string, List<i32>>();
+                var s4: string = f"{m}";
+            }
+        )");
+        CHECK(ok);
+    }
+
+    TEST_CASE("Containers: non-Printable element rejected") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            struct NoPrint { v: i32; }
+            fun main() {
+                var xs: List<NoPrint> = List<NoPrint>();
+                var s: string = f"{xs}";
+            }
+        )"));
+        CHECK(t.has_error_containing("does not implement Printable"));
+
+        SemanticTestHelper t2;
+        CHECK(!t2.run(R"(
+            struct NoPrint { v: i32; }
+            fun main() {
+                var xs: List<NoPrint> = List<NoPrint>();
+                var s: string = xs.to_string();
+            }
+        )"));
+        CHECK(t2.has_error_containing("element type has no to_string"));
+    }
+
+    TEST_CASE("Phase B: f-string on List of Printable-bounded param") {
+        SemanticTestHelper t;
+        bool ok = t.run(R"(
+            fun show_all<T: Printable>(xs: inout List<T>): string {
+                return f"{xs}";
+            }
+        )");
+        CHECK(ok);
+
+        SemanticTestHelper t2;
+        CHECK(!t2.run(R"(
+            fun show_all<T: Hash>(xs: inout List<T>): string {
+                return f"{xs}";
+            }
+        )"));
+        CHECK(t2.has_error_containing("does not implement Printable"));
+    }
+
     TEST_CASE("Phase A: builtin Ord/Eq membership on primitives") {
         SemanticTestHelper t;
         bool ok = t.run(R"(

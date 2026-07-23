@@ -619,6 +619,22 @@ bool TypeCache::implements_trait(Type* type, Type* trait) const {
         // Enums can implement traits through their underlying type (i32)
         return primitive_implements_trait(TypeKind::I32, trait);
     }
+    // Containers implement Printable structurally: List<T> iff T does, Map<K,V>
+    // iff both K and V do (their to_string is a compiler-synthesized
+    // per-instantiation function). Guarded by the trait pointer so containers
+    // never spuriously satisfy Hash/Eq/user traits — Map's struct-key dispatch
+    // and generic bound checks are unaffected for other traits.
+    if (trait && trait == m_printable_trait) {
+        if (type->is_list()) {
+            return type->list_info.element_type
+                && implements_trait(type->list_info.element_type, trait);
+        }
+        if (type->is_map()) {
+            return type->map_info.key_type && type->map_info.value_type
+                && implements_trait(type->map_info.key_type, trait)
+                && implements_trait(type->map_info.value_type, trait);
+        }
+    }
     return false;
 }
 

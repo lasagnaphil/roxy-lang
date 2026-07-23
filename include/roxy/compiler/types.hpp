@@ -555,6 +555,11 @@ public:
     bool implements_trait(Type* type, Type* trait) const;
     bool implements_trait(Type* type, Type* trait, Span<Type*> type_args) const;
 
+    // The builtin Printable trait, set by TraitSystem::register_builtin_traits.
+    // implements_trait uses it to answer structurally for containers (List<T>
+    // printable iff T is; Map<K,V> iff K and V are).
+    void set_printable_trait(Type* trait) { m_printable_trait = trait; }
+
     // Lookup primitive type by name
     Type* primitive_by_name(StringView name);
 
@@ -591,6 +596,10 @@ private:
     // Primitive method and trait tables (keyed by TypeKind)
     tsl::robin_map<u8, Vector<MethodInfo>> m_primitive_methods;
     tsl::robin_map<u8, Vector<Type*>> m_primitive_traits;
+
+    // Builtin Printable trait (see set_printable_trait) — enables the
+    // structural container arm of implements_trait.
+    Type* m_printable_trait = nullptr;
 
     // Dense primitive operator-dispatch tables (§3.5): [TypeKind][op] -> method
     // (nullptr = unregistered). PRIM_OP_KIND_COUNT covers every primitive kind
