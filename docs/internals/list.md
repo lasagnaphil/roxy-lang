@@ -33,6 +33,29 @@ var lst: List<i32> = List<i32>(10);
 | `cap()` | `() -> i32` | Return allocated capacity |
 | `push(val)` | `(T) -> void` | Append element (grows if needed) |
 | `pop()` | `() -> T` | Remove and return last element |
+| `to_string()` | `() -> string` | `"[1, 2, 3]"` — requires `T` Printable (see below) |
+
+## Printable: the synthesized `to_string`
+
+`List<T>` implements `Printable` **structurally**: it is printable iff `T` is
+(recursively — `List<List<i32>>` works). `f"{items}"`, `items.to_string()`,
+and `print(items)` all format as `[e1, e2, ...]` with elements rendered
+exactly as f-string interpolation renders them (strings unquoted; enums by
+discriminant; structs via their `for Printable` impl; `[]` when empty).
+
+The conversion is a **compiler-synthesized per-instantiation IR function**
+(`List$i32$$to_string`, module-local), not a runtime native: the IR builder's
+`request_container_to_string` memoizes a name per interned container type and
+a `build_container_to_strings` drain phase emits the bodies after all other
+function builds (nested requests grow the worklist). The body pins the
+container (`ContainerPin` — a user `to_string` reached through an element that
+mutates the list traps instead of dangling), loops `0..len` via `List$$len` +
+`IndexGet`, converts each element through the shared `emit_to_string_value`
+dispatch, and folds with `str_concat`, releasing each previous accumulator and
+owned piece (string literals are immortal, so `[]` falls out of releasing the
+initial `"["`). Because the body is plain IR, **both backends get it for
+free**. Non-printable element types (`List<ref T>`, `uniq`, functions, narrow
+ints) are rejected at the call site.
 
 ## Indexing
 

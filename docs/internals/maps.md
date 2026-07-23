@@ -61,6 +61,7 @@ m.remove(key)           // -> bool: was key present?
 m.clear()               // -> void: remove all entries
 m.keys()                // -> List<K>: all keys
 m.values()              // -> List<V>: all values
+m.to_string()           // -> string: "{k1: v1, k2: v2}" — requires K and V Printable
 
 // Index operators
 var v: V = m[key];      // read (runtime error if missing)
@@ -68,6 +69,21 @@ m[key] = val;           // write (insert or update)
 ```
 
 `index` is typed `fun Map<K, V>.index(key: K): borrowed V`: the `borrowed` modifier yields a borrow of the value rather than transferring it. For a noncopyable `V` (e.g. `Map<i32, uniq Point>`) the result is `ref Point`, so `var x: uniq Point = m[k]` is a `ref → uniq` type error; for copyable `V` it is just `V` (a copy). See [lifetimes.md §17](lifetimes.md#the-borrowed-type-modifier).
+
+### Printable: the synthesized `to_string`
+
+`Map<K, V>` implements `Printable` structurally (iff both `K` and `V` do).
+`f"{m}"`, `m.to_string()`, and `print(m)` format as `{k1: v1, k2: v2}` (`{}`
+when empty) in **Robin-Hood bucket order — unspecified** by design. The
+conversion is a compiler-synthesized per-instantiation IR function
+(`Map$string$i32$$to_string`; see the twin section in `list.md` for the
+synthesis machinery) iterating occupied buckets via the `__map_iter_capacity`
+/ `__map_iter_next_occupied` natives. Non-struct keys/values come back packed
+through `__map_iter_key_at`/`__map_iter_value_at` (on the C backend, f32/f64
+results are bit-reinterpreted via memcpy, not value-cast); struct keys/values
+use the `__map_iter_key_ptr_at`/`__map_iter_value_ptr_at` natives, which
+return interior pointers into the bucket arrays (matching `to_string`'s self
+convention at any slot count).
 
 ### C++ Interop
 

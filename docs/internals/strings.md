@@ -77,7 +77,15 @@ fun Point.to_string(): string for Printable {
 
 var p: Point = Point { x = 1, y = 2 };
 print(f"point = {p}");  // "point = (1, 2)"
+print(p);               // same — print's Printable fallback (overloading.md)
 ```
+
+Per-type conversion is centralized in the IR builder's `emit_to_string_value`
+(String pass-through, primitives/enums via their registered `$$to_string`
+natives, structs via `Struct$$to_string`, containers via the synthesized
+per-instantiation `to_string` — see `list.md`/`maps.md`). `print` itself is an
+overload set with direct per-primitive natives whose formats match the
+`to_string` natives, so `print(x)` and `print(f"{x}")` always agree.
 
 ## String Operations
 

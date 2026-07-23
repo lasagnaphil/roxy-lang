@@ -161,6 +161,19 @@ fun bad<T: Greetable>(v: T): i32 { return v.unknown(); }       // ERROR: no 'unk
 
 `analyze_generic_template_body()` sets up the bounds context; method calls on `TypeParam` dispatch to `lookup_type_param_method()` (searches the bounds), and operator resolution consults the bounds similarly. Trait method signatures substitute `Self` → the type parameter and the trait's type params → the bound's type args. **Unbounded** templates are still only checked at instantiation time. When both phases flag the same issue, the definition-site error appears first and is more useful.
 
+F-string interpolation is bound-aware too: `f"{v}"` on a bounded `T` is
+accepted when the bound set includes `Printable` directly or through a trait
+parent chain (`bound_includes_trait()`), including through containers —
+`f"{xs}"` for `xs: List<T>` with `<T: Printable>` passes
+(`type_implements_printable` recurses container element/key/value types and
+consults bounds at `TypeParam` leaves). Phase B stays accept-only: every
+concrete instantiation re-checks with the real types.
+
+Because primitives formally implement the builtin `Printable`/`Hash`/`Eq`/`Ord`
+traits (see `traits.md`), bounded generics instantiate at primitives and their
+bodies work there — `max2<T: Ord>` with `a < b` or `a.lt(b)` runs at `i32`,
+`u32` (unsigned compares), `f64`, enums, and `for Ord` structs alike.
+
 Phase B is check-only, but the analysis walkers rewrite the tree they walk (the single-shot analysis rule — see the annotation contract in `ast.hpp`), and the template's pristine AST is the clone source for every later instantiation. So the walk operates on throwaways, and its artifacts are quarantined:
 
 - The body (and each param/return TypeExpr) is an **identity-substitution clone** — the template itself is never touched. Walking the template in place used to corrupt it for any instantiation triggered after the walk (lambda captures rewritten to `__env` reads, generic TypeExprs mangled with `type_args` cleared).

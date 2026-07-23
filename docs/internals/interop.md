@@ -58,6 +58,12 @@ registry.bind_native(native_str_concat, "fun str_concat(a: string, b: string): s
 // Name override — e.g. $$-mangled trait method names
 registry.bind_native("i32$$hash", native_i32_hash, "fun hash(val: i32): i64");
 
+// One member of an OVERLOAD SET (see overloading.md): keyed by the
+// "$ol$print$i32" mangle, grouped by the parsed name into one overload
+// chain at symbol registration; the 3rd arg names the AOT C symbol.
+// Parameter types must be simple named types.
+registry.bind_native_overload(native_print_i32, "fun print(v: i32)", "roxy_print_i32");
+
 // Method on a concrete type
 registry.bind_method(native_product, "fun Point.product(): i32");
 

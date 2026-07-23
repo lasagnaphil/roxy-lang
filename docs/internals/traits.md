@@ -4,7 +4,36 @@ Traits define shared behavior across types, enabling polymorphism without functi
 
 **Implemented:** trait declarations, required/default methods, `for Trait` impls, trait inheritance, `Self` type, generic traits with type parameters (`trait Add<Rhs>`), operator dispatch for all overloadable operators (arithmetic, comparison, bitwise, unary, compound-assignment, indexing) on both structs and primitives (see `operator-overloading.md`), and trait bounds on generics (`<T: Trait>`, with instantiation-site and definition-site checking — see `generics.md`).
 
-**Not yet implemented:** a standard-library trait set (`Clone`, `Default`, `Iterator`, …) and generic trait inheritance (`trait AddAssign<Rhs> : Add<Rhs>`). The builtin traits (registered in semantic analysis, usable without a user declaration) are `Printable`, `Hash`, `Eq`, `Exception`, and the subscript-operator traits `Index<Idx, Output>` / `IndexMut<Idx, Output>`. Other operator traits (`Add<Rhs>`, `Ord`, …) are user-declared (see `operator-overloading.md`).
+**Not yet implemented:** a standard-library trait set (`Clone`, `Default`, `Iterator`, …) and generic trait inheritance (`trait AddAssign<Rhs> : Add<Rhs>`). The builtin traits (registered in semantic analysis, usable without a user declaration) are `Printable`, `Hash`, `Eq`, `Ord` (`lt`/`le`/`gt`/`ge`), `Exception`, and the subscript-operator traits `Index<Idx, Output>` / `IndexMut<Idx, Output>`. Other operator traits (`Add<Rhs>`, …) are user-declared (see `operator-overloading.md`).
+
+## Builtin trait membership on primitives
+
+Primitives formally implement builtin traits (the `m_primitive_traits` table),
+so `<T: Trait>` bounds instantiate at them:
+
+| Trait | Primitive kinds |
+|---|---|
+| `Printable` (`to_string(): string`) | bool, i32, i64, u32, u64, f32, f64, string (+ enums via i32; + `List<T>`/`Map<K,V>` structurally when the element/key/value types are Printable) |
+| `Hash` (`hash(): u64`) | all integer kinds, bool, f32/f64, string |
+| `Eq` (`eq(other: Self): bool`) | every kind with eq/ne operator methods (all of the above) |
+| `Ord` (`lt`/`le`/`gt`/`ge`) | i32, i64, u32, u64, f32, f64 (+ enums via i32, ordered by discriminant — `Color::Red < Color::Blue` is legal). NOT string (no ordered string ops) |
+
+For `Eq`/`Ord` only trait *membership* is registered — the concrete
+`eq`/`lt`/… methods come from `register_primitive_operator_methods` (Self-typed
+duplicates would shadow the native operator dispatch). Explicit method calls on
+primitive receivers (`a.lt(b)`, `42.to_string()`, `x.hash()`) dispatch through
+the primitive-receiver arm of `analyze_call_expr`: native-backed methods
+(`to_string`/`hash`, linked via `MethodInfo::native_name` = `i32$$to_string`
+etc.) emit CallNative; operator-named methods lower to the same raw IR ops as
+the operator expression (correct unsigned/float selection). Compound-assign
+methods (`add_assign`, …) are rejected as explicit calls (they need an
+assignable receiver).
+
+A user redeclaration of a builtin trait (`trait Ord : Eq;` with default
+`le`/`gt`/`ge` bodies) merges with the builtin: the builtin *shape* stays, and
+the user's default bodies are adopted onto the pre-registered entries
+(`register_trait_method_signature`'s builtin-redecl branch), so
+`inject_default_method` works.
 
 ## Declaring Traits and Methods
 
@@ -91,26 +120,30 @@ struct HashBox<T: Hash> { value: T; }
 
 ## The Universal `print()` Function
 
-Trait bounds let a single `print<T: Printable>` dispatch over any `Printable` type — the prelude implements `Printable` for the primitives, and user structs opt in with their own impl.
+`print` accepts any `Printable` value. It is implemented as a native
+**overload set** (one member per Printable primitive kind — see
+`overloading.md`) plus a sema-side **Printable fallback**: when no overload
+matches and the argument implements `Printable`, the call is rewritten to
+`print(value.to_string())`. So structs with a `for Printable` impl, enums, and
+printable containers all print directly.
 
 ```roxy
-trait Printable;
-fun Printable.print();
-fun Printable.println() { self.print(); print("\n"); }
-
-fun i32.print()    for Printable { print(f"{self}"); }
-fun string.print() for Printable { print(self); }
-// ...i64, f64, bool similarly
-
-fun print<T: Printable>(value: T) { value.print(); }
-
 fun main(): i32 {
-    print(42);            // primitive impl
+    print(42);            // $ol$print$i32 overload
+    print(3.14);          // $ol$print$f64
     var p: Point = Point { x = 10, y = 20 };
-    print(p);             // works if Point implements Printable
+    print(p);             // fallback: print(p.to_string()) — needs `for Printable`
+    var xs: List<i32> = List<i32>();
+    xs.push(1); xs.push(2);
+    print(xs);            // "[1, 2]" via the synthesized container to_string
     return 0;
 }
 ```
+
+Interpolation (`f"{v}"`), explicit `v.to_string()`, and `print(v)` all share
+the same `Printable` query (`type_implements_printable`), which also consults
+active trait bounds inside bounded generic template bodies — `fun show<T:
+Printable>(v: T) { print(f"{v}"); }` type-checks at definition time.
 
 ## Method Resolution and Name Mangling
 

@@ -4,7 +4,7 @@ This document tracks known technical debt, incomplete implementations, and plann
 improvements. Completed items are removed as they land — the per-item records
 (measurements, rationale, regression-test pointers) live in this file's git history.
 
-Last updated: 2026-07-17
+Last updated: 2026-07-23
 
 ---
 
@@ -16,36 +16,6 @@ Last updated: 2026-07-17
 
 ## Medium Priority
 
-Surfaced 2026-07-17 while making `examples/` compile again — each one is a rule
-users hit immediately, and each was verified against the build.
-
-- [ ] **`Printable` is unreachable except through f-string interpolation**:
-  `print` is registered as `fun print(s: string)` (`natives.cpp` →
-  `register_builtin_natives`), so `print(42)` is a type error ("cannot assign
-  'i32' to 'string'") and every call site has to route through `f"{…}"`. The
-  primitive `to_string` natives are `$$`-mangled (`i32$$to_string`, …), so
-  neither `to_string(42)` nor `42.to_string()` resolves ("cannot access member
-  of non-struct type") — interpolation is the only path to them. A struct that
-  writes `fun T.to_string(): string for Printable` *can* call it directly, so
-  the gap is primitives-only. Wants `print` to take a `Printable` and primitive
-  `to_string` to be reachable by name. (`examples/hello.roxy` was `print(42)`
-  and did not compile — it was cited as evidence that `print` accepts a literal.)
-- [ ] **`List`/`Map` don't implement `Printable`**: `f"{items}"` fails with
-  "type 'List<i32>' does not implement Printable (no to_string method)", so
-  printing a container means a hand-rolled join loop (both showcases now carry
-  one). Needs `to_string` on the generic native container types, with the
-  element's own `Printable` impl threaded through monomorphization.
-- [ ] **A trait bound isn't consulted for interpolation or operator dispatch**:
-  a bound resolves an *explicit* method call — `<T: Eq>` makes `a.eq(b)`
-  type-check in the body, which `examples/showcase.roxy` relies on — but the
-  other two paths to a trait method don't ask it. With `<T: Printable>`,
-  `f"{value}"` is rejected ("type 'T' does not implement Printable"), and with
-  `<T: Ord>`, `a > b` is rejected ("invalid operands for comparison operator")
-  even though `Ord` declares `gt`/`cmp` and operator dispatch is otherwise
-  structural. So a bound is only half usable: the body has to spell out
-  `value.to_string()` / `a.cmp(b)` instead. Verified 2026-07-17. Related to the
-  `Printable` entry above — `to_string()` on a bounded `T` instantiated at a
-  primitive also fails ("cannot access member of non-struct type").
 - [ ] **No immutable borrow for containers**: a container parameter is either
   owning (`List<T>`, which *moves* the caller's value — `quicksort.roxy`'s
   `is_sorted(arr)` hit exactly this) or `inout`. `ref List<i32>` parses but

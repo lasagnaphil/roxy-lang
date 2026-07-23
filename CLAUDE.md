@@ -354,14 +354,17 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **VM** - Shared register file with windowing, call frame stack, module loading.
 **Details:** `docs/internals/vm.md` | **Files:** `vm/vm.hpp`, `vm/interpreter.hpp`
 
-**Lists** - Dynamic lists (`List<T>`) with bounds checking, push/pop/len/cap methods. Always noncopyable (move-only — a container owns a heap buffer, like `uniq`); explicit `.copy()` for an independent duplicate. Element cleanup at scope exit; `List<ref T>` counts its borrowed elements (push RefInc, destroy/overwrite RefDec).
+**Lists** - Dynamic lists (`List<T>`) with bounds checking, push/pop/len/cap methods. Always noncopyable (move-only — a container owns a heap buffer, like `uniq`); explicit `.copy()` for an independent duplicate. Element cleanup at scope exit; `List<ref T>` counts its borrowed elements (push RefInc, destroy/overwrite RefDec). Implements `Printable` structurally (iff `T` does, recursively): `f"{items}"` / `items.to_string()` / `print(items)` render `[1, 2, 3]` via a compiler-synthesized per-instantiation IR to_string (both backends free).
 **Details:** `docs/internals/list.md` | **Files:** `vm/list.hpp`
 
-**Maps** - Hash tables (`Map<K, V>`) with Robin Hood open addressing, backward-shift deletion, insert/get/remove/contains/clear/keys/values methods, index operator support. Builtin `Hash` trait for primitives. Always noncopyable (move-only, like `List`); explicit `.copy()` for an independent duplicate. `Map<_, ref V>` counts its borrowed values (insert RefInc with replace handling; remove/clear/destroy RefDec).
+**Maps** - Hash tables (`Map<K, V>`) with Robin Hood open addressing, backward-shift deletion, insert/get/remove/contains/clear/keys/values methods, index operator support. Builtin `Hash` trait for primitives. Always noncopyable (move-only, like `List`); explicit `.copy()` for an independent duplicate. `Map<_, ref V>` counts its borrowed values (insert RefInc with replace handling; remove/clear/destroy RefDec). Implements `Printable` structurally (iff `K` and `V` do): renders `{k: v, ...}` in unspecified bucket order via the synthesized per-instantiation to_string.
 **Details:** `docs/internals/maps.md` | **Files:** `vm/map.hpp`, `vm/map.cpp`
 
-**Strings** - Heap-allocated string objects. Operations via native functions (`str_concat`, `str_eq`, `str_len`). F-string interpolation (`f"hello {expr}"`) with automatic `to_string` conversion via builtin `Printable` trait.
+**Strings** - Heap-allocated string objects. Operations via native functions (`str_concat`, `str_eq`, `str_len`). F-string interpolation (`f"hello {expr}"`) with automatic `to_string` conversion via builtin `Printable` trait; the per-type dispatch is centralized in the IR builder's `emit_to_string_value`. Primitive `to_string`/`hash` are reachable as methods (`42.to_string()`, `x.hash()`, enum `.to_string()`).
 **Details:** `docs/internals/strings.md` | **Files:** `vm/string.hpp`
+
+**Function Overloading** - Free functions and natives may have multiple definitions per name, differing in parameter types or arity (`Symbol::next_overload` chains; `$ol$name$types` mangles; exact-then-assignable resolution with settled literals; overloaded refs in value position coerce at typed sites). `print` is an overload set (one member per Printable primitive, direct printf natives) with a sema-side Printable fallback rewriting `print(v)` → `print(v.to_string())` for structs/enums/containers. Methods/ctors/trait methods stay one-per-name; a name is either generic or overloaded, never both; `main` can't be overloaded.
+**Details:** `docs/internals/overloading.md` | **Tests:** `tests/e2e/test_overloads.cpp`
 
 **Slab Allocator** - Custom allocator with Vale-style random generational references, tombstoning.
 **Details:** `docs/internals/lifetimes.md` §16 | **Files:** `rt/slab_allocator.hpp`, `rt/vmem.hpp`
@@ -381,11 +384,11 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Tests:** `tests/e2e/test_when.cpp`
 
 ### Traits
-**Traits** - Ad-hoc polymorphism with trait declarations, required/default methods, `for Trait` implementations, trait inheritance, `Self` type, operator dispatch (arithmetic, comparison, bitwise, unary, indexing) for structs, primitives, and lists via unified `TypeCache::lookup_method()`, and generic traits with type parameters (`trait Add<Rhs>`, `for Mul<i32>`).
+**Traits** - Ad-hoc polymorphism with trait declarations, required/default methods, `for Trait` implementations, trait inheritance, `Self` type, operator dispatch (arithmetic, comparison, bitwise, unary, indexing) for structs, primitives, and lists via unified `TypeCache::lookup_method()`, and generic traits with type parameters (`trait Add<Rhs>`, `for Mul<i32>`). Builtin traits: `Printable`, `Hash`, `Eq`, `Ord` (lt/le/gt/ge), `Exception`, `Index`/`IndexMut` — with primitive trait *membership* registered so `<T: Eq>`/`<T: Ord>` bounds instantiate at primitives (and enums, ordered by discriminant — `enumA < enumB` is legal); explicit operator-named method calls on primitive receivers (`a.lt(b)`) lower to the raw IR ops; user redeclarations of builtin traits merge, adopting user default-method bodies.
 **Details:** `docs/internals/traits.md`, `docs/internals/operator-overloading.md` | **Tests:** `tests/e2e/test_traits.cpp`
 
 ### Generics
-**Generics** - Parametric polymorphism with monomorphization. Generic functions (`fun identity<T>(v: T): T`) and generic structs (`struct Box<T> { value: T; }`). Supports local type inference from function arguments and struct field values (`identity(42)` infers T=i32, `Box { value = 42 }` infers T=i32). Explicit type arguments also supported. Angle bracket syntax with trial-parse disambiguation. Trait bounds on type parameters (`<T: Printable>`, `<T: Add<i32> + Hash>`) with Phase A instantiation-site checking and Phase B definition-site checking (bounded generic bodies are validated against declared trait bounds). User-defined external methods on generic structs (`fun Box<T>.get(): T`) with monomorphization. User-defined constructors/destructors on generic structs (`fun new Box<T>(v: T)`, `fun delete Box<T>()`).
+**Generics** - Parametric polymorphism with monomorphization. Generic functions (`fun identity<T>(v: T): T`) and generic structs (`struct Box<T> { value: T; }`). Supports local type inference from function arguments and struct field values (`identity(42)` infers T=i32, `Box { value = 42 }` infers T=i32). Explicit type arguments also supported. Angle bracket syntax with trial-parse disambiguation. Trait bounds on type parameters (`<T: Printable>`, `<T: Add<i32> + Hash>`) with Phase A instantiation-site checking and Phase B definition-site checking (bounded generic bodies are validated against declared trait bounds; f-string interpolation consults bounds too — `f"{v}"` on `<T: Printable>` and `f"{xs}"` on `List<T>` both pass, via `bound_includes_trait` + the container-recursive `type_implements_printable`). User-defined external methods on generic structs (`fun Box<T>.get(): T`) with monomorphization. User-defined constructors/destructors on generic structs (`fun new Box<T>(v: T)`, `fun delete Box<T>()`).
 **Details:** `docs/internals/generics.md` | **Tests:** `tests/e2e/test_generics.cpp`
 
 ### Exception Handling
@@ -553,8 +556,9 @@ profilers, Tracy, workload classes, guardrails, baseline findings):
   - `inheritance.md` - Struct inheritance, subtyping, `super` keyword
   - `tagged-unions.md` - Discriminated unions with `when` clause
   - `recursive-types.md` - Self-referential / mutually recursive structs via `uniq`, value-cycle detection, descriptor-driven recursive destruction
-  - `traits.md` - Traits: declarations, required/default methods, trait inheritance, operator dispatch
-  - `operator-overloading.md` - Operator traits (arithmetic, comparison, bitwise, unary) with unified primitive/struct dispatch
+  - `traits.md` - Traits: declarations, required/default methods, trait inheritance, operator dispatch, builtin trait membership on primitives (Printable/Hash/Eq/Ord)
+  - `operator-overloading.md` - Operator traits (arithmetic, comparison, bitwise, unary) with unified primitive/struct dispatch; operator-named method calls on primitive receivers
+  - `overloading.md` - Function overloading: `$ol$` mangles, symbol chains, resolution rules, overloaded refs, per-type `print` overloads + Printable fallback
   - `generics.md` - Generic functions and structs with monomorphization
   - `exceptions.md` - Exception handling: try/catch/throw/finally, Exception trait, handler tables
   - `coroutines.md` - Coroutines: Coro<T>, yield, state machine transformation, graph-preserving block cloning
