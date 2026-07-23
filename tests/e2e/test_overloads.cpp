@@ -163,6 +163,59 @@ TEST_SUITE("E2E Overloads") {
         CHECK(result.stdout_output == "2\n11\n");
     }
 
+    // ------------------------------------------------------------------------
+    // print overloads + Printable fallback
+    // ------------------------------------------------------------------------
+
+    TEST_CASE_TEMPLATE("print overloads for every Printable primitive", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            print("hello");
+            print(42);
+            print(9999999999l);
+            print(true);
+            print(1.5);
+            var u: u32 = 4000000000u;
+            print(u);
+            var b: u64 = 18446744073709551615ul;
+            print(b);
+            var f: f32 = 2.5f;
+            print(f);
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output ==
+              "hello\n42\n9999999999\ntrue\n1.5\n4000000000\n18446744073709551615\n2.5\n");
+    }
+
+    TEST_CASE_TEMPLATE("print Printable fallback: struct, enum, containers", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Vec { x: i32; }
+        fun Vec.to_string(): string for Printable { return f"Vec[{self.x}]"; }
+
+        enum Color { Red, Green, Blue }
+
+        fun main(): i32 {
+            print(Vec { x = 7 });
+            print(Color::Blue);
+            var xs: List<i32> = List<i32>();
+            xs.push(1); xs.push(2); xs.push(3);
+            print(xs);
+            var m: Map<string, i32> = Map<string, i32>();
+            m.insert("potion", 3);
+            print(m);
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "Vec[7]\n2\n[1, 2, 3]\n{potion: 3}\n");
+    }
+
     TEST_CASE_TEMPLATE("print passed as fun(string) value keeps working", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun greet_via(f: fun(string), name: string) { f(name); }

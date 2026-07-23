@@ -222,6 +222,55 @@ static void native_print(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     regs[dst] = 0;
 }
 
+// Per-type print overloads — direct printf, no string round-trip. Formats
+// match the corresponding $$to_string natives so `print(x)` and
+// `print(f"{x}")` produce identical output.
+static void native_print_bool(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack_back().registers;
+    printf("%s\n", regs[first_arg] != 0 ? "true" : "false");
+    regs[dst] = 0;
+}
+
+static void native_print_i32(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack_back().registers;
+    printf("%d\n", static_cast<i32>(regs[first_arg]));
+    regs[dst] = 0;
+}
+
+static void native_print_i64(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack_back().registers;
+    printf("%lld\n", (long long)static_cast<i64>(regs[first_arg]));
+    regs[dst] = 0;
+}
+
+static void native_print_u32(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack_back().registers;
+    printf("%u\n", static_cast<u32>(regs[first_arg]));
+    regs[dst] = 0;
+}
+
+static void native_print_u64(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack_back().registers;
+    printf("%llu\n", (unsigned long long)regs[first_arg]);
+    regs[dst] = 0;
+}
+
+static void native_print_f32(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack_back().registers;
+    f32 val;
+    memcpy(&val, &regs[first_arg], sizeof(f32));
+    printf("%g\n", (double)val);
+    regs[dst] = 0;
+}
+
+static void native_print_f64(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack_back().registers;
+    f64 val;
+    memcpy(&val, &regs[first_arg], sizeof(f64));
+    printf("%g\n", val);
+    regs[dst] = 0;
+}
+
 // Native function: str_concat(a: string, b: string) -> string
 static void native_str_concat(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     if (argc < 2) {
@@ -1103,7 +1152,20 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_method(native_list_copy,      "fun List<T>.copy(): List<T>");
 
     // Free functions
-    registry.bind_native(native_print, "fun print(s: string)");
+    // print is an OVERLOAD SET: one member per Printable primitive kind (the
+    // narrow ints i8/i16/u8/u16 are not Printable and have no members).
+    // Structs/enums/containers route through the sema-side Printable fallback
+    // (print(v) -> print(v.to_string()) -> the string member). NOTE: no
+    // registry entry is literally named "print" — the entries are keyed
+    // "$ol$print$<type>" and sema records the resolved key on each call.
+    registry.bind_native_overload(native_print,       "fun print(s: string)", "roxy_print");
+    registry.bind_native_overload(native_print_bool,  "fun print(v: bool)",   "roxy_print_bool");
+    registry.bind_native_overload(native_print_i32,   "fun print(v: i32)",    "roxy_print_i32");
+    registry.bind_native_overload(native_print_i64,   "fun print(v: i64)",    "roxy_print_i64");
+    registry.bind_native_overload(native_print_u32,   "fun print(v: u32)",    "roxy_print_u32");
+    registry.bind_native_overload(native_print_u64,   "fun print(v: u64)",    "roxy_print_u64");
+    registry.bind_native_overload(native_print_f32,   "fun print(v: f32)",    "roxy_print_f32");
+    registry.bind_native_overload(native_print_f64,   "fun print(v: f64)",    "roxy_print_f64");
 
     // String functions
     registry.bind_native(native_str_concat, "fun str_concat(a: string, b: string): string");

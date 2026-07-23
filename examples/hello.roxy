@@ -1,4 +1,5 @@
 fun main(): i32 {
     print("Hello, Roxy!");
+    print(42);
     return 0;
 }

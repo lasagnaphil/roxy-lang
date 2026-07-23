@@ -32,15 +32,12 @@ fun main(): i32 {
     print(f"|a| = {a.length()}");
     print(f"a . b = {dot(a, b)}");
 
-    // A `List` isn't Printable — interpolate the elements, not the container.
+    // Containers are Printable when their element type is.
     var items: List<i32> = List<i32>();
-    var squares: string = "";
     for (var i: i32 = 0; i < 5; i = i + 1) {
         items.push(i * i);
-        if (i > 0) { squares = squares + ", "; }
-        squares = squares + f"{items[i]}";
     }
-    print(f"squares: {squares}");
+    print(f"squares: {items}");
 
     return 0;
 }

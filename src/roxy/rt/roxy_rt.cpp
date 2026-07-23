@@ -414,6 +414,16 @@ void roxy_print(void* s) {
     printf("%s\n", roxy_string_chars(s));
 }
 
+// Per-type print overloads — formats match the roxy_*_to_string functions so
+// print(x) and print(f"{x}") produce identical output.
+void roxy_print_bool(bool v)   { printf("%s\n", v ? "true" : "false"); }
+void roxy_print_i32(int32_t v) { printf("%d\n", v); }
+void roxy_print_i64(int64_t v) { printf("%lld\n", (long long)v); }
+void roxy_print_u32(uint32_t v) { printf("%u\n", v); }
+void roxy_print_u64(uint64_t v) { printf("%llu\n", (unsigned long long)v); }
+void roxy_print_f32(float v)   { printf("%g\n", (double)v); }
+void roxy_print_f64(double v)  { printf("%g\n", v); }
+
 void* roxy_string_concat(void* a, void* b) {
     uint32_t len_a = string_hdr(a)->length;
     uint32_t len_b = string_hdr(b)->length;

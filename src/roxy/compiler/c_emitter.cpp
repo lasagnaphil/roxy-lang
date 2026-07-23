@@ -3378,6 +3378,16 @@ static const char* lookup_static_native_mapping(StringView name) {
     static const tsl::robin_map<StringView, const char*> exact_mappings = {
         // Print
         {"print", "roxy_print"},
+        // print overload set — keyed by the "$ol$" mangles sema records on
+        // resolved calls (no registry entry is literally named "print").
+        {"$ol$print$string", "roxy_print"},
+        {"$ol$print$bool", "roxy_print_bool"},
+        {"$ol$print$i32", "roxy_print_i32"},
+        {"$ol$print$i64", "roxy_print_i64"},
+        {"$ol$print$u32", "roxy_print_u32"},
+        {"$ol$print$u64", "roxy_print_u64"},
+        {"$ol$print$f32", "roxy_print_f32"},
+        {"$ol$print$f64", "roxy_print_f64"},
         // String functions
         {"str_concat", "roxy_string_concat"},
         {"str_eq", "roxy_string_eq"},

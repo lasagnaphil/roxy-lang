@@ -320,6 +320,13 @@ int32_t roxy_string_len(void* s);
 
 // Print a string followed by newline.
 void roxy_print(void* s);
+void roxy_print_bool(bool v);
+void roxy_print_i32(int32_t v);
+void roxy_print_i64(int64_t v);
+void roxy_print_u32(uint32_t v);
+void roxy_print_u64(uint64_t v);
+void roxy_print_f32(float v);
+void roxy_print_f64(double v);
 
 // Concatenate two strings. Returns a new string.
 void* roxy_string_concat(void* a, void* b);
