@@ -2129,7 +2129,12 @@ void CEmitter::emit_terminator(const IRBlock* block, const IRFunction* func, Str
             if (!func->returns_large_struct() && term.return_value.is_valid()
                 && vt && vt->kind != TypeKind::Void) {
                 Type* ret_type = func->return_type;
-                if (ret_type && ret_type->is_struct() && is_stack_alloc_value(term.return_value)) {
+                // A by-value struct return whose value is pointer-represented
+                // (a StackAlloc'd local, a struct PARAM, a struct IndexGet, …)
+                // must dereference — `return v0;` where v0 is `Score*` and the
+                // function returns `Score` doesn't compile. is_pointer_value is
+                // the general predicate (stack allocs are a subset).
+                if (ret_type && ret_type->is_struct() && is_pointer_value(term.return_value)) {
                     out.append("    return *");
                     emit_value(term.return_value, out);
                     out.append(";\n");

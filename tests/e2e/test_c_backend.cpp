@@ -2991,4 +2991,25 @@ TEST_SUITE("E2E C Backend") {
         CHECK(result.exit_code == 42);
     }
 
+    TEST_CASE("Return struct parameter by value") {
+        // Regression: the Return terminator's struct deref keyed on
+        // is_stack_alloc_value only, so returning a struct PARAM (also
+        // pointer-represented) emitted `return v0;` with v0 a `Score*` —
+        // a C++ compile error. Fixed by keying on is_pointer_value.
+        const char* source = R"(
+        struct Score { v: i32; }
+        fun pick(a: Score, b: Score): Score { return a; }
+        fun pick_generic<T>(a: T, b: T): T { return b; }
+        fun main(): i32 {
+            var r: Score = pick(Score { v = 40 }, Score { v = 2 });
+            var s: Score = pick_generic(Score { v = 1 }, Score { v = 2 });
+            return r.v + s.v;
+        }
+    )";
+        auto result = compile_and_run_cpp(source);
+        CHECK(result.compile_success);
+        CHECK(result.run_success);
+        CHECK(result.exit_code == 42);
+    }
+
 }  // TEST_SUITE("E2E C Backend")
