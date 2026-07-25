@@ -430,8 +430,10 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
         }
 
         case IROp::IndexGet:
-        case IROp::IndexAddr: {
-            append_str(out, inst->op == IROp::IndexAddr ? " &" : " ");
+        case IROp::IndexAddr:
+        case IROp::IndexTryAddr: {
+            append_str(out, inst->op == IROp::IndexGet ? " " : " &");
+            if (inst->op == IROp::IndexTryAddr) append_str(out, "try ");
             append_value_id(out, inst->index_data.container);
             append_str(out, "[");
             append_value_id(out, inst->index_data.index);

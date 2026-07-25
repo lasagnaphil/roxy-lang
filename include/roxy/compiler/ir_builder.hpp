@@ -13,6 +13,7 @@
 #include "roxy/compiler/symbol_table.hpp"
 
 #include "roxy/core/tsl/robin_map.h"
+#include "roxy/core/tsl/robin_set.h"
 
 #include <initializer_list>
 
@@ -123,6 +124,24 @@ private:
     void build_container_to_strings();
     IRFunction* build_container_to_string(Type* container_type, StringView name);
 
+    // Builtin exception types (KeyError / IndexError) thrown by out-of-bounds
+    // `list[i]` / missing-key `m[k]` reads. Their `message()` is synthesized on
+    // demand like container to_string (a fixed string per type), module-local so
+    // multi-module link doesn't collide. `emit_throw_builtin_exception` builds
+    // `New <Exc>` + `Throw` in the current block and starts an unreachable block.
+    StringView request_exception_message(Type* exc_type);
+    void build_exception_messages();
+    IRFunction* build_exception_message(Type* exc_type, StringView name);
+    void emit_throw_builtin_exception(StringView exc_type_name);
+    bool is_builtin_exception_type(Type* type) const;
+    // Register a builtin exception struct type into the module's backend
+    // struct_types (idempotent) so the C backend emits its definition + TYPEID.
+    void register_backend_exception_type(Type* exc_type);
+    // Bounds-check a `list[i]` read: branch to a `throw IndexError` block when
+    // `(u32)index >= len` (a negative index wraps to a huge u32 and is caught,
+    // matching the runtime's unsigned compare), else continue in a fresh block.
+    void emit_list_bounds_check(ValueId list_val, ValueId index_val);
+
     // Block management
     IRBlock* create_block(StringView name = {});
     void set_current_block(IRBlock* block);
@@ -179,6 +198,7 @@ private:
     // the element/value (pointee) type, mirroring emit_get_field_addr. The pointer
     // is valid only while the container is pinned (lifetimes.md "Container element lvalues").
     ValueId emit_index_addr(ValueId container, ValueId index, ContainerKind kind, Type* result_type);
+    ValueId emit_index_try_addr(ValueId map, ValueId key);
     ValueId emit_new(StringView type_name, Span<ValueId> args, Type* result_type);
     ValueId emit_stack_alloc(u32 slot_count, Type* result_type);
     ValueId emit_get_field(ValueId object, StringView field_name, u32 slot_offset, u32 slot_count, Type* result_type);
@@ -681,6 +701,12 @@ private:
     // (containers are interned per element type, so pointer identity works).
     tsl::robin_map<Type*, StringView> m_container_tostring_names;
     Vector<Type*> m_container_tostring_pending;
+
+    // Synthesized exception message() bookkeeping (see request_exception_message).
+    tsl::robin_map<Type*, StringView> m_exception_message_names;
+    Vector<Type*> m_exception_message_pending;
+    // Builtin exception types already pushed into m_module->struct_types.
+    tsl::robin_set<Type*> m_backend_exc_types_added;
 
     // Consume a temporary noncopyable value (ownership transferred to callee/variable).
     // Finds the temporary OwnedLocalInfo entry by ValueId and marks it moved.

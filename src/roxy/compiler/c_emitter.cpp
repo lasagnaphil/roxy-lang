@@ -1551,10 +1551,14 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
 
         // --- Pointer operations ---
         case IROp::LoadPtr: {
-            // v1 = *v0;
+            // v1 = *(T*)v0;  — cast through uintptr_t so an integer-typed pointer
+            // (e.g. the i64 from IndexTryAddr on the `m[k]` hit path) derefs the
+            // same as an already-typed pointer operand.
             out.append("    ");
             emit_value(inst->result, out);
-            out.append(" = *");
+            out.append(" = *(");
+            emit_type(inst->type, out);
+            out.append("*)(uintptr_t)");
             emit_value(inst->load_ptr.ptr, out);
             out.append(";\n");
             return;
@@ -1722,6 +1726,34 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                 emit_value(inst->index_data.index, out);
             }
             out.append(");");
+            if (needs_key_temp) out.append(" }");
+            out.append("\n");
+            return;
+        }
+
+        case IROp::IndexTryAddr: {
+            // Nullable map find: dst (an intptr) = value-slot pointer, or 0 if the
+            // key is absent (roxy_map_get_or with a NULL fallback never asserts).
+            // The IR branches on `== 0`; on the hit path LoadPtr derefs it.
+            Type* key_type = get_value_type(inst->index_data.index);
+            bool key_is_struct = key_type && key_type->is_struct();
+            bool needs_key_temp = !key_is_struct;
+            if (needs_key_temp) {
+                out.append("    { uint64_t _ktmp = 0; { ");
+                emit_type(key_type, out);
+                out.append(" _kraw = ");
+                emit_value(inst->index_data.index, out);
+                out.append("; memcpy(&_ktmp, &_kraw, sizeof(_kraw)); } ");
+            } else {
+                out.append("    ");
+            }
+            emit_value(inst->result, out);
+            out.append(" = (int64_t)(intptr_t)roxy_map_get_or((void*)");
+            emit_value(inst->index_data.container, out);
+            out.append(", ");
+            out.append(key_is_struct ? "" : "&_ktmp");
+            if (key_is_struct) emit_value(inst->index_data.index, out);
+            out.append(", NULL);");
             if (needs_key_temp) out.append(" }");
             out.append("\n");
             return;

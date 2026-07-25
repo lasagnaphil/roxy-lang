@@ -1232,6 +1232,7 @@ void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
 
                 case IROp::IndexGet:
                 case IROp::IndexAddr:
+                case IROp::IndexTryAddr:
                     mark_reg(inst->index_data.container);
                     mark_reg(inst->index_data.index);
                     break;
@@ -1419,6 +1420,7 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
                 // Container indexing
                 case IROp::IndexGet:
                 case IROp::IndexAddr:
+                case IROp::IndexTryAddr:
                     mark_use(m_live_ranges, inst->index_data.container, point);
                     mark_use(m_live_ranges, inst->index_data.index, point);
                     break;
@@ -2366,6 +2368,15 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             Opcode op = (inst->index_data.kind == ContainerKind::List)
                 ? Opcode::INDEX_ADDR_LIST : Opcode::INDEX_ADDR_MAP;
             emit_abc(op, dst, obj_reg, idx_reg);
+            spill_if_needed(inst->result, dst);
+            break;
+        }
+
+        case IROp::IndexTryAddr: {
+            // Nullable map value-slot address (0 on miss, no trap) — Map only.
+            u8 obj_reg = ensure_in_register(inst->index_data.container, 0);
+            u8 idx_reg = ensure_in_register(inst->index_data.index, 0);
+            emit_abc(Opcode::INDEX_TRYADDR_MAP, dst, obj_reg, idx_reg);
             spill_if_needed(inst->result, dst);
             break;
         }

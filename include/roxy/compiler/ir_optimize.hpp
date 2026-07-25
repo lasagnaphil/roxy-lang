@@ -220,6 +220,7 @@ inline void for_each_operand(IRInst* inst, Fn&& fn) {
         // ── Container indexing ──
         case IROp::IndexGet:
         case IROp::IndexAddr:
+        case IROp::IndexTryAddr:
             fn(inst->index_data.container);
             fn(inst->index_data.index);
             break;

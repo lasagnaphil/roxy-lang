@@ -238,6 +238,10 @@ void SemanticAnalyzer::run_declaration_passes(Program* program) {
     // Index/IndexMut) — guarded against re-initialization
     m_traits.register_builtin_traits();
 
+    // Pass 1.7a: Register builtin exception types (KeyError, IndexError) — after
+    // the Exception trait exists, since they implement it.
+    register_builtin_exception_types();
+
     // Pass 1.8: Register built-in operator trait methods for primitive types
     m_traits.register_primitive_operator_methods();
 
@@ -3965,6 +3969,38 @@ bool SemanticAnalyzer::is_hashable_key_type(Type* type) {
     // keys should normalise into a primitive key (e.g. interned String).
     if (type->is_struct()) return true;
     return false;
+}
+
+void SemanticAnalyzer::register_builtin_exception_types() {
+    // Guard: the TypeEnv persists across modules, so register only once.
+    if (m_type_env.named_type_by_name("KeyError"_sv)) return;
+
+    Type* exception_trait = m_type_env.exception_type();
+    if (!exception_trait) return;  // Exception trait not registered yet
+
+    // Both are fieldless structs (slot_count 0) whose sole method is a
+    // `message(): string`. The message body is synthesized on demand by the IR
+    // builder (mirroring container to_string) — a fixed string per type. Fields
+    // (e.g. the offending index) are a possible later enrichment.
+    auto make_exception_type = [&](StringView name) {
+        Type* type = m_types.struct_type(name, /*decl*/ nullptr, /*module_name*/ StringView());
+        type->struct_info.slot_count = 0;
+        type->struct_info.fields = Span<FieldInfo>();
+        type->struct_info.members_resolved = true;
+
+        Vector<TraitImplRecord> impls;
+        impls.push_back(TraitImplRecord{exception_trait, Span<Type*>()});
+        type->struct_info.implemented_traits = m_allocator.alloc_span(impls);
+
+        Vector<MethodInfo> methods;
+        methods.push_back(make_method("message"_sv, Span<Type*>(), m_types.string_type()));
+        type->struct_info.methods = m_allocator.alloc_span(methods);
+
+        m_type_env.register_named_type(name, type);
+    };
+
+    make_exception_type("KeyError"_sv);
+    make_exception_type("IndexError"_sv);
 }
 
 void SemanticAnalyzer::populate_map_methods(Type* type) {

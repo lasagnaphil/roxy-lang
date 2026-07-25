@@ -213,6 +213,10 @@ enum class Opcode : u8 {
     // ABC: a=dst (raw element pointer), b=obj, c=index/key. Bounds-/key-checked.
     INDEX_ADDR_LIST = 0xE4, // dst = &list[index]
     INDEX_ADDR_MAP  = 0xE5, // dst = &map[key]   (traps if key absent)
+    // Nullable map find: dst = &map[key] value slot, or 0 if the key is absent
+    // (does NOT trap). Powers the single-lookup `m[k]` throw path — the IR
+    // branches on dst == 0 to a `throw KeyError` block.
+    INDEX_TRYADDR_MAP = 0xEA,
 
     // Container element-borrow pin/unpin around a call (lifetimes.md "Container element lvalues").
     // ABC: a=container pointer. Bumps/decrements the header borrow_count so a

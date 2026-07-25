@@ -247,6 +247,7 @@ add_executable(roxy_tests
     tests/e2e/test_algorithms.cpp
     tests/e2e/test_lists.cpp
     tests/e2e/test_maps.cpp
+    tests/e2e/test_index_exceptions.cpp
     tests/e2e/test_structs.cpp
     tests/e2e/test_params.cpp
     tests/e2e/test_interop.cpp

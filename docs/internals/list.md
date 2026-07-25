@@ -63,6 +63,14 @@ List indexing (`list[i]` and `list[i] = val`) is handled via native `index` and 
 
 `index` is typed `fun List<T>.index(idx: i32): borrowed T` — the `borrowed` modifier demotes the element type to a borrow so `index` yields a *view*, not a transfer. For `List<uniq Point>` the result is `ref Point`, so `var x: uniq Point = list[i]` is a `ref → uniq` type error (you can't move an element out from under the list; borrow it or `pop()` it). For copyable `T` (`List<i32>`) `borrowed T` is just `T`, so indexing copies as before. See [lifetimes.md §17](lifetimes.md#the-borrowed-type-modifier).
 
+An out-of-bounds `list[i]` **read** (`i < 0` or `i >= len`) throws a catchable
+`IndexError` rather than aborting — the IR builder emits a cheap in-IR bounds
+check (`List$$len` is a header read) that branches to a `throw IndexError` block
+before the element read. See [exceptions.md → Index-operator
+exceptions](exceptions.md#index-operator-exceptions). `.pop()` and the
+`inout`/`out` element-borrow lvalue path still trap on an empty/out-of-range
+access.
+
 ## Copy and Move Semantics
 
 A `List<T>` is **noncopyable** when `T` is noncopyable (i.e., `T` is `uniq`, a struct with a default destructor, or another noncopyable container). Noncopyable lists use move semantics — the same rules as `uniq` variables and value structs with destructors:

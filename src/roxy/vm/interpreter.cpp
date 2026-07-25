@@ -793,7 +793,7 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         [0xE4] = &&op_INDEX_ADDR_LIST, [0xE5] = &&op_INDEX_ADDR_MAP,
         [0xE6] = &&op_CONTAINER_PIN, [0xE7] = &&op_CONTAINER_UNPIN,
         [0xE8] = &&op_STR_RETAIN, [0xE9] = &&op_STR_RELEASE,
-        [0xEA] = &&op_DEFAULT, [0xEB] = &&op_DEFAULT,
+        [0xEA] = &&op_INDEX_TRYADDR_MAP, [0xEB] = &&op_DEFAULT,
         [0xEC] = &&op_DEFAULT, [0xED] = &&op_DEFAULT,
         [0xEE] = &&op_DEFAULT, [0xEF] = &&op_DEFAULT,
 
@@ -1877,6 +1877,25 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         if (!value_ptr) {
             return false;
         }
+        regs[a] = reinterpret_cast<u64>(const_cast<u32*>(value_ptr));
+        DISPATCH();
+    }
+
+    OP(INDEX_TRYADDR_MAP) {
+        u8 a = decode_a(instr);
+        void* map_ptr = reg_as_ptr(regs[decode_b(instr)]);
+        if (!map_ptr) {
+            vm->error = "map index: null map reference";
+            return false;
+        }
+        MapHeader* header = get_map_header(map_ptr);
+        u8 key_reg = decode_c(instr);
+        const u32* key_src = header->key_is_inline
+            ? reinterpret_cast<const u32*>(&regs[key_reg])
+            : reinterpret_cast<const u32*>(regs[key_reg]);
+        // Nullable find: yields the value-slot address, or 0 on a missing key
+        // (no trap). The compiler branches on 0 to a `throw KeyError` block.
+        const u32* value_ptr = map_get_or(vm, map_ptr, key_src, nullptr);
         regs[a] = reinterpret_cast<u64>(const_cast<u32*>(value_ptr));
         DISPATCH();
     }

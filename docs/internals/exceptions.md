@@ -64,6 +64,57 @@ The analyzer checks that each thrown expression's type implements `Exception`, f
 
 **Catch-all type:** A `catch (e)` with no type annotation gives `e` the opaque `ExceptionRef` type (`TypeKind::ExceptionRef`). Only `message()` is callable on it — field access and other method calls are rejected. This needs only a single stored function index, avoiding a `dyn Trait` mechanism.
 
+## Index-operator exceptions
+
+Two built-in exception types are thrown by the container index operator, so a
+missing lookup is recoverable instead of a hard abort:
+
+- `list[i]` with `i` out of bounds (including negative) throws **`IndexError`**.
+- `m[k]` with `k` absent throws **`KeyError`**.
+
+Both are catchable by type — `catch (e: IndexError)` / `catch (e: KeyError)` — or
+by a catch-all, and both implement `Exception`, so `e.message()` works in a typed
+catch (`"List index out of bounds"` / `"Map key not found"`). `m.get(k)` and
+`list.pop()` are unchanged (they still abort); the throw is specific to the `[]`
+read. (An `inout`/`out` element *borrow* — the `INDEX_ADDR_*` lvalue path — also
+still traps rather than throwing.)
+
+```roxy
+try {
+    var v: i32 = m[missing];
+} catch (e: KeyError) {
+    print(e.message());   // "Map key not found"
+}
+```
+
+**Registration.** `KeyError` and `IndexError` are registered once in the shared
+`TypeEnv` during semantic analysis (`register_builtin_exception_types`, right
+after the `Exception` trait), as decl-less, fieldless structs implementing
+`Exception`. Because they live in the shared `TypeEnv`, every module — and every
+single-source compile path — can name them in a `catch` without a per-module
+symbol or a prelude module. Their `message()` bodies are synthesized on demand by
+the IR builder like container `to_string` (`request_exception_message` →
+`build_exception_messages`, a module-local `KeyError$$message` returning a fixed
+string). The C backend needs the struct definitions too, so the throw / message
+sites call `register_backend_exception_type` to push the type into
+`IRModule::struct_types` (the VM ignores that list).
+
+> The messages are intentionally generic — `KeyError` does not embed the
+> offending key (arbitrary key types can't be formatted uniformly) and
+> `IndexError` does not embed the index/length. Enriching them with fields is a
+> possible follow-up.
+
+**Lowering (miss detection).** `list[i]` reads emit a cheap in-IR bounds check
+(`len = List$$len; if (i < 0 || i >= len) throw IndexError`) before the existing
+`INDEX_GET_LIST` — the length is a header read, so no second probe. `m[k]` reads
+stay single-probe: a new `IROp::IndexTryAddr` (VM opcode `INDEX_TRYADDR_MAP`; C
+`roxy_map_get_or(map, key, NULL)`) returns the value-slot pointer or 0, the IR
+branches on `ptr == 0` to a `throw KeyError` block, and the hit path loads the
+value from `ptr` (`LoadPtr` for an inline value; a struct value re-reads via
+`IndexGet`, the uncommon case). Both throws reuse the ordinary `New` + `Throw` +
+unwinding machinery, so `finally`, cross-frame propagation, and both backends
+work for free.
+
 ## Pipeline
 
 The lexer recognizes four keywords (`KwTry`, `KwCatch`, `KwThrow`, `KwFinally`). The parser produces `ThrowStmt`, `TryStmt`, and `CatchClause` AST nodes (see `ast.hpp`); semantic analysis validates thrown/caught types against `Exception`, resolves catch variable types, enforces catch-all-last, and assigns `ExceptionRef` to catch-all variables.
@@ -145,7 +196,10 @@ Catch (handler) blocks are not reachable through normal control flow — they're
 | `include/roxy/compiler/ast.hpp` | `ThrowStmt`, `TryStmt`, `CatchClause` AST nodes |
 | `src/roxy/compiler/parser.cpp` | `throw_statement()`, `try_statement()` |
 | `include/roxy/compiler/types.hpp` | `TypeKind::ExceptionRef` |
-| `src/roxy/compiler/semantic.cpp` | Exception trait registration, throw/try analysis |
+| `src/roxy/compiler/semantic.cpp` | Exception trait registration, `register_builtin_exception_types` (KeyError/IndexError), throw/try analysis |
+| `src/roxy/compiler/ir_builder.cpp` | `emit_throw_builtin_exception`, `emit_list_bounds_check`, `request_exception_message`/`build_exception_messages`, `register_backend_exception_type` |
+| `include/roxy/vm/bytecode.hpp` / `src/roxy/vm/interpreter.cpp` | `INDEX_TRYADDR_MAP` opcode (nullable map find) |
+| `tests/e2e/test_index_exceptions.cpp` | Index-operator exception E2E suite (both backends) |
 | `include/roxy/compiler/ssa_ir.hpp` | `IROp::Throw`, `IRExceptionHandler`, `IRFinallyInfo` |
 | `src/roxy/compiler/ir_builder.cpp` | `gen_throw_stmt()`, `gen_try_stmt()` (registers the caught exception as a catch-scope owned local — finding 9a); `emit_implicit_destroy` (catch-all `ExceptionRef` type-erased free) |
 | `src/roxy/compiler/ssa_ir.cpp` | RPO reordering with handler block seeding |

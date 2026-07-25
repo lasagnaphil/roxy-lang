@@ -410,6 +410,12 @@ private:
     // Cycle detection for direct value-type recursion in struct fields
     tsl::robin_set<Type*> m_resolving_structs;
 
+    // Register the built-in exception struct types (KeyError, IndexError) thrown
+    // by out-of-bounds `list[i]` / missing-key `m[k]` reads. Registered once in
+    // the shared TypeEnv (persists across modules) so they are nameable in every
+    // module's `catch (e: KeyError)` without a per-module symbol.
+    void register_builtin_exception_types();
+
     // List/Map/Coro/enum method population
     void populate_list_methods(Type* list_type);
     void populate_map_methods(Type* map_type);

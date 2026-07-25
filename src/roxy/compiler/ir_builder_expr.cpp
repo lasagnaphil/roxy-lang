@@ -308,6 +308,21 @@ ValueId IRBuilder::emit_index_addr(ValueId container, ValueId index, ContainerKi
     return ValueId::invalid();
 }
 
+// Nullable map find: dst = value-slot pointer (as i64), or 0 if the key is
+// absent. Map only. The result is a raw pointer, so the caller branches on
+// `== 0` and either throws or dereferences it.
+ValueId IRBuilder::emit_index_try_addr(ValueId map, ValueId key) {
+    IRInst* inst = emit_inst(IROp::IndexTryAddr, m_types.i64_type());
+    if (inst) {
+        inst->index_data.container = map;
+        inst->index_data.index = key;
+        inst->index_data.value = ValueId::invalid();
+        inst->index_data.kind = ContainerKind::Map;
+        return inst->result;
+    }
+    return ValueId::invalid();
+}
+
 ValueId IRBuilder::emit_new(StringView type_name, Span<ValueId> args, Type* result_type) {
     IRInst* inst = emit_inst(IROp::New, result_type);
     if (inst) {
@@ -1762,6 +1777,15 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         emit_weak_deref_check(obj);
     }
 
+    // Builtin exception `message()` (KeyError/IndexError caught by a typed
+    // `catch (e: KeyError)`): synthesize + call the module-local message body,
+    // intercepted BY NAME before the generic struct-method path (whose registry
+    // / mangled-call lookup has no user decl to resolve).
+    if (is_builtin_exception_type(struct_type) && get_expr.name == "message"_sv) {
+        StringView fn_name = request_exception_message(struct_type);
+        return emit_call(fn_name, alloc_span({obj}), expr->resolved_type);
+    }
+
     // Coro method call. Both dispatch dynamically so first-class (erased) Coro<T>
     // values work: a coroutine value is a heap pointer to its state struct whose
     // slot 0 is __resume_idx (the resume function's dispatch index, exactly like a
@@ -2239,12 +2263,41 @@ ValueId IRBuilder::gen_index_expr(Expr* expr) {
         }
     }
 
-    // List/Map indexing: emit IndexGet IR op
-    if (base_type && base_type->is_container()) {
+    // List indexing: bounds-check first (throw IndexError on OOB), then read.
+    if (base_type && base_type->is_list()) {
         ValueId obj = gen_expr(index_expr.object);
         ValueId index_val = gen_expr(index_expr.index);
-        ContainerKind kind = base_type->is_list() ? ContainerKind::List : ContainerKind::Map;
-        return emit_index_get(obj, index_val, kind, expr->resolved_type);
+        emit_list_bounds_check(obj, index_val);
+        return emit_index_get(obj, index_val, ContainerKind::List, expr->resolved_type);
+    }
+
+    // Map indexing: single-lookup nullable find; a missing key throws KeyError.
+    if (base_type && base_type->is_map()) {
+        ValueId obj = gen_expr(index_expr.object);
+        ValueId index_val = gen_expr(index_expr.index);
+        Type* value_type = base_type->map_info.value_type;
+
+        ValueId ptr = emit_index_try_addr(obj, index_val);
+        ValueId zero = emit_const_int(0, m_types.i64_type());
+        ValueId is_absent = emit_binary(IROp::EqI, ptr, zero, m_types.bool_type());
+
+        IRBlock* miss_block = create_block("map_miss"_sv);
+        IRBlock* hit_block = create_block("map_hit"_sv);
+        finish_block_branch(is_absent, miss_block->id, hit_block->id);
+
+        set_current_block(miss_block);
+        emit_throw_builtin_exception("KeyError"_sv);
+
+        set_current_block(hit_block);
+        if (value_type && value_type->is_struct()) {
+            // Struct rvalues are represented as a pointer into the map's storage;
+            // re-read via IndexGet to get a value typed as the struct (a second
+            // probe, but struct-valued maps are the uncommon case — inline values
+            // load straight from `ptr` below with a single lookup).
+            return emit_index_get(obj, index_val, ContainerKind::Map, expr->resolved_type);
+        }
+        u32 slot_count = get_type_slot_count(value_type);
+        return emit_load_ptr(ptr, slot_count, expr->resolved_type);
     }
 
     report_error("Internal error: index operation not supported");

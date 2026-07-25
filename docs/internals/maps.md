@@ -55,7 +55,7 @@ var m: Map<i32, string> = Map<i32, string>(64);     // pre-allocated capacity
 // Methods
 m.len()                 // -> i32: number of entries
 m.contains(key)         // -> bool: key exists?
-m.get(key)              // -> V: value (runtime error if missing)
+m.get(key)              // -> V: value (aborts if missing — use m[key] or get_or to recover)
 m.get_or(key, fallback) // -> V: value if present, else fallback (no error, no insert)
 m.insert(key, val)      // -> void: insert or update
 m.remove(key)           // -> bool: was key present?
@@ -65,9 +65,19 @@ m.values()              // -> List<V>: all values
 m.to_string()           // -> string: "{k1: v1, k2: v2}" — requires K and V Printable
 
 // Index operators
-var v: V = m[key];      // read (runtime error if missing)
+var v: V = m[key];      // read — throws KeyError if the key is absent (catchable)
 m[key] = val;           // write (insert or update)
 ```
+
+Reading a missing key with `m[key]` **throws a catchable `KeyError`** (see
+[exceptions.md → Index-operator exceptions](exceptions.md#index-operator-exceptions));
+`m.get(key)` still aborts, so use `m[key]` inside a `try`/`catch` — or `get_or` —
+when a miss is possible. The read lowers to a single Robin-Hood probe: the IR
+builder emits `IndexTryAddr` (VM `INDEX_TRYADDR_MAP` / C `roxy_map_get_or` with a
+null fallback), branches on a null value-slot pointer to a `throw KeyError`
+block, and otherwise loads the value from the pointer — no second lookup. (An
+`inout m[key]` borrow of a missing key still traps, not throws — the lvalue path
+uses `INDEX_ADDR_MAP`.)
 
 `index` is typed `fun Map<K, V>.index(key: K): borrowed V`: the `borrowed` modifier yields a borrow of the value rather than transferring it. For a noncopyable `V` (e.g. `Map<i32, uniq Point>`) the result is `ref Point`, so `var x: uniq Point = m[k]` is a `ref → uniq` type error; for copyable `V` it is just `V` (a copy). See [lifetimes.md §17](lifetimes.md#the-borrowed-type-modifier).
 

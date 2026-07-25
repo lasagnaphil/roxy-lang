@@ -100,6 +100,10 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
     build_container_to_strings();
     if (m_has_error) return nullptr;
 
+    // Drain synthesized exception message() bodies (same rationale as above).
+    build_exception_messages();
+    if (m_has_error) return nullptr;
+
     collect_backend_types(program);
     return m_module;
 }
@@ -1001,6 +1005,127 @@ StringView IRBuilder::request_container_to_string(Type* container_type) {
     m_container_tostring_names[container_type] = name;
     m_container_tostring_pending.push_back(container_type);
     return name;
+}
+
+// ── Builtin exception types (KeyError / IndexError) ──
+
+bool IRBuilder::is_builtin_exception_type(Type* type) const {
+    if (!type) return false;
+    type = type->base_type();
+    // Builtins are decl-less structs registered by register_builtin_exception_types.
+    if (!type || !type->is_struct() || type->struct_info.decl != nullptr) return false;
+    StringView name = type->struct_info.name;
+    return name == "KeyError"_sv || name == "IndexError"_sv;
+}
+
+// Make a builtin exception struct type visible to the C backend (emitted as a
+// `struct <Exc> {}` typedef + TYPEID). Idempotent. The VM ignores struct_types,
+// so this is a no-op there. Builtins aren't in the program's decls, so
+// collect_backend_types never adds them — the throw / message sites do.
+void IRBuilder::register_backend_exception_type(Type* exc_type) {
+    exc_type = exc_type->base_type();
+    if (!exc_type) return;
+    if (!m_backend_exc_types_added.insert(exc_type).second) return;
+    m_module->struct_types.push_back(exc_type);
+}
+
+StringView IRBuilder::request_exception_message(Type* exc_type) {
+    exc_type = exc_type->base_type();
+    register_backend_exception_type(exc_type);
+    auto it = m_exception_message_names.find(exc_type);
+    if (it != m_exception_message_names.end()) return it->second;
+
+    // Module-local-wrapped like container to_string — each module synthesizes its
+    // own private "KeyError$$message" copy, so multi-module link can't collide.
+    StringView name = mangle_module_local(
+        mangle_method(exc_type->struct_info.name, "message"_sv));
+    m_exception_message_names[exc_type] = name;
+    m_exception_message_pending.push_back(exc_type);
+    return name;
+}
+
+void IRBuilder::build_exception_messages() {
+    for (u32 i = 0; i < m_exception_message_pending.size(); i++) {
+        Type* exc_type = m_exception_message_pending[i];
+        StringView name = m_exception_message_names[exc_type];
+        IRFunction* func = build_exception_message(exc_type, name);
+        if (func) m_module->functions.push_back(func);
+    }
+}
+
+// Synthesize `<Exc>$$message(self) -> string` returning a fixed message. `self`
+// is accepted (arity/ABI) but ignored — the exception carries no fields yet.
+IRFunction* IRBuilder::build_exception_message(Type* exc_type, StringView name) {
+    Type* string_type = m_types.string_type();
+
+    begin_ir_function(name, /*is_pub=*/false, 0);
+    m_current_func->return_type = string_type;
+    setup_parameters(Span<Param>(), nullptr);
+
+    BlockParam self_param;
+    self_param.value = m_current_func->new_value();
+    self_param.type = exc_type;
+    self_param.name = "self"_sv;
+    m_current_func->params.push_back(self_param);
+    m_current_func->param_is_ptr.push_back(false);
+
+    m_current_block = create_block("entry"_sv);
+
+    ValueId msg = (exc_type->struct_info.name == "KeyError"_sv)
+        ? emit_const_string("Map key not found"_sv)
+        : emit_const_string("List index out of bounds"_sv);
+    finish_block_return(msg);
+
+    return finish_ir_function();
+}
+
+// Emit `New <Exc>` + `Throw` in the current block, then start an unreachable
+// block (Throw is a terminator). Mirrors gen_throw_stmt's tail. The fieldless
+// exception object is handed to the unwinder, which frees it at the handler
+// (or on the unhandled path).
+void IRBuilder::emit_throw_builtin_exception(StringView exc_type_name) {
+    Type* exc_type = m_type_env.named_type_by_name(exc_type_name);
+    if (exc_type) register_backend_exception_type(exc_type);
+    Span<ValueId> empty_args = {};
+    Type* uniq_type = exc_type ? m_types.uniq_type(exc_type) : nullptr;
+    ValueId exc = emit_new(exc_type_name, empty_args, uniq_type);
+
+    IRInst* inst = emit_inst(IROp::Throw, m_types.void_type());
+    if (inst) inst->unary = exc;
+
+    finish_block_unreachable();
+}
+
+void IRBuilder::emit_list_bounds_check(ValueId list_val, ValueId index_val) {
+    Type* i32_type = m_types.i32_type();
+    Type* bool_type = m_types.bool_type();
+
+    StringView len_name = "List$$len"_sv;
+    i32 len_idx = m_registry.get_index(len_name);
+    if (len_idx < 0) {
+        report_error("Internal error: List$$len native missing");
+        return;
+    }
+    ValueId len = emit_call_native(len_name, alloc_span({list_val}), i32_type,
+                                   static_cast<u32>(len_idx));
+
+    // The list index is i32 (List.index(idx: i32)). Two signed checks catch both
+    // a too-large index and a negative one — kept signed (not a single unsigned
+    // `index >= len`) so both backends agree: the C backend's LtU/GeU rely on the
+    // operands being *declared* unsigned, which these i32 locals are not.
+    ValueId zero = emit_const_int(0, i32_type);
+    ValueId negative = emit_binary(IROp::LtI, index_val, zero, bool_type);
+    ValueId too_large = emit_binary(IROp::GeI, index_val, len, bool_type);
+    ValueId oob = emit_binary(IROp::Or, negative, too_large, bool_type);
+
+    IRBlock* throw_block = create_block("idx_oob"_sv);
+    IRBlock* ok_block = create_block("idx_ok"_sv);
+    finish_block_branch(oob, throw_block->id, ok_block->id);
+
+    set_current_block(throw_block);
+    emit_throw_builtin_exception("IndexError"_sv);
+
+    set_current_block(ok_block);
 }
 
 void IRBuilder::build_container_to_strings() {
