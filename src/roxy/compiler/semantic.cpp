@@ -4669,6 +4669,18 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
                                  m_checker.type_string(base_type).data());
                         return m_types.error_type();
                     }
+                    // get_or must copy either the stored value or the fallback out
+                    // by value; a move-only value type can't be copied and returning
+                    // the stored one would alias the map's owned storage. Steer those
+                    // to .contains() + .get() (a borrow) instead.
+                    if (mi->name == "get_or"_sv && base_type->map_info.value_type
+                        && base_type->map_info.value_type->noncopyable()) {
+                        error_fmt(expr->loc,
+                                 "Map.get_or requires a copyable value type, but '{}' is move-only; "
+                                 "use .contains() then .get() instead",
+                                 m_checker.type_string(base_type->map_info.value_type).data());
+                        return m_types.error_type();
+                    }
                     return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
                 }
                 error_fmt(expr->loc, "Map has no method '{}'", get_expr.name);

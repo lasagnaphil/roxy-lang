@@ -809,4 +809,133 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.stdout_output == "{1.5: 7}\n");
     }
 
+    // ========================================================================
+    // get_or(key, fallback): read with a default instead of the hard runtime
+    // error `get`/`[]` raise on a missing key.
+    // ========================================================================
+
+    TEST_CASE_TEMPLATE("Map get_or hit and miss", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var m: Map<i32, i32> = Map<i32, i32>();
+            m.insert(1, 10);
+            m.insert(2, 20);
+            print(f"{m.get_or(1, -1)}");
+            print(f"{m.get_or(2, -1)}");
+            print(f"{m.get_or(99, -1)}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "10\n20\n-1\n");
+    }
+
+    TEST_CASE_TEMPLATE("Map get_or on empty map yields the fallback", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var m: Map<i32, i32> = Map<i32, i32>();
+            print(f"{m.get_or(0, 42)}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n");
+    }
+
+    TEST_CASE_TEMPLATE("Map get_or does not insert the fallback", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var m: Map<i32, i32> = Map<i32, i32>();
+            var v: i32 = m.get_or(7, 100);
+            print(f"{v}");
+            print(f"{m.len()}");
+            if (m.contains(7)) {
+                print("present");
+            } else {
+                print("absent");
+            }
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "100\n0\nabsent\n");
+    }
+
+    TEST_CASE_TEMPLATE("Map get_or with f64 values", Backend, RX_E2E_BACKENDS) {
+        // f64 values are 2-slot inline: exercises the multi-slot copy-out on the
+        // miss branch (fallback bytes staged from the argument registers).
+        const char* source = R"(
+        fun main(): i32 {
+            var m: Map<i32, f64> = Map<i32, f64>();
+            m.insert(1, 3.5);
+            print(f"{m.get_or(1, 0.0)}");
+            print(f"{m.get_or(2, 9.25)}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "3.5\n9.25\n");
+    }
+
+    TEST_CASE_TEMPLATE("Map get_or with string values", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var m: Map<i32, string> = Map<i32, string>();
+            m.insert(1, "one");
+            print(m.get_or(1, "?"));
+            print(m.get_or(2, "?"));
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "one\n?\n");
+    }
+
+    TEST_CASE_TEMPLATE("Map get_or with struct values", Backend, RX_E2E_BACKENDS) {
+        // Struct values are passed/returned by pointer: the hit path copies out
+        // the stored struct, the miss path copies out the caller's fallback.
+        const char* source = R"(
+        struct Pt { pub x: i32; pub y: i32; }
+        fun main(): i32 {
+            var m: Map<i32, Pt> = Map<i32, Pt>();
+            m.insert(1, Pt { x = 3, y = 4 });
+            var hit: Pt = m.get_or(1, Pt { x = 0, y = 0 });
+            var miss: Pt = m.get_or(2, Pt { x = 7, y = 8 });
+            print(f"{hit.x},{hit.y}");
+            print(f"{miss.x},{miss.y}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "3,4\n7,8\n");
+    }
+
+    TEST_CASE("Map get_or rejects a move-only value type") {  // VM-only: compile-time rejection
+        // A move-only value can't be copied out (and returning the stored one
+        // would alias the map's owned storage), so get_or is a compile error.
+        const char* source = R"(
+        fun main(): i32 {
+            var m: Map<i32, List<i32>> = Map<i32, List<i32>>();
+            var d: List<i32> = List<i32>();
+            var got: List<i32> = m.get_or(1, d);
+            return 0;
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, source) == nullptr);
+    }
+
 }  // TEST_SUITE("E2E Maps")

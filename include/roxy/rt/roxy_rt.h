@@ -484,6 +484,11 @@ void  roxy_map_delete(void* self);
 int32_t roxy_map_len(void* self);
 bool  roxy_map_contains(void* self, const void* key_src);
 void* roxy_map_get(void* self, const void* key_src);
+// Single-probe lookup with a fallback: returns a pointer to the stored value
+// bytes if `key` is present, otherwise the passed-in `default_src` pointer
+// (never asserts, even on an empty map). The caller copies out `value_slot_count`
+// slots from the returned pointer, so on a miss it reads the default's bytes.
+void* roxy_map_get_or(void* self, const void* key_src, const void* default_src);
 void  roxy_map_insert(void* self, const void* key_src, const void* value_src);
 bool  roxy_map_remove(void* self, const void* key_src);
 void  roxy_map_clear(void* self);
@@ -820,6 +825,11 @@ public:
     V get(const K& key) const {
         V value;
         std::memcpy(&value, roxy_map_get(m_data, &key), sizeof(V));
+        return value;
+    }
+    V get_or(const K& key, const V& fallback) const {
+        V value;
+        std::memcpy(&value, roxy_map_get_or(m_data, &key, &fallback), sizeof(V));
         return value;
     }
     bool contains(const K& key) const {

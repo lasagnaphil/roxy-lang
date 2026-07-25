@@ -4,7 +4,7 @@ This document tracks known technical debt, incomplete implementations, and plann
 improvements. Completed items are removed as they land — the per-item records
 (measurements, rationale, regression-test pointers) live in this file's git history.
 
-Last updated: 2026-07-23
+Last updated: 2026-07-24
 
 ---
 
@@ -35,10 +35,6 @@ Last updated: 2026-07-23
   stack. An embedder can set the config; a CLI user can't. A `--max-call-depth`
   flag (and the matching `--register-file-size`, currently 65536) would cost
   little. Verified 2026-07-17: `depth(1000)` returns, `depth(10000)` overflows.
-- [ ] **Reading a missing `Map` key is a hard runtime error**: `m[k]` on an
-  absent key aborts the program with "Map key not found" rather than yielding a
-  default, so every read needs a `.contains()` guard (and a second lookup).
-  There is no `get_or` / Option-shaped alternative. Verified 2026-07-17.
 - [ ] **String stdlib gaps**: the primitives are `str_len`, `str_char_at`,
   `str_substr`, `str_concat`, `str_eq`/`str_ne`, `str_from_code`, `str_to_f64` —
   no `split`, no integer parse (only `str_to_f64`), so any text handling starts

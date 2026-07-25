@@ -1128,14 +1128,12 @@ bool roxy_map_contains(void* self, const void* key_src) {
     }
 }
 
-void* roxy_map_get(void* self, const void* key_src) {
-    auto* hdr = map_hdr(self);
-    if (hdr->capacity == 0 || hdr->length == 0) {
-        assert(false && "Map key not found");
-        return nullptr;
-    }
+// Non-asserting Robin Hood probe shared by roxy_map_get / roxy_map_get_or.
+// Returns a pointer to the stored value bytes on a hit, nullptr on a miss
+// (including an empty map).
+static void* map_probe_value(roxy_map_header* hdr, const void* key_src) {
+    if (hdr->capacity == 0 || hdr->length == 0) return nullptr;
 
-    uint8_t ksc = hdr->key_slot_count;
     uint32_t mask = hdr->capacity - 1;
     auto* k = static_cast<const uint32_t*>(key_src);
     uint64_t hash = map_hash_key(k, hdr);
@@ -1145,10 +1143,6 @@ void* roxy_map_get(void* self, const void* key_src) {
     while (true) {
         // Robin Hood termination: if the bucket is empty, or holds an
         // entry with smaller probe distance, the key isn't present.
-        // Returns nullptr on miss — VM-side wrappers turn this into a
-        // "Map key not found" error message; AOT-generated code is
-        // expected to call `roxy_map_contains` first when missing keys
-        // are possible.
         if (hdr->distances[pos] == 0 || hdr->distances[pos] < dist) {
             return nullptr;
         }
@@ -1159,6 +1153,25 @@ void* roxy_map_get(void* self, const void* key_src) {
         pos = (pos + 1) & mask;
         dist++;
     }
+}
+
+void* roxy_map_get(void* self, const void* key_src) {
+    auto* hdr = map_hdr(self);
+    void* value = map_probe_value(hdr, key_src);
+    // Returns nullptr on miss — VM-side wrappers turn this into a "Map key not
+    // found" error message; AOT-generated code is expected to call
+    // `roxy_map_contains` (or `roxy_map_get_or`) first when missing keys are
+    // possible. The assert catches a plain `.get()` on an empty map in debug
+    // builds, matching the historical behavior.
+    if (!value && (hdr->capacity == 0 || hdr->length == 0)) {
+        assert(false && "Map key not found");
+    }
+    return value;
+}
+
+void* roxy_map_get_or(void* self, const void* key_src, const void* default_src) {
+    void* value = map_probe_value(map_hdr(self), key_src);
+    return value ? value : const_cast<void*>(default_src);
 }
 
 void roxy_map_insert(void* self, const void* key_src, const void* value_src) {

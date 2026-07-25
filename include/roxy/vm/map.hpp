@@ -70,6 +70,12 @@ bool map_contains(RoxyVM* vm, const void* data, const u32* key_src);
 // pointer. For primitive values, this is also convertible to u64 via memcpy.
 const u32* map_get_ptr(RoxyVM* vm, const void* data, const u32* key_src, const char** error);
 
+// Get value pointer by key with a fallback: returns a pointer into the map's
+// value storage on success, or `default_src` (bytes the caller supplied) if the
+// key is absent. Never sets an error — a missing key yields the default. The
+// caller reads `value_slot_count * 4` bytes from the returned pointer.
+const u32* map_get_or(RoxyVM* vm, const void* data, const u32* key_src, const u32* default_src);
+
 // Insert or update a key-value pair. `key_src` and `value_src` each point to
 // `key_slot_count * 4` and `value_slot_count * 4` bytes respectively.
 void map_insert(RoxyVM* vm, void* data, const u32* key_src, const u32* value_src);

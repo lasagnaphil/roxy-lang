@@ -308,7 +308,8 @@ void CEmitter::collect_value_types(const IRFunction* func) {
                     return s.size() >= sl &&
                         memcmp(s.data() + s.size() - sl, suffix, sl) == 0;
                 };
-                if (ends_with(fn, "$$get") || ends_with(fn, "$$index") ||
+                if (ends_with(fn, "$$get") || ends_with(fn, "$$get_or") ||
+                    ends_with(fn, "$$index") ||
                     ends_with(fn, "$$pop") ||
                     fn == "__map_iter_key_ptr_at"_sv ||
                     fn == "__map_iter_value_ptr_at"_sv) {
@@ -3461,6 +3462,7 @@ static const char* lookup_static_native_mapping(StringView name) {
         {"len", "roxy_map_len"},
         {"contains", "roxy_map_contains"},
         {"get", "roxy_map_get"},
+        {"get_or", "roxy_map_get_or"},
         {"insert", "roxy_map_insert"},
         {"remove", "roxy_map_remove"},
         {"clear", "roxy_map_clear"},
@@ -3578,6 +3580,7 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
     bool is_map_init = name_eq(c_func_name, "roxy_map_init");
     bool is_map_insert = name_eq(c_func_name, "roxy_map_insert");
     bool is_map_get = name_eq(c_func_name, "roxy_map_get");
+    bool is_map_get_or = name_eq(c_func_name, "roxy_map_get_or");
     bool is_map_contains = name_eq(c_func_name, "roxy_map_contains");
     bool is_map_index = name_eq(c_func_name, "roxy_map_index");
     bool is_map_index_mut = name_eq(c_func_name, "roxy_map_index_mut");
@@ -3595,7 +3598,7 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
     int value_arg_idx = -1;   // value arg
     if (is_list_push)                            value_arg_idx = 1;
     else if (is_list_set)                        value_arg_idx = 2;
-    else if (is_map_insert || is_map_index_mut) { key_arg_idx = 1; value_arg_idx = 2; }
+    else if (is_map_insert || is_map_index_mut || is_map_get_or) { key_arg_idx = 1; value_arg_idx = 2; }
     else if (is_map_contains || is_map_get || is_map_index || is_map_remove) { key_arg_idx = 1; }
 
     Type* key_arg_type = nullptr;
@@ -3615,8 +3618,8 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
     // For struct return type → cast to (T*); for primitive → deref via *(T*).
     // map_iter_key_at / map_iter_value_at return uint64_t directly (need a
     // C-style cast to inst->type so e.g. an int32_t result narrows correctly).
-    bool returns_value_ptr = is_list_pop || is_list_get || is_map_get || is_map_index ||
-                             is_map_iter_ptr_at;
+    bool returns_value_ptr = is_list_pop || is_list_get || is_map_get || is_map_get_or ||
+                             is_map_index || is_map_iter_ptr_at;
     bool returns_value_u64 = is_map_iter_key_at || is_map_iter_value_at;
     bool result_is_struct = inst->type && inst->type->is_struct();
 

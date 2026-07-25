@@ -125,6 +125,13 @@ const u32* map_get_ptr(RoxyVM* vm, const void* data, const u32* key_src, const c
     return static_cast<const u32*>(ptr);
 }
 
+const u32* map_get_or(RoxyVM* vm, const void* data, const u32* key_src, const u32* default_src) {
+    if (data == nullptr) return default_src;
+    MapDispatchScope scope(vm, const_cast<void*>(data));
+    void* ptr = roxy_map_get_or(const_cast<void*>(data), key_src, default_src);
+    return static_cast<const u32*>(ptr);
+}
+
 void map_insert(RoxyVM* vm, void* data, const u32* key_src, const u32* value_src) {
     MapDispatchScope scope(vm, data);
     roxy_map_insert(data, key_src, value_src);

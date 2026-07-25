@@ -56,6 +56,7 @@ var m: Map<i32, string> = Map<i32, string>(64);     // pre-allocated capacity
 m.len()                 // -> i32: number of entries
 m.contains(key)         // -> bool: key exists?
 m.get(key)              // -> V: value (runtime error if missing)
+m.get_or(key, fallback) // -> V: value if present, else fallback (no error, no insert)
 m.insert(key, val)      // -> void: insert or update
 m.remove(key)           // -> bool: was key present?
 m.clear()               // -> void: remove all entries
@@ -69,6 +70,8 @@ m[key] = val;           // write (insert or update)
 ```
 
 `index` is typed `fun Map<K, V>.index(key: K): borrowed V`: the `borrowed` modifier yields a borrow of the value rather than transferring it. For a noncopyable `V` (e.g. `Map<i32, uniq Point>`) the result is `ref Point`, so `var x: uniq Point = m[k]` is a `ref → uniq` type error; for copyable `V` it is just `V` (a copy). See [lifetimes.md §17](lifetimes.md#the-borrowed-type-modifier).
+
+`get_or(key, fallback)` is the missing-key-tolerant read: a single Robin-Hood probe returns a copy of the stored value when the key is present and the `fallback` otherwise — no `"Map key not found"` abort, and (unlike a Python `setdefault`) it never inserts. It is typed `fun Map<K, V>.get_or(key: K, fallback: V): V` and is **restricted to copyable `V`**: a move-only value (`uniq`, another `List`/`Map`, `Coro`, a closure) can't be copied out, and returning the stored one would alias the map's owned storage — so those types are a compile error steering you to `.contains()` + `.get()`. The single native `roxy_map_get_or(self, key, fallback)` backs both the VM and the C backend: it returns a pointer to either the found value or the passed-in `fallback` bytes, and the caller copies `value_slot_count` slots out of it. On the VM the miss-branch fallback lives in the argument registers, so `native_map_get_or` stages inline values through a local buffer before writing the result register (guarding against a result register that overlaps the argument window).
 
 ### Printable: the synthesized `to_string`
 

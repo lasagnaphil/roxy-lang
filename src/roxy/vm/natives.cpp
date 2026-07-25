@@ -804,6 +804,36 @@ static void native_map_get(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     map_write_value_to_regs(header, value_ptr, regs, dst);
 }
 
+// map.get_or(key, fallback): return a copy of the stored value if present,
+// else the caller-supplied fallback. Layout mirrors insert — key at
+// first_arg+1, fallback value at first_arg+2 — and the result is written like
+// get(). Restricted (in sema) to copyable value types, so writing the value out
+// is always a copy, never a move that would alias the map's owned storage.
+static void native_map_get_or(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
+    u64* regs = vm->call_stack_back().registers;
+    void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
+    if (!map_ptr) {
+        vm->error = "map_get_or: null map reference";
+        return;
+    }
+    const MapHeader* header = get_map_header(map_ptr);
+    const u32* key_src = map_key_src_from_regs(header, regs, first_arg);
+    const u32* default_src = map_value_src_from_regs(header, regs, first_arg);
+    const u32* value_ptr = map_get_or(vm, map_ptr, key_src, default_src);
+    if (header->value_is_inline) {
+        // On a miss `value_ptr == default_src`, which points into the argument
+        // registers; stage through a local buffer so a `dst` that overlaps the
+        // argument window can't clobber the source mid-copy. (Inline value
+        // widths max out at 4 slots — a `weak V` value.)
+        u32 buf[4];
+        assert(header->value_slot_count <= 4);
+        memcpy(buf, value_ptr, sizeof(u32) * header->value_slot_count);
+        map_write_value_to_regs(header, buf, regs, dst);
+    } else {
+        map_write_value_to_regs(header, value_ptr, regs, dst);
+    }
+}
+
 static void native_map_insert(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
@@ -1217,6 +1247,7 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_method(native_map_len,       "fun Map<K, V>.len(): i32");
     registry.bind_method(native_map_contains,  "fun Map<K, V>.contains(key: K): bool");
     registry.bind_method(native_map_get,       "fun Map<K, V>.get(key: K): borrowed V");
+    registry.bind_method(native_map_get_or,    "fun Map<K, V>.get_or(key: K, fallback: V): V");
     registry.bind_method(native_map_insert,    "fun Map<K, V>.insert(key: K, val: V)");
     registry.bind_method(native_map_remove,    "fun Map<K, V>.remove(key: K): bool");
     registry.bind_method(native_map_clear,     "fun Map<K, V>.clear()");
