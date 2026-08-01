@@ -258,7 +258,7 @@ when_case       -> "case" Identifier ( "," Identifier )* ":" statement* ;
 
 | File | Purpose |
 |---|---|
-| `include/roxy/compiler/ast.hpp` | `WhenFieldDecl` / `CaseFieldDecl` (struct decls), `StmtWhen` / `WhenCase` |
+| `include/roxy/compiler/ast.hpp` | `WhenFieldDecl` / `WhenCaseFieldDecl` (struct decls), `StmtWhen` / `WhenCase` |
 | `include/roxy/compiler/types.hpp` | `WhenClauseInfo`, `VariantInfo`; `StructTypeInfo::when_clauses`, variant field lookup |
 | `src/roxy/compiler/parser.cpp` | parse `when` clauses and `when` statements |
 | `src/roxy/compiler/semantic.cpp` | `resolve_when_clauses`, union layout, variant-access and struct-literal validation |

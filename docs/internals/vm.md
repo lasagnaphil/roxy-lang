@@ -4,7 +4,17 @@ The Roxy VM is a register-based virtual machine. It executes bytecode against a 
 
 ## VM State
 
-`RoxyVM` holds the loaded `BCModule`, the shared register file (`u64* register_file` with `register_top` marking the current allocation top), the local stack (`u32* local_stack` of 4-byte slots with `local_stack_top`), the `Vector<CallFrame> call_stack`, a `running` flag, and an `error` string.
+`RoxyVM` holds:
+
+- **`roxy_ctx ctx`** — embedded **first**, so a `RoxyVM*` can be reinterpreted as a `roxy_ctx*`. The interpreter points the thread-local context at it on every public entry; natives and runtime helpers reach it via `roxy_get_ctx()` (see [c-backend.md](c-backend.md)).
+- **Register file** — `u64* register_file` with `register_top` marking the current allocation top.
+- **Local stack** — `u32* local_stack` of 4-byte slots with `local_stack_top`, for struct data.
+- **Global slots** — `u32* global_slots`, module-level global storage; see [globals.md](globals.md).
+- **Call stack** — a pre-allocated `CallFrame[]` with `call_stack_size` / `call_stack_capacity` (no `Vector` push/capacity check on the call path).
+- **Heap** — `SlabAllocator` (plugged into `ctx` through a `roxy_allocator` vtable) and the `StringInternTable`.
+- **Dispatch side-tables** — `map_dispatch` (per-map `Hash`/`Eq` bytecode indices for `Map<Struct, V>`) and `closure_env_dtors` (env `type_id` → destructor index).
+- **Exception state** — the in-flight exception pointer, its `type_id`, and its `message()` function index.
+- **`running` flag and `error` string.**
 
 Each `CallFrame` records its `BCFunction*`, the saved program counter (`pc`), a `registers` window into `register_file`, the caller's `return_reg`, and `local_stack_base` (its base slot in the local stack). See `include/roxy/vm/vm.hpp` for the full structs.
 
@@ -15,8 +25,14 @@ bool  vm_init(RoxyVM* vm, const VMConfig& config = VMConfig());
 void  vm_destroy(RoxyVM* vm);
 bool  vm_load_module(RoxyVM* vm, BCModule* module);
 bool  vm_call(RoxyVM* vm, StringView func_name, Span<Value> args);
+bool  vm_call_index(RoxyVM* vm, u32 func_index, Span<Value> args);
 Value vm_get_result(RoxyVM* vm);
+const char* vm_get_error(RoxyVM* vm);
+void  vm_clear_error(RoxyVM* vm);
+void  vm_register_native(RoxyVM* vm, StringView name, NativeFunction func, u32 param_count);
 ```
+
+`VMConfig` sets `register_file_size` (default 65536 slots), `local_stack_size` (262144 4-byte slots = 1 MB), and `max_call_depth` (1024).
 
 ## Value Representation
 
@@ -43,7 +59,7 @@ struct Value {
 
 ## Interpreter Loop
 
-`interpret()` is a switch-based dispatch loop (chosen for portability — works with MSVC/clang-cl on Windows). It decodes each instruction's opcode and operands, then dispatches on the opcode. The hot frame state (`pc`, `registers`, `func`) is cached in locals and refreshed on call/return.
+`interpret()` uses **computed-goto (threaded) dispatch** under GCC/Clang: each handler ends in `DISPATCH()`, which fetches the next instruction and jumps through a 256-entry `dispatch_table` of label addresses, giving the branch predictor a distinct indirect-branch site per opcode. A `switch`-based fallback is kept behind a `#if defined(__GNUC__) || defined(__clang__)` guard for MSVC. The hot frame state (`pc`, `registers`, `func`) is cached in locals and refreshed on call/return. See [vm-optimization.md](vm-optimization.md) for the dispatch, call/return, and fused-branch work.
 
 Call and return manage both stacks:
 
@@ -52,8 +68,8 @@ Call and return manage both stacks:
 
 Other notes:
 
-- Division by zero and array bounds violations are checked; on failure the handler sets `vm->error` and reports an error.
-- `SPILL_REG` / `RELOAD_REG` move register values to/from the local stack for functions that exceed the 255-register limit (see `docs/internals/bytecode.md`).
+- Division by zero sets `vm->error` and halts. An out-of-bounds `list[i]` **read** and a missing-key `m[k]` read instead throw catchable `IndexError` / `KeyError` exceptions — the compiler emits the bounds check (list) or a null-slot branch on `INDEX_TRYADDR_MAP` (map) in IR, so the opcode itself never traps on that path. The remaining index opcodes (`.get()`, element-lvalue borrows) still set `vm->error`. See [exceptions.md](exceptions.md).
+- `SPILL_REG` / `RELOAD_REG` move register values to/from the local stack for functions that exceed the 255-register limit (see [bytecode.md](bytecode.md)).
 
 ## Files
 

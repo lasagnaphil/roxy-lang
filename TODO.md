@@ -4,13 +4,59 @@ This document tracks known technical debt, incomplete implementations, and plann
 improvements. Completed items are removed as they land — the per-item records
 (measurements, rationale, regression-test pointers) live in this file's git history.
 
-Last updated: 2026-07-24
+Last updated: 2026-08-02
 
 ---
 
 ## High Priority
 
-(none currently)
+All three of the following were found on 2026-08-02 by compiling `CLAUDE.md`'s
+example program through the `roxy` CLI. Each reproduces on the CLI (i.e. through
+`Compiler::compile()`) and none is caught by the test suite — see the
+**optimizer is untested end-to-end** entry under Testing Gaps for why.
+
+- [ ] **Compiling any coroutine crashes the compiler (null deref in DCE).**
+  `roxy` segfaults in `run_dce` → `for_each_operand(inst = nullptr)`
+  (`ir_optimize.hpp:139`) on *every* program containing a coroutine. Repro:
+  ```roxy
+  fun gen(): Coro<i32> { yield 1; }
+  fun main() { }        // crashes even though gen() is never called
+  ```
+  The worklist loop in `run_dce` reads `func->values_by_id[id]` without the
+  null-check `consider()` applies, so a coroutine-lowered instruction whose
+  result was never registered in `values_by_id` (or was already poisoned) is
+  dereferenced. A null guard at the pop site silences the crash, but the real
+  question is which coroutine-lowering path leaves an instruction out of
+  `values_by_id` — fix that, and keep the invariant assertion. Coroutines pass
+  their E2E tests because that harness never runs the optimizer.
+
+- [ ] **A destructor on a child struct fails to link when the parent has none.**
+  ```roxy
+  struct Entity { hp: i32; }
+  struct Player : Entity { mana: i32; }
+  fun new Player() { self.hp = 1; self.mana = 50; }
+  fun delete Player() { print("removed"); }
+  fun main(): i32 { var p: uniq Player = uniq Player(); return 0; }
+  ```
+  → `Internal error: function not found during bytecode lowering`. Destructor
+  chaining (child-first, then parent — see `docs/internals/inheritance.md`)
+  emits a call to `Entity$$delete`, which is never synthesized when the parent
+  declares no destructor. Works when the parent *does* declare one, and fails
+  for both stack and `uniq` values. `tests/e2e/test_inheritance.cpp` only
+  covers the both-have-destructors case.
+
+- [ ] **An operator result cannot be the left operand of another operator.**
+  ```roxy
+  var c: Vec2 = (a + b) * 2.0f;   // Internal error: expression is not a valid lvalue
+  var d: Vec2 = (a + b) + b;      // same
+  var e: Vec2 = a.add(b).mul(2.0f);   // works
+  var f: Vec2 = (a + b).mul(2.0f);    // works
+  ```
+  Fails in IR generation (before the optimizer). Operator dispatch takes the
+  receiver's address for the `self` argument, and a call result is a temporary
+  with no lvalue; explicit method-call chaining goes through a path that
+  materializes one. `CLAUDE.md`'s example program uses this construct and does
+  not currently compile as written.
 
 ---
 
@@ -126,6 +172,18 @@ history. Remaining:
 ---
 
 ## Testing Gaps
+
+- [ ] **The IR optimizer is untested end-to-end.** `tests/e2e/test_helpers.cpp`'s
+  `compile()` runs IRBuilder → `coroutine_lower` → `IRValidator` → `BytecodeBuilder`
+  and **never calls `optimize_module()`**, while the real `Compiler::compile()`
+  (and therefore the `roxy` CLI and every shipped program) does. So the whole E2E
+  suite — ~1,400 cases across both backends — validates *unoptimized* IR, and the
+  optimizer's only coverage is `tests/unit/test_ir_optimize.cpp`'s hand-built
+  functions. This is how a crash on every coroutine program (High Priority above)
+  sits in a fully green suite. Fix: run the E2E harness through the same pipeline
+  as `Compiler::compile()`, or at minimum add an optimized-pipeline variant of the
+  parametric backend harness. Until then, treat "E2E green" as saying nothing
+  about the optimizer.
 
 - Fuzzing for the lexer/parser/LSP parser **landed** — coverage-guided libFuzzer
   targets in `tests/fuzz/` (`fuzz_lexer`/`fuzz_parser`/`fuzz_lsp_parser`, built

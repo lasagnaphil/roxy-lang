@@ -27,7 +27,12 @@
 - Struct inheritance with subtyping and method inheritance
 - `super` keyword for parent method/constructor calls
 - Constructor and destructor chaining
-- Generic functions and structs with monomorphization (explicit type args)
+- Enums, and tagged unions via a `when` clause in the struct body, with `when` pattern matching
+- Maps (`Map<K, V>`, Robin Hood open addressing) alongside lists
+- Traits with required/default methods, trait inheritance, and operator overloading
+- Function overloading for free functions and natives (`print` is an overload set)
+- Module-level globals with ordered initialization and RAII teardown
+- Generic functions and structs with monomorphization, type inference, and trait bounds
 - Generator-style stackless coroutines (`Coro<T>` with `yield`, `.resume()`, `.done()`)
 - Recursive types: self-referential and mutually recursive structs via `uniq` indirection (linked lists, trees, ASTs), with compile-time value-cycle detection and descriptor-driven recursive destruction
 - LSP server for IDE support (error-recovering parser, diagnostics, go-to-definition, completions, hover, find references, rename)
@@ -36,10 +41,22 @@
 - AOT compilation to C — **complete**: SSA IR → C/C++ transpilation with a unified runtime, covering **all** language features (incl. coroutines, exceptions, and closures). The interpreter is for development; the C backend compiles to native for shipping.
 
 **Planned:**
-- Full LSP semantic analysis (TypeCache/TypeEnv integration) and polish (signature help, code actions, workspace symbols)
+- Full LSP semantic analysis (routing every feature through `LspAnalysisContext`) and polish (signature help, code actions, workspace symbols)
 - Further IR optimizations (global CSE/GVN, loop-invariant code motion, function inlining, tail-call optimization)
+- Nullable reference types (`T?`), variant constructors (`Type.Variant { … }`), and flow-sensitive typing of tagged-union fields
+
+Known bugs are tracked in [../TODO.md](../TODO.md).
 
 ## How does it look like?
+
+The sketch below is the **original design vision**, not current syntax — it
+predates the implementation and several constructs in it do not exist: nullable
+types (`Skill?`, returning `null`), variant constructors
+(`SkillType.Attack { … }`), `map.get_or_default`, parenthesis-less `if`/`while`
+conditions, and the `int`/`float` type names (Roxy uses `i32`/`f32`/`f64`).
+Enum variants are written `Element::Fire`, not `Element.Fire`. For syntax that
+compiles today see [`examples/`](../examples/) and the reference program at the
+top of [`CLAUDE.md`](../CLAUDE.md).
 
 ```kotlin
 import randutils;
@@ -99,7 +116,7 @@ fun new Player.default_character() { // custom constructor
     add_skill(Skill {
         str = "Regular Defend", hit_chance = 0.95,
         type = SkillType.Defend {
-            defend = DefendSkill { damage*reduce*multiplier = 0.50 }
+            defend = DefendSkill { damage_reduce_multiplier = 0.50 }
         }
     });
 }

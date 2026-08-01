@@ -5,8 +5,10 @@ The Roxy LSP server provides IDE features — diagnostics, completions, hover, g
 **Implemented (Phases 1–7):** error-recovering CST parser, per-file indexing + document symbols, global index + go-to-definition, completions, hover, semantic diagnostics, find references, rename.
 
 **Pending:**
-- **Phase 8 — Full semantic analysis:** replace the lightweight string-based `LspTypeResolver` with the compiler's `Semantic`/`TypeCache`/`TypeEnv` pass for precise generic inference, trait dispatch, and chained-expression completions.
+- **Phase 8 — Full semantic analysis:** `LspAnalysisContext` already runs the compiler's real `SemanticAnalyzer`/`TypeCache`/`TypeEnv` over the workspace; what remains is routing *every* feature through it (several still answer from the string-typed global index) for precise generic inference, trait dispatch, and chained-expression completions.
 - **Phase 9 — Polish:** signature help, code actions, workspace symbols, semantic token highlighting, threading/cancellation, performance tuning.
+
+The server is **single-threaded** today: requests are handled in order on the read loop. Threading and cancellation are Phase 9.
 
 ## Architecture: Map-Reduce
 
@@ -80,7 +82,7 @@ For semantic analysis, the CST lowers to the compiler's existing AST format (`ls
 
 ## Per-File Index (Stubs)
 
-The indexer runs after the error-recovering parse and extracts top-level declarations into lightweight stubs (`FileStubs`, holding vectors of `StructStub`, `EnumStub`, `FunctionStub`, `MethodStub`, `ConstructorStub`, `DestructorStub`, `TraitStub`, `TraitImplStub`, `ImportStub`, `GlobalVarStub`; see `lsp/indexer.hpp`). Each stub captures the declaration's **syntax** — name, ranges (full and name-token), visibility, params/fields with *unresolved* `TypeExpr*` types, generics, trait associations — without resolving types. A `content_hash` per file supports change detection.
+The indexer runs after the error-recovering parse and extracts top-level declarations into lightweight stubs (`FileStubs`, holding vectors of `StructStub`, `EnumStub`, `FunctionStub`, `MethodStub`, `ConstructorStub`, `DestructorStub`, `TraitStub`, `ImportStub`, `GlobalVarStub`; see `lsp/indexer.hpp`). Each stub captures the declaration's **syntax** — name, ranges (full and name-token), visibility, params/fields with types as *unresolved* `TypeRef` strings, generics, trait associations — without resolving types. Trait implementations are recorded on the `MethodStub` (its `trait_name`), not as a separate stub kind.
 
 | Declaration | Extracted information |
 |-------------|----------------------|
@@ -99,23 +101,22 @@ The indexer does **not** look inside function bodies — bodies are analyzed laz
 
 ## Global Index
 
-The global index (`GlobalIndex`, see `lsp/global_index.hpp`) merges all per-file stubs into unified lookups: module→file mapping, qualified-name→declaration maps (`find_struct`, `find_enum`, `find_trait`, `find_function`), struct→associated-declaration maps (methods, constructors, destructors, trait impls), plus cross-cutting queries (`find_trait_implementations`, `find_subtypes`). It also tracks type information needed by lazy analysis: struct parents, field types, field-default flags (`field_has_default()`), and function/method return types. All maps are `tsl::robin_map`.
+The global index (`GlobalIndex`, see `lsp/global_index.hpp`) merges all per-file stubs into unified lookups keyed by name: `find_struct` / `find_enum` / `find_trait` / `find_function` / `find_global`, and struct-qualified `find_method` / `find_constructor` / `find_field`, each returning a `SymbolLocation` (uri + ranges). `find_any` collects every category for one name. It also caches the string-typed information features need without full analysis: struct parents (`find_struct_parent`), field and return types, signatures, parameter counts, field-default flags (`field_has_default`), and `for_each_*` enumeration for completions. All maps are `tsl::robin_map`.
 
 ### Update on file edit
 
 1. Re-lex and re-parse the file (error-recovering parser).
 2. Re-run the indexer to produce new `FileStubs`.
-3. Compare against the old stubs by content hash.
-4. If top-level declarations changed: `update_file()` rebuilds the file's index entries and invalidates dependent caches.
-5. If only function bodies changed: no index update (bodies aren't indexed).
+3. `update_file()` replaces that file's index entries (`remove_file` + re-insert).
+4. Function bodies are not indexed, so body-only edits change nothing in the index.
 
 ## Lazy Semantic Analysis
 
-Full type checking runs on demand, not eagerly for the whole project. When the user requests completions, hover, or diagnostics inside a function body, `LspTypeResolver` (`lsp/lsp_type_resolver.hpp`) processes that function against the global index. It mirrors the compiler's passes on a subset:
+Full type checking runs on demand, not eagerly for the whole project. `LspAnalysisContext` (`lsp/lsp_analysis_context.hpp`) owns the persistent type state — a `BumpAllocator`, `TypeEnv`, `ModuleRegistry`, the builtin `NativeRegistry`, and the declaration-level `SymbolTable` — and splits the compiler's passes in two:
 
-**Phase 1 — Resolve types from index (cached):** On first use (or after index invalidation), resolve all struct/enum/trait stubs into types, populating fields, enum variants, method signatures, and trait definitions. Equivalent to compiler passes 1–2 but driven from stubs. Re-runs only when the global index changes.
+**`rebuild_declarations(files)` — compiler passes 0–2, whole workspace (cached):** reset the type state, lower every file's CST to a declaration AST, and run import resolution, type collection, and member/signature resolution. Bumps `declaration_version()`; re-runs only when top-level declarations change.
 
-**Phase 2 — Analyze function body (per-request):** Lower the function body CST to AST and run the compiler's expression/statement analysis (type checking, inference, symbol resolution) in a temporary scope, collecting diagnostics, resolved types, and symbol references. Equivalent to compiler pass 3, scoped to one function.
+**`analyze_function_body(fn_cst, allocator)` — compiler pass 3, one function (per-request):** lower that function's CST to a fresh AST and run the real `SemanticAnalyzer` over its body, returning a `BodyAnalysisResult` (lowered `Decl*`, populated `SymbolTable*`, `SemanticError`s). A fresh AST per call is required — analysis is single-shot and rewrites the tree it walks (see the annotation-contract block in `ast.hpp`). Helpers on top of it (`collect_local_variables`, `resolve_cst_expr_type`, `type_to_string`) answer the feature handlers' questions.
 
 ```
                     ┌─────────────────────────────────┐
@@ -131,7 +132,7 @@ Full type checking runs on demand, not eagerly for the whole project. When the u
 
 Layer 1 depends only on top-level declarations, so it is stable across most edits. Layer 2 is rebuilt per-function on body edits; since functions are typically small, this is fast.
 
-> The lazy analyzer is currently a lightweight string-based resolver. Phase 8 will replace it with the compiler's full `Semantic`/`TypeCache`/`TypeEnv` pass.
+> Not every feature is on this path yet — several answer from the string-typed `GlobalIndex` instead of resolved `Type*`s. Routing them all through `LspAnalysisContext` is Phase 8.
 
 ## LSP Features
 
@@ -143,24 +144,9 @@ Layer 1 depends only on top-level declarations, so it is stable across most edit
 - **Document Symbols** (`documentSymbol`) — read directly from per-file stubs; no semantic analysis.
 - **Rename** (`rename`) — identify the symbol (go-to-def logic), find all references, and emit a cross-file `WorkspaceEdit`; method/constructor renames also update mangled-name references.
 
-## Threading Model
+## Threading Model (planned — Phase 9)
 
-```
-                    ┌─────────────────────────────────┐
-                    │         Main Thread              │
-                    │  (LSP message dispatch)          │
-                    │  didOpen/didChange ──> Queue     │
-                    │  completion/hover  ──> Queue     │
-                    └────────────┬────────────────────┘
-                    ┌────────────▼────────────────────┐
-                    │      Analysis Thread Pool        │
-                    │  Worker 1: Re-index file A       │
-                    │  Worker 2: Analyze function body  │
-                    │  Worker 3: Re-index file B       │
-                    └──────────────────────────────────┘
-```
-
-The main thread receives LSP messages and dispatches to workers; workers run indexing (parallelizable per file) and lazy analysis. On a new edit, in-progress analysis for that file is cancelled and restarted, with a generation counter to discard stale results. Requests are prioritized: `completion`/`signatureHelp` (high, user typing) preempt `hover`/`definition` (medium, navigating), which preempt `references`/`rename`/`diagnostics` (low, background). Threading/cancellation is part of pending Phase 9.
+The server is single-threaded today; every request is handled synchronously on the read loop. The intended shape: a main thread that receives LSP messages and dispatches to a worker pool running indexing (parallelizable per file) and lazy analysis, with in-progress analysis for an edited file cancelled and restarted behind a generation counter, and requests prioritized `completion` > `hover`/`definition` > `references`/`rename`/`diagnostics`.
 
 ## Reused Components
 
@@ -184,19 +170,20 @@ The LSP server shares existing compiler infrastructure rather than duplicating i
 | `include/roxy/lsp/lsp_parser.hpp` | Error-recovering parser producing CST |
 | `include/roxy/lsp/indexer.hpp` | Per-file stub extraction |
 | `include/roxy/lsp/global_index.hpp` | Merged index: qualified lookups, type info, field defaults, param counts |
-| `include/roxy/lsp/cst_lowering.hpp` | CST-to-AST lowering for function bodies |
-| `include/roxy/lsp/lsp_type_resolver.hpp` | Lazy per-function type resolution + semantic diagnostics |
+| `include/roxy/lsp/cst_lowering.hpp` | CST-to-AST lowering for declarations and function bodies |
+| `include/roxy/lsp/lsp_analysis_context.hpp` | Persistent type state + declaration rebuild + per-body analysis |
 | `include/roxy/lsp/transport.hpp` | JSON-RPC over stdin/stdout |
 | `include/roxy/lsp/server.hpp` | Request dispatch, document state, feature handlers |
 | `include/roxy/lsp/protocol.hpp` | LSP protocol types (Position, Range, etc.) |
 | `src/roxy/lsp/*.cpp` | Implementations |
-| `tests/unit/test_lsp_parser.cpp` | CST parsing, error recovery (15 cases) |
-| `tests/unit/test_global_index.cpp` | Index CRUD, qualified lookups (21 cases) |
-| `tests/unit/test_lsp_type_resolver.cpp` | Variable scope, type resolution (15 cases) |
-| `tests/unit/test_lsp_completion.cpp` | Dot, `::`, bare, type completions (16 cases) |
-| `tests/unit/test_lsp_hover.cpp` | Hover on vars, functions, fields, types (14 cases) |
-| `tests/unit/test_lsp_semantic_diagnostics.cpp` | Unresolved symbols, type mismatches, missing fields (31 cases) |
-| `tests/unit/test_lsp_references.cpp` | Find references, rename, symbol categories (15 cases) |
+| `tests/unit/test_lsp_parser.cpp` | CST parsing, error recovery |
+| `tests/unit/test_indexer.cpp` | Per-file stub extraction |
+| `tests/unit/test_cst_lowering.cpp` | CST → AST lowering |
+| `tests/unit/test_global_index.cpp` | Index CRUD, qualified lookups |
+| `tests/unit/test_lsp_analysis_context.cpp` | Declaration rebuild, per-body analysis |
+| `tests/unit/test_lsp_completion.cpp` | Dot, `::`, bare, type completions |
+| `tests/unit/test_lsp_hover.cpp` | Hover on vars, functions, fields, types |
+| `tests/unit/test_lsp_references.cpp` | Find references, rename, symbol categories |
 | `tests/fuzz/fuzz_lsp_parser.cpp` | Coverage-guided libFuzzer target (see `tests/fuzz/README.md`) |
 | `tests/unit/test_fuzz_regression.cpp` | Replays the seed corpus + `examples/` through the parser harnesses each test run |
 

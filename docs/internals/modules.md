@@ -40,13 +40,13 @@ fun helper(): i32 { return 42; }               // private
 
 ## Builtin Prelude
 
-Built-in functions live in a special `"builtin"` module (`BUILTIN_MODULE_NAME`, `vm/natives.hpp`) auto-imported as a prelude, so they are available without any explicit import:
+Built-in functions live in a special `"builtin"` module (`BUILTIN_MODULE_NAME`, `vm/natives.hpp`) auto-imported as a prelude, so they are available without any explicit import. The registration list in `src/roxy/vm/natives.cpp` is authoritative; broadly:
 
-- `print(s: string)` — print string to stdout
-- `str_concat(a: string, b: string): string` — concatenate strings
-- `str_eq(a: string, b: string): bool` — string equality
-- `str_ne(a: string, b: string): bool` — string inequality
-- `str_len(s: string): i32` — string length
+- `print` — an **overload set**, one member per Printable primitive (`string`, `bool`, `i32`/`i64`/`u32`/`u64`, `f32`/`f64`). Structs, enums, and containers reach it through the sema-side `Printable` fallback (`print(v)` → `print(v.to_string())`); see [overloading.md](overloading.md).
+- `to_string` / `hash` — likewise overload sets over the primitives, backing the `Printable` and `Hash` traits.
+- Strings — `str_concat`, `str_eq`, `str_ne`, `str_len`, `str_char_at`, `str_substr`, `str_from_code`, `str_to_f64`.
+- Misc — `sqrt`, `clock`, `read_file`.
+- `List<T>` / `Map<K, V>` are registered as generic types with their method sets (plus `__list_*` / `__map_*` internal helpers the compiler emits, not user-callable).
 
 ```roxy
 fun main(): i32 {

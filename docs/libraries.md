@@ -8,7 +8,10 @@ These libraries are directly embedded in the roxy library, which means as a user
   - For fast XXH3 hash functions (64-bit)
   - Inlining turned on for best performance
 - **tsl robin-map 1.2.1**
-  - For implementing a fast intern table for strings
+  - The project's default hash map/set — string interning, symbol and type
+    lookups, IR/lowering side tables, the LSP index. Prefer it over linear scans
+    for any keyed lookup. Its power-of-two bucketing needs well-avalanched
+    hashes, which is why keys hash through XXH3 rather than an ad-hoc mix.
 - **doctest 2.4.12**
   - Testing framework for unit and E2E tests
   - Header-only, minimal dependencies

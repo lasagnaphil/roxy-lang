@@ -1,6 +1,6 @@
 # VM Interpreter Optimization
 
-Optimization roadmap for the bytecode VM interpreter. These are runtime optimizations independent of the SSA IR passes (compile-time optimizations live in `optimization.md`). Phases 1–4 are implemented; the rest are a forward-looking plan. See the [summary table](#updated-summary) for per-phase status.
+Optimization roadmap for the bytecode VM interpreter. These are runtime optimizations independent of the SSA IR passes (compile-time optimizations live in `optimization.md`; compiler *compile-time* work lives in `../../OPTIMIZATION.md`). See the [summary table](#updated-summary) for per-phase status — phases 1–4, 8 and 13 are done, 6, 9 and 14 landed in a different shape than planned here, and the rest are a forward-looking plan.
 
 **Current state:** The original switch-based dispatch loop ran the quicksort benchmark (100K elements) at ~86ms — on par with Python (~87ms) and ~16x slower than C -O2 (~5ms). Phases 1–4 close a large part of that gap.
 
@@ -51,11 +51,9 @@ A `#if defined(__GNUC__) || defined(__clang__)` guard keeps the switch version f
 - **5B. `__attribute__((flatten))` on `interpret()` — rejected.** Tested; inlining all callees raised icache pressure and was slower overall.
 - **5C. Profile-Guided Optimization — not yet.** Build with `-fprofile-generate`, run the benchmark, rebuild with `-fprofile-use` to let the compiler lay out branches/inlining from real profiles. Typical 10–20% on interpreter-heavy code.
 
-## Phase 6: Immediate-Operand Arithmetic (ADDI) — Not started
+## Phase 6: Immediate-Operand Arithmetic (ADDI) — Superseded by RK encoding
 
-**Gain: ~5–15%.** Loop increments (`i = i + 1`) currently take `LOAD_INT tmp, 1; ADD_I i, i, tmp`. A fused `ADDI dst, src, imm8` reinterprets the ABC `c` field as a signed i8 (−128..127), eliminating the LOAD_INT and freeing a register; same for `SUBI`/`MULI`. Emitted either via a peephole pass over `LOAD_INT imm; BINOP dst, src, tmp` (where `imm` fits i8 and `tmp` is dead) or directly at lowering when an IR operand is a small constant.
-
-**Files:** `include/roxy/vm/bytecode.hpp`, `src/roxy/compiler/lowering.cpp`, `src/roxy/vm/interpreter.cpp`.
+The goal — stop materializing `LOAD_INT tmp, 1` before `ADD_I i, i, tmp` — was met by **RK (register-or-constant) opcode variants** rather than an i8 immediate field. `ADD_I_RK dst, src1, const_idx` reads its right operand from the constant pool, so it covers *every* constant (not just −128..127) and needs no separate encoding for floats. `compute_const_use_modes` marks constants whose uses are all RK-eligible and skips both their register allocation and their `LOAD_*`. See [bytecode.md](bytecode.md) → "RK Encoding".
 
 ## Phase 7: Inline Trivial Native Calls — Not started
 
@@ -63,15 +61,15 @@ A `#if defined(__GNUC__) || defined(__clang__)` guard keeps the switch version f
 
 **Files:** `include/roxy/vm/bytecode.hpp`, `src/roxy/compiler/lowering.cpp`, `src/roxy/vm/interpreter.cpp`.
 
-## Phase 8: String Constant Interning — Not started
+## Phase 8: String Constant Interning — Done
 
-**Gain: ~5–20% for string-heavy code.** Every `LOAD_CONST` of a String calls `string_alloc()` (heap alloc + memcpy) — so a constant f-string prefix re-allocates every loop iteration. Pre-allocate all string constants at module load into a flat `vm->string_constants[]`, and have `LOAD_CONST` return the interned pointer. Interned strings live for the module's lifetime, so they need an ObjectHeader flag (or separate ref-count scheme) so `DEL_OBJ` doesn't free them.
+Every `LOAD_CONST` of a String used to call `string_alloc()` (heap alloc + memcpy), so a constant f-string prefix re-allocated on every loop iteration. `vm_load_module` now pre-interns every String constant into `BCConstant::as_string.obj`, making `LOAD_CONST` a pointer load. `load_constant` keeps an un-interned fallback as defense in depth. Interned constants are immortal for the module's lifetime, so the string ref-counting ops (`STR_RETAIN`/`STR_RELEASE`) no-op on them.
 
-**Files:** `src/roxy/vm/vm.cpp`, `include/roxy/vm/vm.hpp`, `src/roxy/vm/interpreter.cpp`.
+**Files:** `src/roxy/vm/vm.cpp`, `src/roxy/vm/interpreter.cpp`, `src/roxy/rt/string_intern.cpp`.
 
-## Phase 9: Float Compare-and-Branch Fusion — Not started
+## Phase 9: Float Compare-and-Branch Fusion — Done for f64, not f32
 
-**Gain: ~3–8% for float-heavy code.** Phase 3's peephole only fuses integer compares; physics/vector-math loops also compare floats. Adds 12 opcodes — `JMP_IF_{LT,LE,GT,GE,EQ,NE}_F` and `…_D` — with the same two-word encoding as the integer variants. Extends the `fuse_compare_branch()` switch to match `EQ_F`–`GE_F` / `EQ_D`–`GE_D`; handlers decode operands via `reg_as_f32()` / `reg_as_f64()`.
+`JMP_IF_{LT,LE,GT,GE,EQ,NE}_D` and their RK variants exist (0xA6–0xAF, 0xDB–0xDC) and `fuse_compare_branch()` matches `EQ_D`–`GE_D`. The f32 half is still unimplemented — f32 comparisons emit a separate compare + branch.
 
 **Files:** `include/roxy/vm/bytecode.hpp`, `src/roxy/compiler/lowering.cpp`, `src/roxy/vm/interpreter.cpp`.
 
@@ -95,15 +93,13 @@ A `#if defined(__GNUC__) || defined(__clang__)` guard keeps the switch version f
 
 **Files:** `src/roxy/vm/interpreter.cpp`.
 
-## Phase 13: Constant Folding at Lowering — Not started
+## Phase 13: Constant Folding — Done (in the IR, not at lowering)
 
-**Gain: ~2–5%.** Lowering emits instructions for constant-to-constant ops (`LOAD_INT 5; LOAD_INT 3; ADD_I → LOAD_INT 8`; `NEG_I` on an immediate). Best done as an SSA IR pass where constants are tracked: replace binary/unary ops with all-`Const` operands by a folded `Const`, propagating through chains, for int/float/bool ops. Alternatively fold during emission when both operands are `LOAD_INT`/`LOAD_CONST`.
+Done as an SSA IR pass rather than at emission: constant folding, algebraic simplification, and cast folding are applied eagerly during IR building (`compiler/ir_fold.cpp`), so lowering never sees a constant-to-constant op. See [optimization.md](optimization.md) → Phase 1.
 
-**Files:** `src/roxy/compiler/ir_builder.cpp` (or a new `ir_constfold.cpp`), or `src/roxy/compiler/lowering.cpp`.
+## Phase 14: Specialized small-struct copy — Done (as opcodes, not memcpy)
 
-## Phase 14: STRUCT_COPY with memcpy — Not started
-
-**Gain: ~1–2%.** `STRUCT_COPY` copies slots with a for-loop; an explicit `memcpy(dst, src, slot_count * sizeof(u32))` guarantees the platform's SIMD path for larger structs.
+`STRUCT_COPY_1`–`STRUCT_COPY_4` (0xBA–0xBD) handle the common 1–4-slot cases with a straight-line load/store sequence and an implicit slot count, removing the loop entirely. The general `STRUCT_COPY` still loops over slots; switching it to `memcpy` for large structs remains open (~1–2%).
 
 **Files:** `src/roxy/vm/interpreter.cpp`.
 
@@ -116,14 +112,18 @@ A `#if defined(__GNUC__) || defined(__clang__)` guard keeps the switch version f
 | 3 | Fused compare+branch (integer) | 5-15% | Medium | Done |
 | 4 | List index fast path | 5-10% | Low | Done |
 | 5 | Minor optimizations | 1-5% each | Trivial-Low | Partial (5A done, 5B rejected, 5C not yet) |
-| 6 | Immediate-operand arithmetic (ADDI) | 5-15% | Medium | Not started |
+| 6 | Immediate-operand arithmetic (ADDI) | 5-15% | Medium | Superseded — RK opcode variants |
 | 7 | Inline trivial natives (LIST_LEN, etc.) | 5-10% | Low-Medium | Not started |
-| 8 | String constant interning | 5-20% | Low | Not started |
-| 9 | Float compare-and-branch fusion | 3-8% | Low | Not started |
+| 8 | String constant interning | 5-20% | Low | Done |
+| 9 | Float compare-and-branch fusion | 3-8% | Low | Done (f64); f32 not started |
 | 10 | Tail call optimization | 10-25% | High | Not started |
 | 11 | Branch prediction hints | 2-5% | Trivial | Not started |
 | 12 | Local stack base caching | 1-3% | Trivial | Not started |
-| 13 | Constant folding at lowering | 2-5% | Medium | Not started |
-| 14 | STRUCT_COPY with memcpy | 1-2% | Trivial | Not started |
+| 13 | Constant folding | 2-5% | Medium | Done — in the IR builder |
+| 14 | Specialized small-struct copy | 1-2% | Trivial | Done (1–4 slots); general memcpy open |
 
 **Target:** Bring quicksort from ~86ms toward ~40–55ms (2x faster than Python, ~8–10x of C).
+
+> Measure on an optimized build, never the default `-O0` `build/`, and prefer the
+> `ENABLE_BC_PROFILE` per-opcode profiler for attribution — see
+> [profiling.md](profiling.md).

@@ -76,7 +76,9 @@ v5 = copy v3              ... uses v3 ...
 ... uses v5 ...     →     (copy removed by DCE)
 ```
 
-**Pure-Copy assumption:** every `IROp::Copy` is emitted by `gen_unary_expr` for `ref expr` — a borrow that retypes a uniq pointer as a ref pointer (same representation, 1 slot), always semantically `result := source`. A future Copy with runtime meaning (e.g. a strong-ref bump) must use a new opcode and be added to `has_side_effect`.
+**Pure-Copy assumption:** a propagatable `IROp::Copy` is a borrow that retypes a uniq pointer as a ref pointer (same representation, 1 slot), always semantically `result := source`. A future Copy with runtime meaning (e.g. a strong-ref bump) must use a new opcode and be added to `has_side_effect`.
+
+**The `no_copy_prop` exception:** a call-site heap-root borrow rides a `Copy` flagged `IRInst::no_copy_prop`, and `is_copy_candidate` skips those. The flag exists to keep that borrow a *distinct SSA value* — hence a distinct register from the receiver it straddles — so its `RefDec` + `Nullify` cleanup cannot clobber the owner's own `Delete` record. Propagating it away would collapse the two and reintroduce spurious free-traps; see [lifetimes.md](lifetimes.md) → "Call-site heap-root borrows".
 
 Phase 2 only removes/rewrites in place — it never creates unreachable blocks, so no extra `reorder_blocks_rpo()` is needed for it alone.
 

@@ -21,10 +21,10 @@ Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA
 |----------|-----|
 | Fail-fast parser | Error-recovering parser |
 | AST (lossy) | CST (lossless, preserves trivia) |
-| Batch processing | Incremental, lazy analysis |
-| Arena allocation | NodeID + hash map |
+| Batch processing | Per-file indexing + lazy per-function analysis |
+| One arena per compile | One arena per parse (re-parsed per keystroke) |
 
-The LSP side reuses the shared lexer and token kinds but runs an error-recovering parser over a lossless CST with incremental, NodeID-keyed storage. See [lsp-server.md](lsp-server.md) for that architecture.
+The LSP side reuses the shared lexer, token kinds, AST, and — through `LspAnalysisContext` — the semantic analyzer itself, but runs its own error-recovering parser over a lossless CST. See [lsp-server.md](lsp-server.md) for that architecture.
 
 ## Key Design Decisions
 
@@ -33,7 +33,7 @@ The LSP side reuses the shared lexer and token kinds but runs an error-recoverin
 | Parsing | Separate compiler/LSP parsers, shared lexer | Compiler can fail-fast; LSP needs error recovery |
 | IR | SSA with block arguments (not phi nodes) | Cleaner dataflow, easier lowering |
 | Bytecode | Register-based, 32-bit fixed-width | Easy C transpilation, natural SSA lowering |
-| Memory | Arena allocation (compiler), NodeID maps (LSP) | Fast batch compile; incremental LSP updates |
+| Memory | Bump/arena allocation throughout | Fast batch compile; whole-arena reset per LSP re-parse |
 
 ## Lexer
 
@@ -63,10 +63,11 @@ Complete AST node definitions (see `compiler/ast.hpp`, `enum class AstKind`):
 
 ## Semantic Analysis
 
-Multi-pass semantic analyzer:
-1. **Pass 1**: Collect type declarations (structs, enums)
-2. **Pass 2**: Resolve type members and global variables
-3. **Pass 3**: Analyze function bodies
+Multi-pass semantic analyzer (`analyze()` in `semantic.cpp` is the running order):
+1. **Pass 0**: Auto-import the builtin prelude, process user imports, apply native symbols.
+2. **Pass 1**: Collect type declarations (structs, enums), create native struct types and methods, register builtin traits (`Printable`/`Hash`/`Eq`/`Ord`/`Exception`/`Index`), register the builtin exception types (`KeyError`, `IndexError`), register primitive operator-trait methods, resolve trait bounds on type parameters.
+3. **Pass 2**: Resolve type members — field types, parent types, method/function signatures, globals.
+4. **Pass 3**: Analyze function bodies (full type checking).
 
 Features:
 - Symbol resolution with scoped symbol tables

@@ -39,13 +39,15 @@ Each function call allocates a new register window from the shared register file
 | 0x56-0x5B | f64 Comparisons | `EQ_D`, `NE_D`, `LT_D`, `LE_D`, `GT_D`, `GE_D` |
 | 0x60-0x6F | Logical | `NOT`, `AND`, `OR` |
 | 0x80-0x8F | Type Conversions | `I_TO_F64`, `F64_TO_I`, `I_TO_B`, `B_TO_I`, `TRUNC_S`, `TRUNC_U`, `F32_TO_F64`, `F64_TO_F32`, `I_TO_F32`, `F32_TO_I` |
-| 0x90-0x9F | Control Flow | `JMP`, `JMP_IF`, `JMP_IF_NOT`, `RET`, `RET_VOID`, `RET_STRUCT_SMALL` |
-| 0xA0-0xAF | Function Calls (two-word) + Fused f64 cmp-branch | `CALL`, `CALL_NATIVE`, `JMP_IF_LT_D`, `JMP_IF_LE_D_RK`, ... |
-| 0xB0-0xBF | Struct/Stack Access | `GET_FIELD`, `SET_FIELD`, `STACK_ADDR`, `GET_FIELD_ADDR`, `STRUCT_LOAD_REGS`, `STRUCT_STORE_REGS`, `STRUCT_COPY`, `RET_STRUCT_SMALL`, `SPILL_REG`, `RELOAD_REG` |
+| 0x90-0x9A | Control Flow + Fused int cmp-branch | `JMP`, `JMP_IF`, `JMP_IF_NOT`, `RET`, `RET_VOID`, `JMP_IF_LT_I` … `JMP_IF_NE_I` |
+| 0xA0-0xAF | Calls, Container Indexing, Fused f64 cmp-branch | `CALL`, `CALL_NATIVE`, `INDEX_GET_LIST`, `INDEX_SET_LIST`, `INDEX_GET_MAP`, `INDEX_SET_MAP`, `JMP_IF_LT_D` … `JMP_IF_GE_D_RK` |
+| 0xB0-0xBE | Struct/Stack/Global Access | `GET_FIELD`, `SET_FIELD`, `STACK_ADDR`, `GET_FIELD_ADDR`, `STRUCT_LOAD_REGS`, `STRUCT_STORE_REGS`, `STRUCT_COPY`, `RET_STRUCT_SMALL`, `SPILL_REG`, `RELOAD_REG`, `STRUCT_COPY_1`–`STRUCT_COPY_4`, `GLOBAL_ADDR` |
 | 0xC0-0xCF | RK Variants (arith + int cmp) | `ADD_I_RK`, `SUB_I_RK`, `ADD_D_RK`, `MUL_D_RK`, `LT_I_RK`, ... |
-| 0xD0-0xDF | Object Lifecycle + f64 cmp RK | `NEW_OBJ`, `DEL_OBJ`, `LT_D_RK`, `GT_D_RK`, ... |
-| 0xE0-0xEF | Reference Counting | `REF_INC`, `REF_DEC`, `WEAK_CHECK` |
-| 0xFE-0xFF | Debug/Special | `NOP`, `HALT` |
+| 0xD0-0xDF | Object Lifecycle, Exceptions, Closures + f64 cmp RK | `NEW_OBJ`, `DEL_OBJ`, `DELETE`, `THROW`, `CALL_EXC_MSG`, `CALL_INDIRECT`, `ASSERT_HEAP`, `LT_D_RK` … `JMP_IF_NE_D_RK` |
+| 0xE0-0xEA | Ref Counting, Element Lvalues, Strings | `REF_INC`, `REF_DEC`, `WEAK_CHECK`, `WEAK_CREATE`, `INDEX_ADDR_LIST`, `INDEX_ADDR_MAP`, `CONTAINER_PIN`, `CONTAINER_UNPIN`, `STR_RETAIN`, `STR_RELEASE`, `INDEX_TRYADDR_MAP` |
+| 0xF0, 0xFE-0xFF | Debug/Special | `TRAP`, `NOP`, `HALT` |
+
+`bytecode.hpp` is the authoritative table (151 opcodes); the ranges above are a map, not a listing.
 
 ## RK (Register-or-Constant) Encoding
 
@@ -102,8 +104,8 @@ Lowering will emit integer compare RK once `JMP_IF_*_I_RK` fused variants land.
 Defined in `bytecode.hpp`:
 
 - **`BCConstant`** — a tagged constant-pool entry (`Null`/`Bool`/`Int`/`Float`/`String`) with a union payload.
-- **`BCFunction`** — name, `param_count`, `register_count`, `local_stack_slots` (slots for local structs), the `code` instruction vector, and the `constants` pool.
-- **`BCModule`** — name, a vector of `BCFunction*`, and a vector of `BCNativeFunction`.
+- **`BCFunction`** — name, `param_count` / `param_register_count`, `register_count`, `ret_reg_count`, `local_stack_slots` (slots for local structs), the `code` instruction vector, the `constants` pool, and the exception-handling side tables: `exception_handlers`, `cleanup_records` ([exceptions.md](exceptions.md)) and `delete_descs` / `struct_field_deletes`, the descriptor tree that drives recursive typed destruction ([recursive-types.md](recursive-types.md)).
+- **`BCModule`** — name, the `BCFunction`s and `BCNativeFunction`s, the `types` table (+ registered `type_ids`) used for heap allocation, and `global_slot_count` ([globals.md](globals.md)).
 
 ## Special Instruction Encodings
 

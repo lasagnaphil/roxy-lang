@@ -52,6 +52,10 @@ are auto-discovered from its directory. Useful flags:
 | `--time` | Per-phase compile timing, and the compile-vs-execute split |
 | `--repeat=N` | Compile N times and report averaged timings |
 
+Every example above runs, but the language as a whole is work in progress —
+`TODO.md` lists the known bugs, including a few that make otherwise-valid
+programs fail to compile. Check it before assuming a feature works.
+
 Run the test suite with `./build/roxy_tests` (see `CLAUDE.md` for suite filters —
 the C-backend cases shell out to a system C++ compiler, the rest don't).
 

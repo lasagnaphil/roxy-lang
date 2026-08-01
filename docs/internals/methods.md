@@ -63,10 +63,12 @@ Both method calls (`obj.method()`) and named-constructor calls (`Type.ctor()`) u
 - **Heap-allocated structs** — methods work identically on `uniq` receivers; `self` receives a reference to the heap object and mutations persist.
 - **Visibility** — methods may be marked `pub` for export; non-public methods are module-private.
 - **Inheritance** — methods *are* inherited and can be overridden, and `super` dispatches to the parent's implementation. See [inheritance.md](inheritance.md).
+- **Non-struct receivers** — method-call *syntax* also works on primitives and enums (`42.to_string()`, `x.hash()`, `a.lt(b)`), but those resolve to natives or raw IR ops rather than user methods. See [traits.md](traits.md) and [operator-overloading.md](operator-overloading.md).
+- **Coroutine methods** — a method whose body yields returns `Coro<T>`; `self` is captured into the state struct like any `ref` param. Supported on non-generic structs only. See [coroutines.md](coroutines.md).
 
 ## Limitations
 
-- **No method overloading** — each struct can have only one method with a given name.
+- **No method overloading** — each struct can have only one method with a given name. Overloading exists for free functions and natives only; see [overloading.md](overloading.md).
 
 ## Files
 

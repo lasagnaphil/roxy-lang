@@ -33,85 +33,70 @@ This gives a cleaner dataflow representation that lowers directly to bytecode: b
 
 ## IR Structure
 
-An `IRModule` holds `IRFunction`s; each function has block parameters, a return type, and a list of `IRBlock`s. A block has parameters, a list of `IRInst*`, and a terminator. Each `IRInst` carries an op, a result `ValueId`, a `Type*`, and a union of op-specific operand data (`ConstData`, `BinaryData`, `CallData`, `FieldData`, etc.). Definitions are in `ssa_ir.hpp`.
+An `IRModule` holds `IRFunction`s, plus the module's struct types and globals; each function has block parameters, a return type, and a list of `IRBlock`s. A block has parameters, a list of `IRInst*`, and a terminator. Each `IRInst` carries an op, a result `ValueId`, a `Type*`, and a union of op-specific operand data (`ConstData`, `CallData`, `FieldData`, `IndexData`, …). Definitions are in `ssa_ir.hpp`, which is the authoritative list — the summary below groups the 93 ops:
 
 ```cpp
 enum class IROp : u8 {
     // Constants (6)
     ConstNull, ConstBool, ConstInt, ConstF, ConstD, ConstString,
 
-    // Arithmetic - integer (6)
-    AddI, SubI, MulI, DivI, ModI, NegI,
+    // Arithmetic — integer (8, incl. unsigned div/mod)
+    AddI, SubI, MulI, DivI, ModI, DivU, ModU, NegI,
 
-    // Arithmetic - f32 (5)
+    // Arithmetic — f32 (5) / f64 (5)
     AddF, SubF, MulF, DivF, NegF,
-
-    // Arithmetic - f64 (5)
     AddD, SubD, MulD, DivD, NegD,
 
-    // Comparisons - integer (6)
-    EqI, NeI, LtI, LeI, GtI, GeI,
+    // Comparisons — integer (10: signed 6 + unsigned ordered 4; eq/ne are bit-identical)
+    EqI, NeI, LtI, LeI, GtI, GeI, LtU, LeU, GtU, GeU,
 
-    // Comparisons - f32 (6)
+    // Comparisons — f32 (6) / f64 (6)
     EqF, NeF, LtF, LeF, GtF, GeF,
-
-    // Comparisons - f64 (6)
     EqD, NeD, LtD, LeD, GtD, GeD,
 
-    // Logical (3)
+    // Logical (3) / Bitwise (7)
     Not, And, Or,
-
-    // Bitwise (6)
-    BitAnd, BitOr, BitXor, BitNot, Shl, Shr,
+    BitAnd, BitOr, BitXor, BitNot, Shl, Shr, UShr,
 
     // Conversions (4)
     I_TO_F64, F64_TO_I, I_TO_B, B_TO_I,
 
-    // Memory (4)
-    StackAlloc, GetField, GetFieldAddr, SetField,
+    // Memory (5) — GlobalAddr is a module-global slot address
+    StackAlloc, GlobalAddr, GetField, GetFieldAddr, SetField,
 
-    // Reference counting (4)
-    RefInc, RefDec, WeakCheck, WeakCreate,
+    // References and strings (6)
+    RefInc, RefDec, StrRetain, StrRelease, WeakCheck, WeakCreate,
 
     // Object lifecycle (2)
     New, Delete,
 
-    // Closures (2)
-    Closure, AssertHeap,
+    // Closures / coroutines (3) — FuncIndex materializes a dispatch index
+    Closure, FuncIndex, AssertHeap,
 
     // Functions / calls (4)
     Call, CallNative, CallExternal, CallIndirect,
 
-    // Container indexing (2)
-    IndexGet, IndexSet,
+    // Container indexing (6) — IndexTryAddr returns null instead of trapping;
+    // ContainerPin/Unpin block realloc while an element is borrowed
+    IndexGet, IndexSet, IndexAddr, IndexTryAddr, ContainerPin, ContainerUnpin,
 
-    // Meta (2)
+    // Meta (2) / Structs (1) / Pointers (2) / Casting (1) / Cleanup (1)
     BlockArg, Copy,
-
-    // Structs (1)
     StructCopy,
-
-    // Pointers (2)
     LoadPtr, StorePtr,
-
-    // Casting (1)
     Cast,
-
-    // Cleanup (1)
     Nullify,
 
-    // Exceptions (1)
+    // Exceptions (1) / Coroutines (1)
     Throw,
-
-    // Coroutines (1)
     Yield,
 };
-// Total: 80 IR operations
+// Total: 93 IR operations
 ```
 
 ## Terminators
 
-Each block ends with a `Terminator` of one of four kinds: `None` (not yet terminated), `Goto` (unconditional jump with block-argument pairs), `Branch` (condition value plus then/else targets, each with its own argument pairs), and `Return` (return value). See `ssa_ir.hpp`.
+Each block ends with a `Terminator` of one of five kinds: `None` (not yet terminated), `Goto` (unconditional jump with block-argument pairs), `Branch` (condition value plus then/else targets, each with its own argument pairs), `Return` (return value), and `Unreachable` (statically impossible fall-through, e.g. the no-`else` arm of an exhaustive `when`). See `ssa_ir.hpp`.
 
 ## Lowering to Bytecode
 
@@ -146,9 +131,10 @@ exit:
 
 The register file uses 8-bit indices (0–254, with 0xFF as a sentinel), a hard cap of 255 registers per function. Allocation is liveness-based with free-list reuse:
 
-- **Liveness** computes def/last-use intervals over a linear program-point numbering, with extra passes for block-param extension (parallel-assignment safety), loop back-edge extension (fixed-point for nested loops), and same-block classification.
-- **Free-list reuse** lets values whose def and last-use lie within one block reclaim freed registers; cross-block values and block params always get fresh registers to preserve zero-initialization for partially-defined values (e.g. AND/OR short-circuit).
-- **Expiry** returns registers of passed last-uses to the free list before each allocation point. Function parameters are pre-colored to R0, R1, …, and call results use bump allocation to keep argument blocks contiguous for the calling convention.
+- **Liveness** computes def/last-use intervals over a linear program-point numbering. Definition points, operand last-uses, and block-param extension to each predecessor's terminator (parallel-assignment safety) are computed in **one fused forward walk** — they are independent and order-tolerant, since `mark_use` is a max over a shared numbering. Loop back-edge extension stays a separate pass (it reads finalized ranges) and iterates to a fixed point for nested loops.
+- **Free-list reuse** is a 256-bit mask (`m_free_mask`) of available registers; values whose def and last-use lie within one block reclaim freed registers. Cross-block values and block params always get fresh registers to preserve zero-initialization for partially-defined values (e.g. AND/OR short-circuit).
+- **Expiry** returns registers of passed last-uses to the free list before each allocation point, walking only the active set.
+- **Call windows** are contiguous blocks (`dst`, multi-register return slots, then the argument block) placed by `reserve_call_window` at the lowest register **above every live value**, so dead space from expired values and earlier call windows is reused. Before this compaction, call-dense functions consumed a fresh register per call and hit the 255-register cliff. Function parameters are pre-colored to R0, R1, ….
 
 ### Register Spilling
 
@@ -161,6 +147,12 @@ When pressure exceeds 255 registers — the bump pointer is at the limit and the
 | `include/roxy/compiler/ssa_ir.hpp` | IR data structures |
 | `src/roxy/compiler/ssa_ir.cpp` | IR utilities and printing |
 | `include/roxy/compiler/ir_builder.hpp` | AST → IR conversion |
-| `src/roxy/compiler/ir_builder.cpp` | IR builder implementation |
+| `src/roxy/compiler/ir_builder.cpp` | Builder core: functions, globals, module init/shutdown |
+| `src/roxy/compiler/ir_builder_expr.cpp` / `ir_builder_stmt.cpp` | Expression / statement generation |
+| `src/roxy/compiler/ir_builder_lifetime.cpp` | Cleanup, destroy, and move-state emission |
+| `src/roxy/compiler/ir_fold.cpp` | Phase 1 constant folding / algebraic simplification |
+| `src/roxy/compiler/ownership_tracker.cpp` | Owned-local bookkeeping consulted by the builder |
+| `src/roxy/compiler/ir_optimize.cpp` | Phase 2–4 optimization passes ([optimization.md](optimization.md)) |
+| `src/roxy/compiler/ir_validator.cpp` | Structural IR validation (debug builds) |
 | `include/roxy/compiler/lowering.hpp` | IR → bytecode conversion |
 | `src/roxy/compiler/lowering.cpp` | Lowering implementation |

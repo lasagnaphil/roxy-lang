@@ -58,6 +58,13 @@ default `build/` (Debug, `-O0`, asserts live).
 
 ## 2. Measured baseline (2026-07-19, `ca72ee5`, arm64 RelWithDebInfo, corpus_400)
 
+> **The absolute numbers below no longer reproduce.** Re-measuring `ca72ee5` on
+> 2026-07-23 gave ~555 ms where this section records ~344 ms — every phase scaled
+> up roughly uniformly, so this is machine/toolchain drift, not a regression.
+> **The phase *shares* still hold; the milliseconds do not.** Never A/B against a
+> number written here: rebuild the baseline commit in a worktree and interleave
+> runs against it **the same day** (see the measurement discipline above).
+
 ### Phase breakdown (corpus_400, median of 6×`--repeat=20`, total ~344 ms/compile)
 
 | Phase       | Time      | Share  |

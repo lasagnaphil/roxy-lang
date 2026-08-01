@@ -148,7 +148,8 @@ unwinding. A returned `ref` is *not* decremented at the returning frame; its cou
 hands off to the caller, mirroring how a moved `uniq` is not dropped.
 
 `ref` locals are tracked as `OwnedKind::RefBorrow` entries in the same
-`m_owned_locals` list as `uniq` locals, so they inherit LIFO scope cleanup and
+`OwnershipTracker` entry list as `uniq` locals (`OwnedKind::Owned`) and owned
+string temporaries (`OwnedKind::StrOwn`), so they inherit LIFO scope cleanup and
 exception records for free; a `BCCleanupKind::RefDec` cleanup record makes
 `execute_cleanup` decrement rather than destroy. Two subtleties the bookkeeping must
 get right:
