@@ -521,9 +521,23 @@ struct IRFunction {
 
     IRFunction() : return_type(nullptr), next_value_id(0) {}
 
+    // Mint a ValueId with no defining instruction — function params, block
+    // params, and other values that are not produced by an IRInst.
     ValueId new_value() {
         ValueId v{next_value_id++};
         values_by_id.push_back(nullptr);
+        return v;
+    }
+
+    // Mint a ValueId for `inst` and register it as the value's definition.
+    // Every instruction that produces a result must get its ValueId this way:
+    // passes that consult `values_by_id` (DCE, copy propagation, CSE, lowering's
+    // operand classification) treat a null slot as "no defining instruction",
+    // so an unregistered result is a latent null dereference rather than a
+    // missed optimization. `IRValidator` enforces the invariant.
+    ValueId new_value_for(IRInst* inst) {
+        ValueId v = new_value();
+        values_by_id[v.id] = inst;
         return v;
     }
 

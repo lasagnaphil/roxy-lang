@@ -23,7 +23,7 @@ IRFunction* create_return_const_func(BumpAllocator& alloc, const char* name, i64
     // Create constant instruction
     IRInst* const_inst = alloc.emplace<IRInst>();
     const_inst->op = IROp::ConstInt;
-    const_inst->result = func->new_value();
+    const_inst->result = func->new_value_for(const_inst);
     const_inst->type = types.i64_type();
     const_inst->const_data.int_val = value;
     entry->instructions.push_back(const_inst);
@@ -63,7 +63,7 @@ IRFunction* create_add_func(BumpAllocator& alloc, const char* name, TypeCache& t
     // Create add instruction: result = a + b
     IRInst* add_inst = alloc.emplace<IRInst>();
     add_inst->op = IROp::AddI;
-    add_inst->result = func->new_value();
+    add_inst->result = func->new_value_for(add_inst);
     add_inst->type = types.i64_type();
     add_inst->binary.left = param0.value;
     add_inst->binary.right = param1.value;
@@ -170,7 +170,7 @@ TEST_SUITE("Lowering") {
             // Sub instruction
             IRInst* sub = alloc.emplace<IRInst>();
             sub->op = IROp::SubI;
-            sub->result = func->new_value();
+            sub->result = func->new_value_for(sub);
             sub->type = types.i64_type();
             sub->binary.left = param0.value;
             sub->binary.right = param1.value;
@@ -218,7 +218,7 @@ TEST_SUITE("Lowering") {
 
             IRInst* mul = alloc.emplace<IRInst>();
             mul->op = IROp::MulI;
-            mul->result = func->new_value();
+            mul->result = func->new_value_for(mul);
             mul->type = types.i64_type();
             mul->binary.left = param0.value;
             mul->binary.right = param1.value;
@@ -263,7 +263,7 @@ TEST_SUITE("Lowering") {
 
         IRInst* const_inst = alloc.emplace<IRInst>();
         const_inst->op = IROp::ConstInt;
-        const_inst->result = func->new_value();
+        const_inst->result = func->new_value_for(const_inst);
         const_inst->type = types.i64_type();
         const_inst->const_data.int_val = 1000000;
         entry->instructions.push_back(const_inst);
@@ -307,7 +307,7 @@ TEST_SUITE("Lowering") {
 
         IRInst* const_inst = alloc.emplace<IRInst>();
         const_inst->op = IROp::ConstD;
-        const_inst->result = func->new_value();
+        const_inst->result = func->new_value_for(const_inst);
         const_inst->type = types.f64_type();
         const_inst->const_data.f64_val = 3.14159;
         entry->instructions.push_back(const_inst);
@@ -360,7 +360,7 @@ TEST_SUITE("Lowering") {
 
         IRInst* lt = alloc.emplace<IRInst>();
         lt->op = IROp::LtI;
-        lt->result = func->new_value();
+        lt->result = func->new_value_for(lt);
         lt->type = types.bool_type();
         lt->binary.left = param0.value;
         lt->binary.right = param1.value;

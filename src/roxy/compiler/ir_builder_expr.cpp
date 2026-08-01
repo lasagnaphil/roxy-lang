@@ -24,10 +24,9 @@ IRInst* IRBuilder::emit_inst(IROp op, Type* result_type) {
 
     IRInst* inst = m_allocator.emplace<IRInst>();
     inst->op = op;
-    inst->result = m_current_func->new_value();
+    inst->result = m_current_func->new_value_for(inst);
     inst->type = result_type;
     inst->source_line = m_current_source_line;
-    m_current_func->values_by_id[inst->result.id] = inst;
     m_current_block->instructions.push_back(inst);
     return inst;
 }
@@ -868,8 +867,7 @@ ValueId IRBuilder::gen_function_ref(Expr* expr, const FunctionRefTarget& target)
 
         IRInst* call_inst = m_allocator.emplace<IRInst>();
         call_inst->type = fti.return_type;
-        call_inst->result = tramp->new_value();
-        tramp->values_by_id[call_inst->result.id] = call_inst;
+        call_inst->result = tramp->new_value_for(call_inst);
         switch (target.kind) {
             case FunctionRefTarget::Kind::Script:
                 call_inst->op = IROp::Call;

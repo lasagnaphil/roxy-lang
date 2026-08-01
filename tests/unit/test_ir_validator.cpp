@@ -19,7 +19,7 @@ static IRModule* create_valid_module(BumpAllocator& alloc, TypeCache& types) {
 
     IRInst* const_inst = alloc.emplace<IRInst>();
     const_inst->op = IROp::ConstInt;
-    const_inst->result = func->new_value();
+    const_inst->result = func->new_value_for(const_inst);
     const_inst->type = types.i64_type();
     const_inst->const_data.int_val = 42;
     entry->instructions.push_back(const_inst);
@@ -102,7 +102,7 @@ TEST_SUITE("IR Validator") {
 
         IRInst* add_inst = alloc.emplace<IRInst>();
         add_inst->op = IROp::AddI;
-        add_inst->result = func->new_value();
+        add_inst->result = func->new_value_for(add_inst);
         add_inst->type = types.i64_type();
         add_inst->binary.left = ValueId::invalid();  // invalid!
         add_inst->binary.right = ValueId{0};
@@ -136,7 +136,7 @@ TEST_SUITE("IR Validator") {
         // Create const with v0
         IRInst* const_inst = alloc.emplace<IRInst>();
         const_inst->op = IROp::ConstInt;
-        const_inst->result = func->new_value();  // v0
+        const_inst->result = func->new_value_for(const_inst);  // v0
         const_inst->type = types.i64_type();
         const_inst->const_data.int_val = 1;
         entry->instructions.push_back(const_inst);
@@ -144,7 +144,7 @@ TEST_SUITE("IR Validator") {
         // Create add referencing v999 which is out of range
         IRInst* add_inst = alloc.emplace<IRInst>();
         add_inst->op = IROp::AddI;
-        add_inst->result = func->new_value();  // v1
+        add_inst->result = func->new_value_for(add_inst);  // v1
         add_inst->type = types.i64_type();
         add_inst->binary.left = const_inst->result;
         add_inst->binary.right = ValueId{999};  // out of range
@@ -243,7 +243,7 @@ TEST_SUITE("IR Validator") {
 
         IRInst* const_inst = alloc.emplace<IRInst>();
         const_inst->op = IROp::ConstInt;
-        const_inst->result = func->new_value();
+        const_inst->result = func->new_value_for(const_inst);
         const_inst->type = nullptr;  // null type!
         const_inst->const_data.int_val = 42;
         entry->instructions.push_back(const_inst);
@@ -343,7 +343,7 @@ TEST_SUITE("IR Validator") {
 
         IRInst* block_arg_inst = alloc.emplace<IRInst>();
         block_arg_inst->op = IROp::BlockArg;
-        block_arg_inst->result = func->new_value();
+        block_arg_inst->result = func->new_value_for(block_arg_inst);
         block_arg_inst->type = types.i64_type();
         block_arg_inst->block_arg_index = 0;  // out of range (no params)
         entry->instructions.push_back(block_arg_inst);
@@ -376,7 +376,7 @@ TEST_SUITE("IR Validator") {
         // Create a source value
         IRInst* const_inst = alloc.emplace<IRInst>();
         const_inst->op = IROp::ConstInt;
-        const_inst->result = func->new_value();  // v0
+        const_inst->result = func->new_value_for(const_inst);  // v0
         const_inst->type = types.i64_type();
         const_inst->const_data.int_val = 42;
         entry->instructions.push_back(const_inst);
@@ -384,7 +384,7 @@ TEST_SUITE("IR Validator") {
         // Cast with null source_type
         IRInst* cast_inst = alloc.emplace<IRInst>();
         cast_inst->op = IROp::Cast;
-        cast_inst->result = func->new_value();  // v1
+        cast_inst->result = func->new_value_for(cast_inst);  // v1
         cast_inst->type = types.f64_type();
         cast_inst->cast.source = const_inst->result;
         cast_inst->cast.source_type = nullptr;  // null!

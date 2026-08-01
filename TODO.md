@@ -10,25 +10,45 @@ Last updated: 2026-08-02
 
 ## High Priority
 
-All three of the following were found on 2026-08-02 by compiling `CLAUDE.md`'s
-example program through the `roxy` CLI. Each reproduces on the CLI (i.e. through
-`Compiler::compile()`) and none is caught by the test suite — see the
-**optimizer is untested end-to-end** entry under Testing Gaps for why.
+These were found on 2026-08-02 by compiling `CLAUDE.md`'s example program
+through the `roxy` CLI. Each reproduces on the CLI (i.e. through
+`Compiler::compile()`) and none is caught by the parametric test suites — see
+the **optimizer is untested end-to-end** entry under Testing Gaps for why.
 
-- [ ] **Compiling any coroutine crashes the compiler (null deref in DCE).**
-  `roxy` segfaults in `run_dce` → `for_each_operand(inst = nullptr)`
-  (`ir_optimize.hpp:139`) on *every* program containing a coroutine. Repro:
+*(Fixed and removed from this list: the DCE null-deref that made compiling any
+coroutine segfault. Coroutine lowering minted result ValueIds with bare
+`new_value()`, leaving `values_by_id` null for every instruction it created;
+`IRFunction::new_value_for(inst)` now registers the definition, `IRValidator`
+enforces the invariant, and `E2E CLI` covers it through the optimizing
+pipeline.)*
+
+- [ ] **A coroutine method on a *stack* receiver crashes at runtime.**
   ```roxy
-  fun gen(): Coro<i32> { yield 1; }
-  fun main() { }        // crashes even though gen() is never called
+  struct Counter { start: i32; }
+  fun Counter.upto(n: i32): Coro<i32> {
+      var i: i32 = self.start;
+      while (i <= n) { yield i; i = i + 1; }
+  }
+  fun main(): i32 {
+      var counter: Counter = Counter { start = 2 };   // stack; `uniq Counter` works
+      var c = counter.upto(5);
+      while (!c.done()) { print(f"{c.resume()}"); }
+      return 0;
+  }
   ```
-  The worklist loop in `run_dce` reads `func->values_by_id[id]` without the
-  null-check `consider()` applies, so a coroutine-lowered instruction whose
-  result was never registered in `values_by_id` (or was already poisoned) is
-  dereferenced. A null guard at the pop site silences the crash, but the real
-  question is which coroutine-lowering path leaves an instruction out of
-  `values_by_id` — fix that, and keep the invariant assertion. Coroutines pass
-  their E2E tests because that harness never runs the optimizer.
+  → SIGSEGV in `ref_inc` (`object.hpp:51`) with `data = 0x2` — the struct's
+  first field value, not a pointer. `lower_coroutine` unconditionally emits a
+  `RefInc` for every `Ref`-typed param it stores into the state struct, and a
+  coroutine method's `self` is such a param; on a stack receiver there is no
+  `ObjectHeader` to count. Closures hit the same hazard and guard it with
+  `IROp::AssertHeap` (see `docs/internals/closures.md` → self capture), which
+  coroutine methods never emit. Either emit the same trap, or reject
+  stack-receiver coroutine methods at compile time — capturing a borrow of a
+  stack struct into a heap state struct that outlives the call is unsound
+  regardless. Every existing coroutine-method test uses a `uniq` receiver, so
+  this shape has never been exercised. Found 2026-08-02 while stress-testing
+  the DCE fix; it was unreachable before, since compiling any coroutine
+  crashed first.
 
 - [ ] **A destructor on a child struct fails to link when the parent has none.**
   ```roxy
@@ -179,11 +199,13 @@ history. Remaining:
   (and therefore the `roxy` CLI and every shipped program) does. So the whole E2E
   suite — ~1,400 cases across both backends — validates *unoptimized* IR, and the
   optimizer's only coverage is `tests/unit/test_ir_optimize.cpp`'s hand-built
-  functions. This is how a crash on every coroutine program (High Priority above)
-  sits in a fully green suite. Fix: run the E2E harness through the same pipeline
-  as `Compiler::compile()`, or at minimum add an optimized-pipeline variant of the
-  parametric backend harness. Until then, treat "E2E green" as saying nothing
-  about the optimizer.
+  functions. This is how a crash on *every* coroutine program sat in a fully
+  green suite until 2026-08-02. Fix: run the E2E harness through the same
+  pipeline as `Compiler::compile()`, or at minimum add an optimized-pipeline
+  variant of the parametric backend harness. Until then, treat "E2E green" as
+  saying nothing about the optimizer. The `E2E CLI` suite runs the real binary
+  and so does see optimized IR — it now carries two coroutine cases for exactly
+  that reason — but it is a handful of tests, not coverage.
 
 - Fuzzing for the lexer/parser/LSP parser **landed** — coverage-guided libFuzzer
   targets in `tests/fuzz/` (`fuzz_lexer`/`fuzz_parser`/`fuzz_lsp_parser`, built

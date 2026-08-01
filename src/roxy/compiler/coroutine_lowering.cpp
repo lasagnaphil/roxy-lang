@@ -62,7 +62,7 @@ static IRInst* make_inst(BumpAllocator& allocator, IRFunction* func, IRBlock* bl
     IRInst* inst = allocator.emplace<IRInst>();
     inst->op = op;
     inst->type = type;
-    inst->result = func->new_value();
+    inst->result = func->new_value_for(inst);
     block->instructions.push_back(inst);
     return inst;
 }
@@ -551,7 +551,7 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
                 IRInst* store_inst = allocator.emplace<IRInst>();
                 store_inst->op = IROp::SetField;
                 store_inst->type = pv.type;
-                store_inst->result = func->new_value();
+                store_inst->result = func->new_value_for(store_inst);
                 store_inst->field.object = self_val;
                 store_inst->field.field_name = pv.name;
                 store_inst->field.slot_offset = pv.field_slot_offset;
@@ -567,7 +567,7 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
             IRInst* inst = allocator.emplace<IRInst>();
             inst->op = IROp::GetField;
             inst->type = pv.type;
-            inst->result = func->new_value();
+            inst->result = func->new_value_for(inst);
             inst->field.object = self_val;
             inst->field.field_name = pv.name;
             inst->field.slot_offset = pv.field_slot_offset;
@@ -622,7 +622,7 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
                 IRInst* inst = allocator.emplace<IRInst>();
                 inst->op = IROp::SetField;
                 inst->type = pv.type;
-                inst->result = func->new_value();
+                inst->result = func->new_value_for(inst);
                 inst->field.object = self_val;
                 inst->field.field_name = pv.name;
                 inst->field.slot_offset = pv.field_slot_offset;
@@ -714,7 +714,7 @@ static void phase2_split(IRFunction* func, BumpAllocator& allocator,
         IRInst* set_yield = allocator.emplace<IRInst>();
         set_yield->op = IROp::SetField;
         set_yield->type = coro_yield_type;
-        set_yield->result = func->new_value();
+        set_yield->result = func->new_value_for(set_yield);
         set_yield->field.object = self_val;
         set_yield->field.field_name = yield_field->name;
         set_yield->field.slot_offset = yield_field->slot_offset;
@@ -727,14 +727,14 @@ static void phase2_split(IRFunction* func, BumpAllocator& allocator,
         IRInst* const_state = allocator.emplace<IRInst>();
         const_state->op = IROp::ConstInt;
         const_state->type = types.i32_type();
-        const_state->result = func->new_value();
+        const_state->result = func->new_value_for(const_state);
         const_state->const_data.int_val = static_cast<i64>(next_state);
         new_insts.push_back(const_state);
 
         IRInst* set_state = allocator.emplace<IRInst>();
         set_state->op = IROp::SetField;
         set_state->type = types.i32_type();
-        set_state->result = func->new_value();
+        set_state->result = func->new_value_for(set_state);
         set_state->field.object = self_val;
         set_state->field.field_name = state_field->name;
         set_state->field.slot_offset = state_field->slot_offset;
@@ -751,7 +751,7 @@ static void phase2_split(IRFunction* func, BumpAllocator& allocator,
         IRInst* load_yield = allocator.emplace<IRInst>();
         load_yield->op = IROp::GetField;
         load_yield->type = coro_yield_type;
-        load_yield->result = func->new_value();
+        load_yield->result = func->new_value_for(load_yield);
         load_yield->field.object = self_val;
         load_yield->field.field_name = yield_field->name;
         load_yield->field.slot_offset = yield_field->slot_offset;
@@ -1154,12 +1154,12 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
                     IRInst* null_c = allocator.emplace<IRInst>();
                     null_c->op = IROp::ConstNull;
                     null_c->type = types.nil_type();
-                    null_c->result = original->new_value();
+                    null_c->result = original->new_value_for(null_c);
                     rebuilt.push_back(null_c);
                     IRInst* clr = allocator.emplace<IRInst>();
                     clr->op = IROp::SetField;
                     clr->type = def->type;
-                    clr->result = original->new_value();
+                    clr->result = original->new_value_for(clr);
                     clr->field.object = def->field.object;
                     clr->field.field_name = def->field.field_name;
                     clr->field.slot_offset = def->field.slot_offset;

@@ -181,6 +181,18 @@ bool IRValidator::validate_instruction(IRFunction* func, IRBlock* block, IRInst*
                              func->name, block->id.id, inst->result.id);
             return false;
         }
+        // Every result must be registered as its own definition. Passes that
+        // consult `values_by_id` read a null slot as "not defined by an
+        // instruction", so an unregistered result is a latent null deref (it
+        // crashed DCE for every coroutine). Mint results with
+        // `IRFunction::new_value_for(inst)`, never bare `new_value()`.
+        if (inst->result.id >= func->values_by_id.size() ||
+            func->values_by_id[inst->result.id] != inst) {
+            report_error_fmt("function '{}' block {}: result v{} is not registered in "
+                             "values_by_id (use new_value_for(inst))",
+                             func->name, block->id.id, inst->result.id);
+            return false;
+        }
     }
 
     switch (inst->op) {

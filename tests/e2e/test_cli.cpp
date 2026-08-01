@@ -175,6 +175,57 @@ TEST_SUITE("E2E CLI") {
         CHECK(result.exit_code == 3);
     }
 
+    // ── Optimizing-pipeline coverage ────────────────────────────────────────
+    //
+    // These belong here rather than in the parametric E2E suites because
+    // `test_helpers.cpp`'s `compile()` does NOT run `optimize_module()`, while
+    // `Compiler::compile()` — the CLI, and every shipped program — does. So the
+    // CLI is currently the only test path that sees optimized IR.
+    //
+    // The bug they pin: coroutine lowering minted result ValueIds with bare
+    // `new_value()`, leaving `values_by_id` null for every instruction it
+    // created. DCE's worklist dereferenced that null, so compiling *any*
+    // coroutine segfaulted the compiler while the whole E2E suite stayed green.
+
+    TEST_CASE("a coroutine compiles through the optimizing pipeline") {
+        // Never called — this is about compiling the lowered IR at all, not
+        // about running it.
+        const char* source =
+            "fun gen(): Coro<i32> { yield 1; }\n"
+            "fun main(): i32 {\n"
+            "    print(\"ok\");\n"
+            "    return 0;\n"
+            "}\n";
+
+        CliRun result = run_cli(source, "");
+        CHECK(result.clean_exit);  // false => the compiler died (SIGSEGV in DCE)
+        CHECK(result.exit_code == 0);
+        CHECK(result.stdout_output == "ok\n");
+    }
+
+    TEST_CASE("a coroutine still produces correct values after optimization") {
+        // Not just "doesn't crash": DCE/copy-prop/CSE now actually see the
+        // coroutine's instructions, so this pins that they don't mangle the
+        // resume state machine. countdown(3) yields 3, 2, 1.
+        const char* source =
+            "fun countdown(n: i32): Coro<i32> {\n"
+            "    var i: i32 = n;\n"
+            "    while (i > 0) { yield i; i = i - 1; }\n"
+            "}\n"
+            "fun main(): i32 {\n"
+            "    var c = countdown(3);\n"
+            "    var sum: i32 = 0;\n"
+            "    while (!c.done()) { sum = sum + c.resume(); }\n"
+            "    print(f\"sum={sum}\");\n"
+            "    return 0;\n"
+            "}\n";
+
+        CliRun result = run_cli(source, "");
+        CHECK(result.clean_exit);
+        CHECK(result.exit_code == 0);
+        CHECK(result.stdout_output == "sum=6\n");
+    }
+
 }  // TEST_SUITE("E2E CLI")
 
 #endif  // ROXY_CLI_PATH

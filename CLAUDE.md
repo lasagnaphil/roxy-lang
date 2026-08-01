@@ -407,7 +407,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 
 ### Coroutines
 **Coroutines** - Generator-style stackless coroutines via the built-in `Coro<T>`. A compile-time state-machine transformation produces init/resume functions plus a generated `__coro_*$$delete`; block cloning is graph-preserving, so `yield` works in straight-line code and if/else branches. `Coro<T>` is noncopyable (RAII cleanup of the heap state struct), and promoted `uniq`/noncopyable fields are null-ified on the done path to prevent double-free. **First-class values** — a `Coro<T>` can be passed, returned, and stored erased: a function is a coroutine iff its body yields (`FunDecl::is_coroutine`), `resume()` dispatches through the closure `CALL_INDIRECT` machinery, and erased owned values delete via `DropKind::Closure`. **Coroutine methods** (`fun S.count(): Coro<T>`) work on non-generic structs (`self` is captured like any `ref` param); the generic-struct and trait cases are rejected with a clear error. Supported in both backends.
-> ⚠️ Compiling *any* coroutine currently crashes the compiler through the real pipeline (null deref in DCE) — the E2E suite misses it because that harness skips the optimizer. See TODO.md → High Priority.
+> ⚠️ A coroutine **method** on a *stack* receiver crashes at runtime — coroutine lowering emits an unconditional `RefInc` for a `ref` param stored into the state struct, and a stack `self` has no `ObjectHeader`. `uniq` receivers are fine. See TODO.md → High Priority.
 **Details:** `docs/internals/coroutines.md` | **Tests:** `tests/e2e/test_coroutines.cpp`
 
 ### Closures
