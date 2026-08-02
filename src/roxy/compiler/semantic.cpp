@@ -2207,8 +2207,19 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
             m_checker.coerce_numeric_literal(rs.value, expected);
         }
 
-        // Consume noncopyable return value (field-move check + mark source as moved)
-        m_lifetimes.consume_noncopyable(rs.value, stmt->loc);
+        // Consume noncopyable return value (field-move check + mark source as
+        // moved) — but only when the function actually takes ownership of it.
+        // That is decided by the DECLARED return type, exactly as
+        // check_call_args decides a call argument's move from the parameter
+        // type. `fun f(): ref P { return p; }` hands out a *borrow*: the frame
+        // keeps `p`, so consuming here would mark it moved (skipping the
+        // scope-exit drop that is supposed to trap on the escaping borrow) and,
+        // for a field source, reject the return outright with "cannot move out
+        // of a struct field". A null `expected` can't decide, so it falls back
+        // to consuming, which is what this site did unconditionally before.
+        if (!expected || expected->noncopyable()) {
+            m_lifetimes.consume_noncopyable(rs.value, stmt->loc);
+        }
     } else {
         if (!expected->is_void()) {
             error(stmt->loc, "non-void function must return a value");

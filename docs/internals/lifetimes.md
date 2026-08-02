@@ -159,11 +159,24 @@ get right:
   liveness pinned to the function end, ensures the unwind decrement reads a valid
   register even on throw-only paths.
 - **The return hand-off is a 1:1 transfer.** Every `ref` return carries *exactly
-  one* count (a ref local hands off its create-inc; a ref param or a fresh ref —
-  field / borrowed subscript / `ref x` — increments to produce one; a call result
-  already carries one). The binder then **adopts** a call result (no inc) and
-  **increments** any other still-live source. Otherwise a returned ref local bound
-  by the caller would double-count — a safe over-count, but a spurious trap.
+  one* count (a ref local hands off its create-inc; a ref param, a fresh ref —
+  field / borrowed subscript / `ref x` — or an *owner borrowed on the way out*
+  increments to produce one; a call result already carries one). The binder then
+  **adopts** a call result (no inc) and **increments** any other still-live
+  source. Otherwise a returned ref local bound by the caller would double-count —
+  a safe over-count, but a spurious trap.
+- **Move-vs-borrow on the return path is decided by the function's *declared
+  return type*, never by the returned expression's type.** They answer different
+  questions: the declared type says whether the frame hands over ownership or
+  hands out a borrow; the expression's type only says how to produce the value.
+  Conflating them let `fun f(): ref P { return p; }` — an owner returned
+  *directly*, without an intermediate `ref` local — take the move path, so no
+  count was handed off, the caller's `RefDec` underflowed, and the destroyed
+  local was read through the returned pointer instead of trapping at its drop.
+  The same conflation on the sema side rejected `fun P.borrow_kid(): ref Child { return self.kid; }`
+  with "cannot move out of a struct field" — a borrow of a field is not a move of
+  it. Both sides now read the declared type, mirroring how `check_call_args`
+  decides an argument's move from the *parameter* type.
 
 ### The free-trap
 

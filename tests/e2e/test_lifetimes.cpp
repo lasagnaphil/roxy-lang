@@ -71,6 +71,120 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.success == false);  // owner's RAII drop traps on the live borrow
     }
 
+    // Finding 2, direct form: the same escape written *without* the intermediate
+    // `ref` local. This one silently returned a dangling borrow — `gen_return_stmt`
+    // keyed the move-vs-borrow decision on the returned *expression's* type, so a
+    // noncopyable `uniq` identifier took the move branch and never reached the
+    // ref-handoff branch below it. No count was handed off, the caller's RefDec
+    // underflowed, and the destroyed local was then read through the returned
+    // pointer. The decision now comes from the function's *declared return type*,
+    // so both spellings behave identically.
+    TEST_CASE("returning an owner directly as a ref traps, like the ref-local form") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+        const char* source = R"(
+        struct Point { x: i32; y: i32; }
+
+        fun make_dangling(): ref Point {
+            var owner: uniq Point = uniq Point();
+            owner.x = 99;
+            return owner;               // no intermediate `ref` local
+        }
+
+        fun main(): i32 {
+            var r: ref Point = make_dangling();
+            return r.x;
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, source) != nullptr);
+
+        auto result = VMBackend::run(source);
+        CHECK(result.success == false);  // owner's RAII drop traps on the live borrow
+    }
+
+    // The same, for a container owner — reachable since `List<T>` became
+    // borrowable. A container is always heap, so it counts on the same header.
+    TEST_CASE("returning a container owner as a ref traps at its drop") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+        const char* source = R"(
+        fun make_dangling(): ref List<i32> {
+            var xs: List<i32> = List<i32>();
+            xs.push(1);
+            return xs;
+        }
+
+        fun main(): i32 {
+            var r: ref List<i32> = make_dangling();
+            return r.len();
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, source) != nullptr);
+
+        auto result = VMBackend::run(source);
+        CHECK(result.success == false);
+    }
+
+    // The positive counterpart, and what the fix unlocked: borrowing a `uniq`
+    // *field* out of a method. Deciding the move from the expression type made
+    // sema reject this outright ("cannot move out of a struct field") even though
+    // the declared return type asks for a borrow, not a move. Now it compiles,
+    // the field is not nulled in the root, and the count balances so the owner
+    // stays deletable.
+    TEST_CASE_TEMPLATE("a method can return a borrow of its own uniq field", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Child { v: i32; }
+        struct Parent { kid: uniq Child; }
+
+        fun Parent.borrow_kid(): ref Child { return self.kid; }
+
+        fun main(): i32 {
+            var p: uniq Parent = uniq Parent { kid = uniq Child { v = 7 } };
+            {
+                var k: ref Child = p.borrow_kid();
+                print(f"{k.v}");
+            }
+            {
+                var k2: ref Child = p.borrow_kid();   // field survived the first borrow
+                print(f"{k2.v}");
+            }
+            delete p;                                  // count back to zero
+            print("deleted");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "7\n7\ndeleted\n");
+    }
+
+    // Regression guard for the branch reordering: a `ref` *parameter* returned
+    // directly still hands off exactly one count (its entry-inc is offset by the
+    // return-time RefDec, so the inc emitted here is what survives).
+    TEST_CASE_TEMPLATE("a ref parameter returned directly hands off one count", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Point { x: i32; y: i32; }
+
+        fun pass_through(p: ref Point): ref Point { return p; }
+
+        fun main(): i32 {
+            var owner: uniq Point = uniq Point { x = 5, y = 6 };
+            {
+                var r: ref Point = pass_through(owner);
+                print(f"{r.x}");
+            }
+            delete owner;      // succeeds: no over-count, no under-count
+            print("deleted");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "5\ndeleted\n");
+    }
+
     // Balance: ref locals created and dropped across block scopes, a loop with
     // continue/break, and straight-line code all decrement on their exit paths,
     // so the owner's count returns to zero and it stays deletable. This is the

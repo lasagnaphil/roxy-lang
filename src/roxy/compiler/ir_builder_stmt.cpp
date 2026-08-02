@@ -578,20 +578,26 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
     if (rs.value) {
         ValueId val = gen_expr(rs.value);
 
-        // Consume noncopyable temporaries (ownership transfers to caller)
-        if (rs.value->resolved_type && rs.value->resolved_type->noncopyable()) {
+        // Whether this frame hands over *ownership* or hands out a *borrow* is
+        // a property of the function's DECLARED return type; the returned
+        // expression's type only says how to produce the value. Conflating the
+        // two is what made `fun f(): ref P { return p; }` (an owned local
+        // returned directly, rather than via an intermediate `ref` local) take
+        // the move path below: no count was handed off, the caller's RefDec
+        // underflowed, and the destroyed local was read through the returned
+        // pointer instead of trapping at its drop.
+        Type* declared_return = m_current_func->return_type;
+        Type* value_type = rs.value->resolved_type;
+        bool returns_borrow = declared_return && declared_return->kind == TypeKind::Ref;
+
+        // Consume noncopyable temporaries — only when ownership really moves to
+        // the caller. Returning a borrow of a temporary leaves the temporary
+        // owned by this frame, so its scope-exit drop must still run.
+        if (!returns_borrow && value_type && value_type->noncopyable()) {
             consume_temp_noncopyable(val);
         }
 
-        // If returning an owned identifier, mark it as moved (don't destroy what we're returning).
-        // Pass null_ssa/nullify_record = false: the return value register may be the same as
-        // the source's, and nulling/Nullifying would corrupt the return. The is_moved flag
-        // alone prevents normal-path cleanup from freeing the returned value.
-        Type* return_type = rs.value->resolved_type;
-        if (rs.value->kind == AstKind::ExprIdentifier && return_type && return_type->noncopyable()) {
-            mark_moved_from(rs.value->identifier.name, /*null_ssa=*/false,
-                            /*nullify_record=*/false);
-        } else if (return_type && return_type->kind == TypeKind::Ref) {
+        if (returns_borrow) {
             // Counting convention: a ref return hands off exactly one borrow
             // count for the caller to adopt. How we produce that one count
             // depends on the returned expression:
@@ -606,26 +612,41 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
                 mark_moved_from(rs.value->identifier.name, /*null_ssa=*/false,
                                 /*nullify_record=*/false);
             } else if (!is_ref_handoff_source(rs.value)) {
-                // A ref *param* identifier, or a fresh ref (field / subscript /
-                // `ref x`): these carry no net count for the caller yet, so
-                // increment to produce the one handed-off count. (A ref param's
-                // entry-inc is offset by its return-time RefDec, so this inc is
-                // what survives.) A call result already carries one — untouched.
-                // `return self` is a promotion: the inc is heap-gated.
+                // Everything else that carries no net count for the caller yet:
+                // a ref *param* identifier, a fresh ref (field / subscript /
+                // `ref x`), and — the case the branch order above now reaches —
+                // an *owner* borrowed on the way out (a `uniq` or container
+                // local). Increment to produce the one handed-off count. The
+                // owner stays owned, so its scope-exit drop sees the live borrow
+                // and traps, exactly as when the borrow goes through a `ref`
+                // local. (A ref param's entry-inc is offset by its return-time
+                // RefDec, so this inc is what survives. A call result already
+                // carries one — untouched. `return self` is a promotion: the
+                // inc is heap-gated.)
                 emit_ref_borrow_inc(val, rs.value);
             }
+        } else if (rs.value->kind == AstKind::ExprIdentifier && value_type
+                   && value_type->noncopyable()) {
+            // Returning an owned identifier by value: mark it moved so scope
+            // cleanup doesn't destroy what we're handing to the caller. Pass
+            // null_ssa/nullify_record = false — the return value register may be
+            // the same as the source's, and nulling/Nullifying would corrupt the
+            // return. The is_moved flag alone suppresses normal-path cleanup.
+            mark_moved_from(rs.value->identifier.name, /*null_ssa=*/false,
+                            /*nullify_record=*/false);
         }
         // String return: hand off exactly one owned count to the caller (finding
         // 9b). Adopt a fresh producer temp, or retain an existing owner — whose
         // own count is then released by emit_scope_cleanup below, leaving the one
         // handed-off count for the caller to adopt. Mirrors the ref-return handoff.
-        if (return_type && return_type->kind == TypeKind::String) {
-            consume_or_retain_string(val, return_type, /*adopted_by_variable=*/false);
+        if (value_type && value_type->kind == TypeKind::String) {
+            consume_or_retain_string(val, value_type, /*adopted_by_variable=*/false);
         }
 
         // `return o.field`: null the moved-out field before scope cleanup destroys
-        // the root (val already read its value above).
-        nullify_moved_field_source(rs.value);
+        // the root (val already read its value above). Only when the field was
+        // actually moved out — borrowing it leaves the root owning it.
+        if (!returns_borrow) nullify_moved_field_source(rs.value);
 
         // Emit cleanup for all scopes (return exits entire function)
         emit_scope_cleanup(1);

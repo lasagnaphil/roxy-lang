@@ -10,21 +10,28 @@ Last updated: 2026-08-02
 
 ## High Priority
 
-- [ ] **`return owner;` from a `ref`-returning function escapes a dangling
-  borrow instead of trapping**: `fun f(): ref P { var p: uniq P = uniq P(); return p; }`
-  hands back a reference to the destroyed local. `gen_return_stmt` tests the
-  *returned expression's* type first — `uniq P` is noncopyable, so it takes the
-  move branch (`mark_moved_from`) and never reaches the `ref`-handoff branch
-  below it, so no count is incremented. The caller adopts a count that was never
-  taken, its scope-exit `RefDec` underflows ("ref_dec: reference count already
-  zero"), and the dangling pointee is then read anyway. Routing through an
-  intermediate `ref` local (`var b: ref P = p; return b;`) is the path
-  `tests/e2e/test_lifetimes.cpp` covers and it traps correctly ("Cannot delete:
-  object has active borrows") — only the direct form is broken. The fix is to
-  test the *return type* (`ref`) before the expression type in `gen_return_stmt`.
-  Pre-existing for `uniq`, verified 2026-08-02 on an unmodified tree; the
-  container-borrow work made the same shape reachable for `List`/`Map`
-  (`fun f(): ref List<i32> { var xs = ...; return xs; }`).
+- [ ] **A discarded `ref`-returning call result leaks its handed-off count**:
+  `box.borrow_item().v` (result used and dropped, never bound to a `ref` local)
+  leaves the owner permanently undeletable — "Cannot delete: object has active
+  borrows" at its drop. By the counting convention every `ref`-returning call
+  hands the caller exactly one count to *adopt*; `gen_var_decl`'s `RefBorrow`
+  path adopts it, but a call result consumed as a temporary has no tracked
+  binding to release it. The fix is to track an unbound `ref`-typed call result
+  as a temporary `RefBorrow` (mirroring `track_string_temp` for owned string
+  temps) so scope cleanup decrements it. Verified 2026-08-02 as pre-existing and
+  independent: it reproduces identically on an unmodified tree using the
+  already-supported `var b: ref Item = self.item; return b;` form. The two
+  existing handoff tests in `tests/e2e/test_lifetimes.cpp` both *bind* the
+  result, which is why this never showed.
+- [ ] **Returning a `ref` as a `weak` segfaults**: `fun f(r: ref P): weak P { return r; }`
+  exits with SIGSEGV (139), no output. `gen_return_stmt` has no `weak` arm, so
+  the raw borrow pointer is returned where the caller expects a 4-slot
+  `{pointer, generation}` pair — the conversion `maybe_wrap_weak` performs at
+  call-argument and assignment sites is simply missing on the return path.
+  (`check_assignable` allows `ref → weak`, so it compiles.) Verified 2026-08-02
+  as pre-existing on an unmodified tree. Fix: apply `maybe_wrap_weak` to the
+  returned value against the declared return type, the same way the return path
+  now consults that type for the borrow-vs-move decision.
 
 *Nine bugs were found and fixed here on 2026-08-02, all traced back to compiling
 `CLAUDE.md`'s example program — which had never been run. Kept as a record of
