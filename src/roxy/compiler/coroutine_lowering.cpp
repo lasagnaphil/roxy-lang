@@ -1050,13 +1050,25 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
     init_func->name = original->name;
     init_func->return_type = coro_type;
 
-    for (auto& param : original->params) {
+    // The init function inherits the coroutine's signature verbatim, including
+    // `param_is_ptr`. That flag is the *caller's* calling convention: lowering
+    // reads the callee's flags to decide whether an argument is passed as a
+    // pointer or splatted into registers (`STRUCT_LOAD_REGS`). Dropping it made
+    // every call site pass a pointer-convention parameter by value — a method
+    // receiver (`self` is always is_ptr) or an `out`/`inout` argument — while
+    // the callee still read it as a pointer. A `uniq` receiver survived that by
+    // coincidence, since a pointer value is passed identically either way; a
+    // stack struct receiver got its *contents* in the register and the RefInc
+    // below dereferenced the first field as if it were an ObjectHeader.
+    for (u32 i = 0; i < original->params.size(); i++) {
+        const BlockParam& param = original->params[i];
         BlockParam new_param;
         new_param.value = init_func->new_value();
         new_param.type = param.type;
         new_param.name = param.name;
         init_func->params.push_back(new_param);
-        init_func->param_is_ptr.push_back(false);
+        init_func->param_is_ptr.push_back(
+            i < original->param_is_ptr.size() ? original->param_is_ptr[i] : false);
     }
 
     IRBlock* init_entry = create_block(allocator, init_func, alloc_string(allocator, "entry"));

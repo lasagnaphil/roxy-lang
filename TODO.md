@@ -22,33 +22,41 @@ coroutine segfault. Coroutine lowering minted result ValueIds with bare
 enforces the invariant, and `E2E CLI` covers it through the optimizing
 pipeline.)*
 
-- [ ] **A coroutine method on a *stack* receiver crashes at runtime.**
+- [ ] **A coroutine taking an `out`/`inout` param, or a struct by value,
+  crashes at runtime.**
   ```roxy
-  struct Counter { start: i32; }
-  fun Counter.upto(n: i32): Coro<i32> {
-      var i: i32 = self.start;
-      while (i <= n) { yield i; i = i + 1; }
+  fun gen(acc: inout i32): Coro<i32> {        // SIGSEGV
+      var i: i32 = 0;
+      while (i < 3) { acc = acc + i; yield i; i = i + 1; }
   }
-  fun main(): i32 {
-      var counter: Counter = Counter { start = 2 };   // stack; `uniq Counter` works
-      var c = counter.upto(5);
-      while (!c.done()) { print(f"{c.resume()}"); }
-      return 0;
-  }
+
+  struct P { x: i32; }
+  fun gen2(p: P): Coro<i32> { yield p.x; }    // SIGSEGV
   ```
-  → SIGSEGV in `ref_inc` (`object.hpp:51`) with `data = 0x2` — the struct's
-  first field value, not a pointer. `lower_coroutine` unconditionally emits a
-  `RefInc` for every `Ref`-typed param it stores into the state struct, and a
-  coroutine method's `self` is such a param; on a stack receiver there is no
-  `ObjectHeader` to count. Closures hit the same hazard and guard it with
-  `IROp::AssertHeap` (see `docs/internals/closures.md` → self capture), which
-  coroutine methods never emit. Either emit the same trap, or reject
-  stack-receiver coroutine methods at compile time — capturing a borrow of a
-  stack struct into a heap state struct that outlives the call is unsound
-  regardless. Every existing coroutine-method test uses a `uniq` receiver, so
-  this shape has never been exercised. Found 2026-08-02 while stress-testing
-  the DCE fix; it was unreachable before, since compiling any coroutine
-  crashed first.
+  Both die in `GET_FIELD` (`interpreter.cpp:1952`) reading the param back out
+  of the coroutine state struct. `lower_coroutine` gives each param a state
+  field typed from `BlockParam::type` and round-trips it through
+  `SetField`/`GetField`, which only works for params whose runtime
+  representation is a plain one-register value. An `out`/`inout` param is a
+  *pointer* (its field is sized for the pointee — an `inout i32` field holds 1
+  slot but the value is a 2-slot pointer), and a small struct passed by value
+  arrives splatted across registers rather than as an address. Fixing this
+  means deciding how each parameter convention is represented in the state
+  struct, not a local patch. Neither shape appears anywhere in
+  `tests/e2e/test_coroutines.cpp` — its coroutine params are primitives, enums,
+  and `Coro<T>`. Found 2026-08-02 alongside the receiver-convention fix below;
+  all three were unreachable before, since compiling any coroutine crashed
+  first.
+
+  *(Fixed on 2026-08-02: the closely related **coroutine method on a stack
+  receiver** crash. `lower_coroutine` built the init function with
+  `param_is_ptr` hardcoded to `false`, but that flag is the caller's calling
+  convention — lowering reads the callee's flags to choose pointer-passing vs.
+  `STRUCT_LOAD_REGS`. A method receiver is always `is_ptr`, so a stack struct
+  was passed by value and the state-struct `RefInc` read its first field as an
+  `ObjectHeader`. A `uniq` receiver survived by coincidence. The init function
+  now inherits the coroutine's `param_is_ptr` verbatim; covered by "Coroutine
+  method on a stack receiver" in `E2E Coroutines`.)*
 
 - [ ] **A destructor on a child struct fails to link when the parent has none.**
   ```roxy

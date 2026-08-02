@@ -1235,6 +1235,40 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.value == 3);
     }
 
+    TEST_CASE_TEMPLATE("Coroutine method on a stack receiver", Backend, RX_E2E_BACKENDS) {
+        // Every other coroutine-method case uses a `uniq` receiver, which hid a
+        // calling-convention bug: the init function is a *new* IRFunction, and
+        // lowering reads the callee's `param_is_ptr` to decide whether an
+        // argument is passed as a pointer or splatted into registers. Coroutine
+        // lowering used to push `false` for every param, so a method receiver
+        // (always is_ptr) was passed by value. A `uniq` receiver is a pointer
+        // either way, so it survived; a stack struct arrived as its own field
+        // contents and the state-struct RefInc read them as an ObjectHeader.
+        const char* source = R"(
+        struct Counter { start: i32; }
+        fun Counter.upto(n: i32): Coro<i32> {
+            var i: i32 = self.start;
+            while (i <= n) {
+                yield i;
+                i = i + 1;
+            }
+        }
+        fun main(): i32 {
+            var counter: Counter = Counter { start = 2 };
+            var c = counter.upto(5);
+            var sum: i32 = 0;
+            while (!c.done()) {
+                sum = sum + c.resume();
+            }
+            print(f"sum={sum}");
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "sum=14\n");
+    }
+
     TEST_CASE_TEMPLATE("Coroutine method state across yields", Backend, RX_E2E_BACKENDS) {
         // self + a promoted local both survive across yields. (Asserts on stdout
         // so the multi-value sequence isn't clamped by the C backend's exit code.)
