@@ -341,7 +341,23 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
 
     // 5. Generate comparison chain: evaluate each condition, branch to body or next check
     for (u32 i = 0; i < branches.size(); i++) {
+        // Each condition gets its own scope, so the temporaries it produces are
+        // destroyed here — at the end of the full expression — rather than
+        // surviving to the enclosing scope's exit.
+        //
+        // Two things break without it, both because `saved` was taken *before*
+        // any condition ran. A condition temporary would be registered as an
+        // owned local, then have its name wiped from the scope map by the
+        // restore_scopes below, so the enclosing scope's cleanup looked up a
+        // binding that no longer existed ("undefined variable in IR
+        // generation"). And a temporary from the *second* condition would be
+        // destroyed on paths where that condition never ran, since scope-exit
+        // cleanup is unconditional. Scoping the condition fixes both, and it is
+        // the correct lifetime besides — the condition's value is already in
+        // `cond` by the time the scope closes.
+        push_scope();
         ValueId cond = gen_expr(branches[i].condition);
+        pop_scope();
 
         // Determine fallthrough target
         IRBlock* fallthrough_block = nullptr;

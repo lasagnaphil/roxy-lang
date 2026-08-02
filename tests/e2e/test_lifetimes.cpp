@@ -2050,4 +2050,33 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.value == 6);
     }
 
+    // ── else-if chain: a condition's temporaries belong to the condition ──
+    //
+    // `gen_if_else_chain` snapshots the scope map before generating any
+    // condition, then restores it for each branch body. A temporary produced
+    // *while evaluating a condition* was therefore registered as an owned local
+    // and then had its name restored away, so the enclosing scope's cleanup
+    // looked up a binding that no longer existed and IR generation failed with
+    // "undefined variable". Any counted temporary in an else-if condition hit
+    // it; an f-string is the smallest one. (Plain `if` was unaffected — it
+    // snapshots *after* its condition.)
+    TEST_CASE_TEMPLATE("else-if chain: a counted temporary in a condition", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun pick(k: i32): i32 {
+            var r: i32 = 0;
+            if (str_eq(f"a{k}", "a1")) { r = 1; }
+            else if (str_eq(f"a{k}", "a2")) { r = 2; }
+            else { r = 3; }
+            return r;
+        }
+        fun main(): i32 {
+            print(f"{pick(1)}{pick(2)}{pick(7)}");
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.stdout_output == "123\n");
+    }
+
 }
