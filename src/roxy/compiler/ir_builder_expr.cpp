@@ -846,6 +846,7 @@ ValueId IRBuilder::gen_function_ref(Expr* expr, const FunctionRefTarget& target)
         env_type->struct_info.implemented_traits = Span<TraitImplRecord>();
         env_type->struct_info.parent = nullptr;
         env_type->struct_info.module_name = StringView(nullptr, 0);
+        derive_struct_move_only(env_type->struct_info);   // only __call_idx: copyable
         m_type_env.register_named_type(env_struct_name, env_type);
         // Track for the C backend (typedef + TYPEID), like lambda env structs.
         m_env_struct_types.push_back(env_type);
@@ -1855,15 +1856,24 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
             && args.size() >= 1) {
             emit_ref_inc(args[0]);
         }
-        // Pushing a `string` element makes the list an owner of it — retain
-        // (the list releases each element on destroy via the StrRelease element
-        // descriptor). Retaining a fresh temp too keeps the count balanced: the
-        // temp's own scope-exit release leaves exactly the list's count (finding 9b).
-        if (struct_type->is_list() && get_expr.name == "push"_sv
-            && struct_type->list_info.element_type
-            && struct_type->list_info.element_type->kind == TypeKind::String
+        // Pushing a counted element makes the list an owner of it — acquire a
+        // count, which the list releases on destroy / overwrite through its
+        // element drop descriptor. Retaining a fresh temporary too is deliberate
+        // and keeps the count balanced: the temporary's own scope-exit release
+        // leaves exactly the list's count (finding 9b).
+        //
+        // Generalized from `string` to every counted element type, via
+        // `emit_value_retain`. `string` is named explicitly alongside
+        // `member_needs_retain` only because that predicate still excludes it
+        // while the StrRelease gate in `member_needs_drop` is closed; the two
+        // arms merge into one when it opens. `ref` is excluded because its inc is
+        // emitted just above, and move-only elements because they are moved into
+        // the list rather than duplicated.
+        Type* push_elem = struct_type->is_list() ? struct_type->list_info.element_type : nullptr;
+        if (get_expr.name == "push"_sv && push_elem && push_elem->kind != TypeKind::Ref
+            && (push_elem->kind == TypeKind::String || member_needs_retain(push_elem))
             && args.size() >= 1) {
-            emit_str_retain(args[0]);
+            emit_value_retain(args[0], push_elem);
         }
         // Map insert/remove/clear must destroy noncopyable values that are
         // overwritten / removed / cleared (lifetimes.md "Value lifecycle"). The
@@ -2550,9 +2560,13 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
 
         // Consume the RHS temporary so it isn't double-owned (stored through the
         // pointer AND deleted at scope exit), and move-from an identifier RHS.
-        // Mirrors gen_assign_field.
-        if (type && type->noncopyable()) {
+        // Mirrors gen_assign_field. The consume keys on cleanup (whoever destroys
+        // the value must be the only one tracking it); the move-from keys on
+        // move-only-ness, which is a different question — see gen_var_decl.
+        if (tracked_for_cleanup(type)) {
             consume_temp_noncopyable(value);
+        }
+        if (type && type->noncopyable()) {
             if (assign_expr.value->kind == AstKind::ExprIdentifier) {
                 Type* value_type = assign_expr.value->resolved_type;
                 if (value_type && value_type->noncopyable()) {
@@ -2575,7 +2589,7 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
             u32 goffset = m_module->globals[git->second].slot_offset;
             ValueId addr = emit_global_addr(goffset, gtype);
             // Destroy the overwritten value (mirrors gen_assign_field).
-            if (gtype && gtype->is_struct() && gtype->noncopyable()) {
+            if (gtype && gtype->is_struct() && member_needs_drop(gtype)) {
                 emit_delete(addr, gtype);
             } else if (holds_owning_pointer(gtype)) {
                 ValueId old = emit_load_ptr(addr, gslots, gtype);
@@ -2592,8 +2606,10 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
             } else {
                 result = emit_store_ptr(addr, value, gslots, gtype);
             }
-            if (gtype && gtype->noncopyable()) {
+            if (tracked_for_cleanup(gtype)) {
                 consume_temp_noncopyable(value);
+            }
+            if (gtype && gtype->noncopyable()) {
                 if (assign_expr.value->kind == AstKind::ExprIdentifier) {
                     Type* value_type = assign_expr.value->resolved_type;
                     if (value_type && value_type->noncopyable()) {
@@ -2631,7 +2647,11 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
         emit_str_release(old_value);
     }
 
-    if (target_type && target_type->noncopyable()) {
+    // Destroying the overwritten value is a CLEANUP question — whether the old
+    // value has drop glue — not a move-only one. Gating it on move-only-ness
+    // leaked every overwrite of a copyable struct that owns something (`v = mk()`
+    // on a struct with a `string` field dropped the old string on the floor).
+    if (tracked_for_cleanup(target_type)) {
         OwnedLocalInfo* owned_info = m_ownership.find_by_name(name);
         if (owned_info && !owned_info->is_moved) {
             emit_implicit_destroy(*owned_info);
@@ -2677,8 +2697,10 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
     // variable's value is observed, leaving the variable pointing at
     // freed memory. Matches the consume_temp_noncopyable(value, true)
     // call in gen_var_decl.
-    if (assign_expr.target->resolved_type &&
-        assign_expr.target->resolved_type->noncopyable()) {
+    // Keyed on cleanup, not move-only-ness: whoever is responsible for destroying
+    // the value must be the only one tracking it, or both destroy it. Same split
+    // as gen_var_decl.
+    if (tracked_for_cleanup(assign_expr.target->resolved_type)) {
         consume_temp_noncopyable(value, true);
     }
 
@@ -2748,8 +2770,17 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
         emit_ref_inc(value);
     }
 
-    // Destroy old field value before overwriting (prevents leaks for uniq/move-semantic fields)
-    if (field_type && (field_type->kind == TypeKind::Uniq || field_type->noncopyable())) {
+    // Destroy the old field value before overwriting, or every overwrite leaks it.
+    // The gate is the field's own drop glue (member_needs_drop) — the same one the
+    // struct's destructor walks — so an overwrite releases exactly what teardown
+    // would have.
+    //
+    // `ref` and `string` are excluded because both are handled explicitly at this
+    // site with the retain-before-release ordering an overwrite needs: `ref` by
+    // the dec/inc pair above, `string` by the read here plus the release below.
+    // Letting the generic destroy also fire would decrement twice.
+    if (field_type && field_type->kind != TypeKind::String
+        && field_type->kind != TypeKind::Ref && member_needs_drop(field_type)) {
         emit_single_field_destroy(obj, get_expr.name, slot_offset, slot_count, field_type);
     }
     // A `string` field: read the overwritten string now (before the store), but
@@ -2782,8 +2813,8 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
         result = emit_set_field(obj, get_expr.name, slot_offset, slot_count, value, expr->resolved_type);
     }
 
-    // Consume noncopyable temporaries assigned to fields
-    if (field_type && field_type->noncopyable()) {
+    // Consume a temporary the field now owns (cleanup, not move-only-ness).
+    if (tracked_for_cleanup(field_type)) {
         consume_temp_noncopyable(value);
     }
     // A `string` field acquires its own count: retain the stored string (or adopt
@@ -3149,8 +3180,8 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
             consume_or_retain_string(value, field_info.type, /*adopted_by_variable=*/false);
         }
 
-        // Consume noncopyable temporaries moved into struct fields
-        if (field_info.type && field_info.type->noncopyable() && value_expr) {
+        // Consume a temporary the field now owns (cleanup, not move-only-ness).
+        if (tracked_for_cleanup(field_info.type) && value_expr) {
             consume_temp_noncopyable(value);
         }
 

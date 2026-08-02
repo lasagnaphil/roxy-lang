@@ -143,13 +143,15 @@ DropPlan compute_drop_plan(Type* type) {
             break;
         }
         case TypeKind::Struct:
-            // An embedded value struct is cleaned in place (never freed).
-            if (type->noncopyable()) {
-                if (drop_struct_walk_eligible(type)) {
-                    p.kind = DropKind::WalkFields; p.struct_type = type;
-                } else if (struct_has_default_dtor(type)) {
-                    p.kind = DropKind::CallDtor; p.struct_type = type;
-                }
+            // An embedded value struct is cleaned in place (never freed). The
+            // test is whether there is a destructor to run, NOT whether the
+            // struct is move-only: a copyable struct holding reference-counted
+            // members has a synthetic destructor that releases them, and gating
+            // this on move-only-ness is what would skip it.
+            if (drop_struct_walk_eligible(type)) {
+                p.kind = DropKind::WalkFields; p.struct_type = type;
+            } else if (struct_has_default_dtor(type)) {
+                p.kind = DropKind::CallDtor; p.struct_type = type;
             }
             break;
         default:
@@ -1013,6 +1015,69 @@ bool struct_needs_synthetic_dtor(const StructTypeInfo& info) {
         if (struct_has_default_dtor(ancestor)) return true;
     }
     return false;
+}
+
+// Whether a member of this type makes its enclosing struct move-only: it holds
+// something whose drop has no inverse, so duplicating the struct would hand two
+// owners the same resource. `string`, `ref`, `weak`, primitives and enums are
+// absent on purpose — each is either trivially copyable or reference-counted
+// with a retain that exactly undoes its release.
+static bool member_is_move_only(Type* type) {
+    if (!type) return false;
+    switch (type->kind) {
+        case TypeKind::Uniq:
+        case TypeKind::List:
+        case TypeKind::Map:
+        case TypeKind::Coroutine:
+        case TypeKind::Function:
+            return true;
+        case TypeKind::Struct:
+            // Reads the embedded struct's own derived flag rather than recursing,
+            // which is what keeps this cycle-safe: the caller's fixpoint is
+            // responsible for having derived it, or for running again once it has.
+            return type->struct_info.is_move_only;
+        default:
+            return false;
+    }
+}
+
+static bool has_user_written_default_dtor(const StructTypeInfo& info) {
+    for (const auto& dtor : info.destructors) {
+        if (dtor.name.empty() && dtor.decl != nullptr) return true;
+    }
+    return false;
+}
+
+bool derive_struct_move_only(StructTypeInfo& info) {
+    bool move_only = has_user_written_default_dtor(info);
+
+    // An ancestor's user-written destructor runs as part of destroying this
+    // struct (destruction chains upward), so duplicating this struct would run
+    // that body twice just the same. Inherited *fields* need no such walk —
+    // `info.fields` is parent-prefixed and already contains them.
+    for (Type* ancestor = info.parent; !move_only && ancestor && ancestor->is_struct();
+         ancestor = ancestor->struct_info.parent) {
+        if (has_user_written_default_dtor(ancestor->struct_info)) move_only = true;
+    }
+
+    for (const auto& field : info.fields) {
+        if (move_only) break;
+        if (member_is_move_only(field.type)) move_only = true;
+    }
+    for (const auto& clause : info.when_clauses) {
+        if (move_only) break;
+        for (const auto& variant : clause.variants) {
+            for (const auto& variant_field : variant.fields) {
+                if (member_is_move_only(variant_field.type)) { move_only = true; break; }
+            }
+            if (move_only) break;
+        }
+    }
+
+    bool changed = !info.move_only_derived || info.is_move_only != move_only;
+    info.is_move_only = move_only;
+    info.move_only_derived = true;
+    return changed;
 }
 
 void add_synthetic_default_dtor(BumpAllocator& allocator, StructTypeInfo& info) {

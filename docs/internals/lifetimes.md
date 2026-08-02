@@ -950,9 +950,10 @@ use-after-free.
 > and the verification commands. This section stays the canonical design.
 
 
-Three changes, in this order. The order matters: step 2 before step 1 would make
-`ref`-bearing structs copyable while the glue that keeps their counts balanced
-does not exist yet — trading an over-restriction for a use-after-free.
+Three changes, in this order. The order matters: making `ref`-bearing structs
+copyable before the glue that keeps their counts balanced exists would trade an
+over-restriction for a use-after-free. Steps 1 and 2 have landed; step 3 is
+partly done — see "What remains" below.
 
 **1. A retain derivation, mirroring the drop plan.** ✅ **Landed** —
 `compute_retain_plan(Type) -> RetainPlan` in `types.cpp`, beside
@@ -964,11 +965,14 @@ enum class RetainKind { None, StrRetain, RefInc, WalkFields };
 
 `string` → `StrRetain`, `ref` → `RefInc`, a copyable struct with any retaining
 field → `WalkFields`, everything else (including every move-only kind, which is
-never implicitly duplicated) → `None`. **Not yet consumed by codegen** — see the
-ordering constraint below for why it cannot be wired on its own.
+never implicitly duplicated) → `None`. Consumed by `emit_value_retain` /
+`emit_struct_clone_glue`, and by the `member_needs_retain` predicate that gates
+container acquisition.
 
-**2. Move-only becomes structural.** An `is_move_only` flag on `StructTypeInfo`,
-computed by the fixpoint that already adds synthetic destructors:
+**2. Move-only becomes structural.** ✅ **Landed** — an `is_move_only` flag on
+`StructTypeInfo`, filled by `derive_struct_move_only` in a whole-program fixpoint
+(`SemanticAnalyzer::derive_move_only_flags`) that runs beside — and before — the
+synthetic-destructor fixpoint:
 
 ```
 is_move_only(S) = S has a USER-WRITTEN default destructor
@@ -981,17 +985,27 @@ is_move_only_type(T) = Uniq | List | Map | Coroutine | Function
 `noncopyable()`'s struct arm reads the flag instead of scanning destructors.
 `string`, `ref`, `weak`, primitives and enums are not move-only. This is the
 step that makes `ref`-bearing structs copyable — a **user-visible language
-change**, correct but not a silent one.
+change**, correct but not a silent one, and the one behavioural difference it
+produced is pinned in `E2E Lifetimes`: passing such a struct by value no longer
+ends the caller's borrow, so deleting the owner while a borrowing struct is live
+now traps (correctly) instead of silently dropping a reachable borrow.
 
-**3. Clone glue at the duplication sites, and enable `StrRelease`.** Remove the
-carve-out in `member_needs_drop` and emit the retain glue, together.
+The flag is *precomputed*, and `noncopyable()` **asserts** it has been derived
+rather than reading a default-initialized `false`. That assert is load-bearing:
+it is what found the two ordering gaps (`resolve_global_var` asking before the
+derivation ran; native structs never deriving at all) instead of letting them
+silently report a move-only struct as copyable. `resolve_type_members` is now
+split into three phases for it — shape, derive, everything that may ask.
+
+**3. Clone glue at the duplication sites, and enable `StrRelease`.** ◑ **Partly
+landed.** The glue is in (`emit_struct_clone_glue`, commit "emit clone glue at
+every struct duplication site"), keyed on `member_needs_drop` so acquisition and
+release are inverses by construction. The gate itself is **not yet flipped** —
+see "What remains".
 
 ### The ordering constraint
 
-**Steps 2 and 3 must land in one change.** An earlier revision of this plan
-claimed step 1 could be wired first because "no copyable type today has a
-retaining field". That is **wrong**: a string-bearing struct is copyable *and*
-has a retaining field, so every one of the three steps is unbalanced alone.
+Each change is unbalanced *on its own*, which is what dictates the order:
 
 | Landed alone | Result |
 |---|---|
@@ -999,8 +1013,44 @@ has a retaining field, so every one of the three steps is unbalanced alone.
 | `StrRelease` in the gate | string-bearing structs earn a destructor → become **move-only** (measured: four `Structured Gen` cases fail) |
 | structural move-only | `ref`-bearing structs become copyable while nothing balances their counts → **use-after-free** |
 
-Only the combination is sound: the struct earns a drop, stays copyable, and
-every duplication retains.
+An earlier revision concluded from this that steps 2 and 3 had to land as one
+change. **That is no longer true, and the reason is worth keeping**: the row for
+structural move-only says "nothing balances their counts", which stopped being
+the case once the clone glue landed. With the glue in place, a `ref`-bearing
+struct that becomes copyable gets a `RefInc` at every duplication, so step 2 was
+safe on its own — verified across the whole suite on both backends plus every
+example, with Lox's census unchanged.
+
+The general form: **a step is safe alone once its counterpart exists**, not
+because of where it sits in the list. Re-derive the row rather than trusting it.
+
+Only the full combination is sound overall: the struct earns a drop, stays
+copyable, and every duplication retains.
+
+### What remains: the container side of step 3
+
+The glue covers struct duplication. Flipping the gate additionally makes
+**containers** release `string` keys and counted values on teardown, and `Map`
+acquires no matching count. Measured with the gate open:
+
+- `Map<string, _>` — the map stores the key without retaining it, so the key is
+  freed when the inserting scope exits and every later lookup **misses**. (This
+  one is *already* broken today, independently of the gate: a dynamic key in a
+  loop dangles. It is only invisible because the map does not release keys
+  either.)
+- `Map<_, V>` where `V` is counted — the pushed temporary and the map both
+  release: **double free**, caught by the slab's `ALIVE` assert.
+
+`List` is done: `push` acquires a count for any counted element via
+`emit_value_retain`, generalized from the `string`-only case.
+
+The map is harder than the list for one reason: `roxy_map_insert` **replaces**
+in place, keeping the existing key and overwriting the value. So the key retain
+is conditional on the key being new, and the old value must be released. The
+machinery for exactly that already exists — `emit_map_value_delete_if_present`
+emits a `contains`-guarded destroy before the insert — and wants extending to
+cover copyable-with-drop values and a key retain on the not-present branch.
+`remove` needs the key release to match.
 
 ### Ruled out: just making them move-only
 
@@ -1056,11 +1106,11 @@ That is the property that makes the remaining steps safe to build on — the
 tracking side is now already in terms of drop glue, so when a copyable struct
 starts carrying some, it is destroyed rather than silently skipped.
 
-### Duplication sites the glue must cover
+### Duplication sites the glue must cover ✅ *(landed)*
 
-Missing one turns the leak into a use-after-free once step 3 lands, so this list
-is the gating work — and it is longer than `emit_struct_copy`. A copyable value
-struct is duplicated at:
+Missing one turns the leak into a use-after-free once the gate opens, so this
+list was the gating work — and it is longer than `emit_struct_copy`. A copyable
+value struct is duplicated at:
 
 1. the `emit_struct_copy` calls in the IR builder (var decl, assignment, field
    store, struct literal, large-struct return, `throw`, global init);
@@ -1072,12 +1122,32 @@ struct is duplicated at:
 5. reading a struct-typed field out of another struct;
 6. a closure capture by copy.
 
-Sites 2–6 are the reason the glue cannot simply hang off `IROp::StructCopy`.
-Either every duplication has to be routed through an IR op that carries the
-obligation (a `clone` flag on `StructCopy`, or a distinct `StructClone`, so it is
-visible to `IRValidator` and lowered by both backends), or each site emits the
-glue explicitly and a test pins each one. The first is preferable: it makes
-completeness checkable instead of a review exercise.
+How each is covered:
+
+- **1** — `emit_struct_copy` takes a required `StructCopyKind`, so every call
+  site states move-or-clone and a new one cannot inherit a default. All ten read
+  the answer off one rule (`struct_copy_kind_for`): storage the producing
+  expression created — a struct literal, a call's return slot — is nobody else's,
+  so copying out of it moves; anything else is still owned, so it clones.
+- **4 and 5** turned out to be *already* routed through site 1: `var b = xs[i]`
+  and `var b = outer.inner` both reach `gen_var_decl`'s aliasing copy.
+- **3** is handled on the *callee* side, in `gen_return_stmt`: retain before
+  `emit_scope_cleanup` releases, leaving exactly the one count handed to the
+  caller. Same shape as the `string` return handoff beside it, and it covers the
+  large-struct case too, so returns need no call-site work.
+- **6** acquires in the capture loop, through the same `member_needs_drop` gate
+  the env's own cleanup uses.
+- **2** needs no glue at all, by a *convention* decision: a by-value parameter of
+  a **copyable** type is a BORROW for the call's duration, exactly as `string`
+  parameters already are. Parameter tracking therefore keys on
+  `param_owns_its_value` ("did the call site hand a count over" — i.e. is it
+  move-only) rather than on drop glue. The alternative — callee owns — would mean
+  cloning at every by-value struct argument, which is the cost the borrow avoids.
+
+That last point generalizes into the rule the two predicates now express:
+**drop where you acquired.** `tracked_for_cleanup` for locals, which acquire
+(their declaration's clone glue put the count there); `param_owns_its_value` for
+parameters, which do not.
 
 **Why this is verifiable.** Both error directions have detectors, which is what
 makes the change tractable rather than frightening:

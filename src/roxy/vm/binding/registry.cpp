@@ -579,6 +579,11 @@ void NativeRegistry::apply_structs_to_types(TypeEnv& type_env, BumpAllocator& al
 
         type->struct_info.fields = Span<FieldInfo>(fields, num_fields);
         type->struct_info.slot_count = slot_offset;
+        // A native struct's layout is final the moment it is built — there is no
+        // later resolution pass over it — so derive its lifecycle here. Its
+        // fields are plain scalars, so the answer is always "copyable"; the call
+        // is what makes that a derived answer rather than a default one.
+        derive_struct_move_only(type->struct_info);
 
         // Define in symbol table
         symbols.define(SymbolKind::Struct, se.name, type, SourceLocation{0, 0, 0, 0}, nullptr);

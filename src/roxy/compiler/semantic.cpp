@@ -465,15 +465,34 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
 // Pass 2: Resolve type members
 
 void SemanticAnalyzer::resolve_type_members(Program* program) {
+    // Phase A — type shape. Field layout and user-written destructors, which are
+    // the only two inputs the move-only derivation reads.
     for (auto* decl : program->declarations) {
         if (!decl) continue;
         switch (decl->kind) {
             case AstKind::DeclStruct:      resolve_struct_members(decl); break;
             case AstKind::DeclEnum:        resolve_enum_members(decl); break;
+            case AstKind::DeclDestructor:  resolve_destructor_member(decl); break;
+            default: break;
+        }
+    }
+
+    // Phase B — derive move-only-ness, before anything can ask about it. This
+    // split is why the phases exist: `resolve_global_var` (and the signature
+    // resolvers) consult `noncopyable()`, and when move-only-ness was "has a
+    // default destructor" that question could be answered off a span that was
+    // already populated. It is now a derived property, so it has to be derived
+    // first — the assert in `noncopyable()` is what turned that from a silent
+    // wrong answer into a loud one.
+    derive_move_only_flags(program);
+
+    // Phase C — everything that may ask whether a type is copyable.
+    for (auto* decl : program->declarations) {
+        if (!decl) continue;
+        switch (decl->kind) {
             case AstKind::DeclFun:         register_fun_signature(decl); break;
             case AstKind::DeclVar:         resolve_global_var(decl); break;
             case AstKind::DeclConstructor: resolve_constructor_member(decl); break;
-            case AstKind::DeclDestructor:  resolve_destructor_member(decl); break;
             case AstKind::DeclMethod:      resolve_method_member(decl); break;
             case AstKind::DeclTrait:       m_traits.resolve_trait_parent(decl); break;
             default: break;
@@ -884,11 +903,35 @@ void SemanticAnalyzer::resolve_method_member(Decl* decl) {
     }
 }
 
+void SemanticAnalyzer::derive_move_only_flags(Program* program) {
+    // A fixpoint because move-only-ness propagates through embedding — a struct
+    // that turns out to be move-only makes every struct holding one move-only —
+    // and declaration order says nothing about which is seen first. Same shape as
+    // the synthetic-destructor fixpoint below, and deliberately a *separate* pass
+    // from it: drop asks whether there is anything to release, move-only asks
+    // whether any of it can be released twice. Deriving both from one bit is the
+    // conflation this whole change undoes (lifetimes.md "The value lifecycle").
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (auto* decl : program->declarations) {
+            if (!decl || decl->kind != AstKind::DeclStruct) continue;
+            if (decl->struct_decl.type_params.size() > 0) continue;
+
+            Type* struct_type = m_type_env.named_type_by_name(decl->struct_decl.name);
+            if (!struct_type || !struct_type->is_struct()) continue;
+
+            if (derive_struct_move_only(struct_type->struct_info)) changed = true;
+        }
+    }
+}
+
 void SemanticAnalyzer::generate_synthetic_destructors(Program* program) {
     // Generate synthetic default destructors for structs that have fields
     // needing cleanup. A field needs cleanup if:
     //   - It is a uniq reference (needs destructor call + memory free)
     //   - It is a value-type struct whose type has a default destructor
+    //   - It is reference-counted (`string`, `ref`) and so must be released
     // Use a fixpoint loop because adding a synthetic destructor to Inner
     // may cause Outer (which embeds Inner) to also need one.
     bool changed = true;
@@ -1150,8 +1193,11 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
                     analyze_destructor_body(dtor_decl, inst->concrete_type);
                 }
 
-                // Generate synthetic default destructor if struct has fields needing cleanup
+                // Derive move-only-ness before asking whether the instance needs
+                // a destructor: struct_needs_synthetic_dtor reaches noncopyable(),
+                // which asserts the flag has been derived.
                 StructTypeInfo& concrete_info = inst->concrete_type->struct_info;
+                derive_struct_move_only(concrete_info);
                 if (struct_needs_synthetic_dtor(concrete_info)) {
                     add_synthetic_default_dtor(m_allocator, concrete_info);
                 }
@@ -1266,7 +1312,10 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
         append_method(m_allocator, struct_type_info, method_info);
     }
 
-    // Generate synthetic default destructor if struct has fields needing cleanup
+    // Derive move-only-ness before asking whether the instance needs a
+    // destructor: struct_needs_synthetic_dtor reaches noncopyable(), which
+    // asserts the flag has been derived.
+    derive_struct_move_only(struct_type_info);
     if (struct_needs_synthetic_dtor(struct_type_info)) {
         add_synthetic_default_dtor(m_allocator, struct_type_info);
     }
@@ -3126,6 +3175,8 @@ Type* SemanticAnalyzer::analyze_lambda_expr(Expr* expr) {
     env_type->struct_info.implemented_traits = Span<TraitImplRecord>();
     env_type->struct_info.parent = nullptr;
     env_type->struct_info.module_name = StringView(nullptr, 0);
+    // Fieldless for now; backfill_lambda_env re-derives once the captures are in.
+    derive_struct_move_only(env_type->struct_info);
     m_type_env.register_named_type(env_name, env_type);
 
     LambdaCaptureContext context;
@@ -3573,6 +3624,14 @@ void SemanticAnalyzer::backfill_lambda_env(Type* env_type, const LambdaCaptureCo
         dtor->decl = nullptr;
         env_type->struct_info.destructors = Span<DestructorInfo>(dtor, 1);
     }
+
+    // The env's fields are final here, so derive its lifecycle. It comes out
+    // move-only exactly when it captures something owned — which is also when
+    // the destructor above is attached, since both read the same property of the
+    // captures. (Inert in practice: an env is only ever reached through a
+    // `Function` value, which is move-only on its own account. Deriving it anyway
+    // keeps "every struct's flag is derived" a rule with no exceptions.)
+    derive_struct_move_only(env_type->struct_info);
 }
 
 Type* SemanticAnalyzer::analyze_unary_expr(Expr* expr) {
@@ -4017,6 +4076,7 @@ void SemanticAnalyzer::register_builtin_exception_types() {
         type->struct_info.slot_count = 0;
         type->struct_info.fields = Span<FieldInfo>();
         type->struct_info.members_resolved = true;
+        derive_struct_move_only(type->struct_info);   // fieldless: copyable
 
         Vector<TraitImplRecord> impls;
         impls.push_back(TraitImplRecord{exception_trait, Span<Type*>()});

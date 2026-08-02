@@ -1884,7 +1884,13 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(VMBackend::run(src).success == false);
     }
 
-    TEST_CASE_TEMPLATE("ref field: passing the struct by value moves the borrow", Backend, RX_E2E_BACKENDS) {
+    // A struct holding a `ref` is COPYABLE — a copy of a borrow is just another
+    // borrow, which `ref_inc` accounts for exactly. It used to be move-only, but
+    // only as a side effect of earning a destructor to release the borrow: drop
+    // and move-only were one bit (lifetimes.md "The value lifecycle"). Two
+    // consequences are pinned here — the copy is legal, and each copy's borrow
+    // lives until *its own* scope exit rather than ending when it is passed on.
+    TEST_CASE_TEMPLATE("ref field: the struct is copyable and each copy counts its borrow", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct P { x: i32; }
         struct H { r: ref P; }
@@ -1892,15 +1898,41 @@ TEST_SUITE("E2E Lifetimes") {
         fun main(): i32 {
             var o: uniq P = uniq P();
             o.x = 7;
-            var h: H = H { r = o };   // borrow counted
-            var v: i32 = take(h);      // move h into take; its drop releases the borrow
-            delete o;                  // count back to 0 → ok
+            var v: i32 = 0;
+            {
+                var h: H = H { r = o };   // borrow counted
+                var h2: H = h;            // a copy of a borrow: a second counted borrow
+                v = take(h) + take(h2) - 7;   // by value = borrowed for the call
+            }                             // both borrows released at scope exit
+            delete o;                     // count back to 0 → ok
             return v;
         }
     )";
         auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 7);
+    }
+
+    // The other half of the same rule: because the struct is copyable, passing it
+    // by value no longer ends the caller's borrow, so an owner deleted while a
+    // borrowing struct is still live traps. That is the constraint-reference
+    // model working, not a regression — the old pass-by-value "move" silently
+    // dropped a borrow that was still reachable.
+    TEST_CASE("ref field: deleting the owner while a borrowing struct is live traps") {
+        const char* source = R"(
+        struct P { x: i32; }
+        struct H { r: ref P; }
+        fun take(h: H): i32 { return h.r.x; }
+        fun main(): i32 {
+            var o: uniq P = uniq P();
+            o.x = 7;
+            var h: H = H { r = o };
+            var v: i32 = take(h);
+            delete o;                  // h still holds a counted borrow → traps
+            return v;
+        }
+    )";
+        CHECK(VMBackend::run(source).success == false);
     }
 
     // ── Map<_, uniq V>: remove / clear destroy the values (lifetimes.md §18

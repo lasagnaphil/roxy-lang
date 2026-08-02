@@ -12,10 +12,13 @@ using namespace rx;
 //
 // The predicates still have no code-emitting consumer; the plans are the source
 // of truth. compute_drop_plan is fully wired (both backends, plus
-// member_needs_drop). compute_retain_plan is NOT yet consumed — these tests pin
-// its answers so the derivation can be reviewed on its own, ahead of the glue
-// (see lifetimes.md → "Separating Drop from Copy" for why the glue cannot land
-// without the rest of that plan in the same change).
+// member_needs_drop), and compute_retain_plan now drives the clone glue at every
+// struct duplication site.
+//
+// `derive_struct_move_only` is pinned here too: it is what separates move-only
+// from drop, so a struct type built by hand must have it called before anything
+// asks `noncopyable()` — the predicate asserts on that rather than defaulting to
+// the unsound answer.
 //
 // Struct behavior with *synthesized* destructors (which require the semantic
 // pass) is exercised end-to-end by the build_delete_desc cross-check assertion
@@ -127,8 +130,9 @@ TEST_SUITE("Lifecycle Predicates") {
         has_ref->struct_info.fields = Span<FieldInfo>(rf, 1);
         has_ref->struct_info.when_clauses = Span<WhenClauseInfo>();
         has_ref->struct_info.destructors = Span<DestructorInfo>();
+        derive_struct_move_only(has_ref->struct_info);
 
-        CHECK(has_ref->is_copy());        // no destructor synthesized → still copyable
+        CHECK(has_ref->is_copy());        // a `ref` is a borrow, not an owner → copyable
         CHECK(has_ref->needs_drop());     // ... but the ref field must be released
         CHECK(has_ref->needs_retain());   // ... and re-borrowed on copy
         CHECK_FALSE(has_ref->is_trivial());
@@ -142,10 +146,90 @@ TEST_SUITE("Lifecycle Predicates") {
         plain->struct_info.fields = Span<FieldInfo>(pf, 2);
         plain->struct_info.when_clauses = Span<WhenClauseInfo>();
         plain->struct_info.destructors = Span<DestructorInfo>();
+        derive_struct_move_only(plain->struct_info);
+        derive_struct_move_only(plain->struct_info);
 
         CHECK(plain->is_copy());
         CHECK_FALSE(plain->needs_drop());
         CHECK(plain->is_trivial());
+    }
+
+    // ---- derive_struct_move_only ------------------------------------------
+    //
+    // Move-only is a property of what a struct HOLDS, not of whether it has a
+    // destructor. These pin both directions of the split that used to be one bit.
+
+    // Helper: build a struct with the given fields and destructors, derived.
+    static Type* make_struct(BumpAllocator& allocator, TypeCache& types, const char* name,
+                             Span<FieldInfo> fields, Span<DestructorInfo> dtors) {
+        Type* t = types.struct_type(StringView(name, (u32)strlen(name)), nullptr);
+        t->struct_info.fields = fields;
+        t->struct_info.when_clauses = Span<WhenClauseInfo>();
+        t->struct_info.destructors = dtors;
+        derive_struct_move_only(t->struct_info);
+        return t;
+    }
+
+    static Span<FieldInfo> one_field(BumpAllocator& allocator, const char* name, Type* type) {
+        auto* f = reinterpret_cast<FieldInfo*>(
+            allocator.alloc_bytes(sizeof(FieldInfo), alignof(FieldInfo)));
+        f[0] = FieldInfo{ StringView(name, (u32)strlen(name)), type, true, 0, 0, 2 };
+        return Span<FieldInfo>(f, 1);
+    }
+
+    TEST_CASE("move-only is decided by what a struct holds") {
+        BumpAllocator allocator(8192);
+        TypeCache types(allocator);
+        Span<DestructorInfo> no_dtor = Span<DestructorInfo>();
+
+        // Reference-counted members are copyable: their drop has an exact
+        // inverse, so a second owner can simply acquire its own count. A
+        // `string` field being treated as move-only is what broke reading a
+        // plain data record out of a `List`.
+        CHECK(make_struct(allocator, types, "HasString",
+                          one_field(allocator, "s", types.string_type()), no_dtor)->is_copy());
+        CHECK(make_struct(allocator, types, "HasRef",
+                          one_field(allocator, "r", types.ref_type(types.i32_type())),
+                          no_dtor)->is_copy());
+
+        // Owning members have no inverse — duplicating would hand two owners the
+        // same resource — so holding one is exactly what makes a struct move-only.
+        Type* uniq_holder = make_struct(allocator, types, "HasUniq",
+            one_field(allocator, "u", types.uniq_type(types.i32_type())), no_dtor);
+        CHECK_FALSE(uniq_holder->is_copy());
+        CHECK_FALSE(make_struct(allocator, types, "HasList",
+            one_field(allocator, "xs", types.list_type(types.i32_type())), no_dtor)->is_copy());
+
+        // ... and it propagates through embedding.
+        CHECK_FALSE(make_struct(allocator, types, "Outer2",
+            one_field(allocator, "inner", uniq_holder), no_dtor)->is_copy());
+    }
+
+    TEST_CASE("only a USER-WRITTEN default destructor implies move-only") {
+        BumpAllocator allocator(8192);
+        TypeCache types(allocator);
+
+        auto make_dtor = [&](Decl* decl) {
+            auto* d = reinterpret_cast<DestructorInfo*>(
+                allocator.alloc_bytes(sizeof(DestructorInfo), alignof(DestructorInfo)));
+            d[0] = DestructorInfo{};
+            d[0].decl = decl;
+            return Span<DestructorInfo>(d, 1);
+        };
+
+        // A synthetic destructor (decl == null) only releases what the fields
+        // hold, so it says nothing the fields do not already say. Reading it as
+        // "move-only" is the conflation this derivation removes.
+        CHECK(make_struct(allocator, types, "SyntheticDtor",
+                          one_field(allocator, "s", types.string_type()),
+                          make_dtor(nullptr))->is_copy());
+
+        // A user-written one has a body with arbitrary effects, and running it
+        // twice for one logical value is precisely what move-only prevents.
+        auto* body = reinterpret_cast<Decl*>(allocator.alloc_bytes(sizeof(void*), alignof(void*)));
+        CHECK_FALSE(make_struct(allocator, types, "UserDtor",
+                                one_field(allocator, "n", types.i32_type()),
+                                make_dtor(body))->is_copy());
     }
 
     // ---- compute_retain_plan: the mirror of compute_drop_plan --------------
@@ -212,6 +296,7 @@ TEST_SUITE("Lifecycle Predicates") {
         boxed->struct_info.fields = Span<FieldInfo>(bf, 1);
         boxed->struct_info.when_clauses = Span<WhenClauseInfo>();
         boxed->struct_info.destructors = Span<DestructorInfo>();
+        derive_struct_move_only(boxed->struct_info);
 
         CHECK(boxed->is_copy());
         RetainPlan bp = compute_retain_plan(boxed);
@@ -227,6 +312,7 @@ TEST_SUITE("Lifecycle Predicates") {
         outer->struct_info.fields = Span<FieldInfo>(of, 1);
         outer->struct_info.when_clauses = Span<WhenClauseInfo>();
         outer->struct_info.destructors = Span<DestructorInfo>();
+        derive_struct_move_only(outer->struct_info);
         CHECK(compute_retain_plan(outer).kind == RetainKind::WalkFields);
 
         // A struct of plain fields retains nothing.
@@ -237,10 +323,13 @@ TEST_SUITE("Lifecycle Predicates") {
         plain->struct_info.fields = Span<FieldInfo>(pf, 1);
         plain->struct_info.when_clauses = Span<WhenClauseInfo>();
         plain->struct_info.destructors = Span<DestructorInfo>();
+        derive_struct_move_only(plain->struct_info);
         CHECK(compute_retain_plan(plain).kind == RetainKind::None);
 
-        // A struct made move-only by a destructor retains nothing even though a
-        // field would: it is moved, not duplicated.
+        // A struct made move-only by a USER-WRITTEN destructor retains nothing
+        // even though a field would: it is moved, not duplicated. The `decl` is
+        // what carries that distinction — a synthetic destructor (decl == null)
+        // only releases what the fields hold and so does not imply move-only.
         Type* owned = types.struct_type("OwnedR"_sv, nullptr);
         auto* wf = reinterpret_cast<FieldInfo*>(
             allocator.alloc_bytes(sizeof(FieldInfo), alignof(FieldInfo)));
@@ -250,7 +339,10 @@ TEST_SUITE("Lifecycle Predicates") {
         auto* dt = reinterpret_cast<DestructorInfo*>(
             allocator.alloc_bytes(sizeof(DestructorInfo), alignof(DestructorInfo)));
         dt[0] = DestructorInfo{};
+        dt[0].decl = reinterpret_cast<Decl*>(
+            allocator.alloc_bytes(sizeof(void*), alignof(void*)));  // stands in for a body
         owned->struct_info.destructors = Span<DestructorInfo>(dt, 1);
+        derive_struct_move_only(owned->struct_info);
         CHECK_FALSE(owned->is_copy());
         CHECK(compute_retain_plan(owned).kind == RetainKind::None);
     }

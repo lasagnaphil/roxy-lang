@@ -48,7 +48,8 @@ ValueId IRBuilder::lookup_local(StringView name) {
             return it->second.value;
         }
     }
-    report_error("Internal error: undefined variable in IR generation");
+    report_error(intern_format("Internal error: undefined variable '{}' in IR generation (fn {})",
+                               name, m_current_func ? m_current_func->name : "?"_sv).data());
     return ValueId::invalid();
 }
 
@@ -305,8 +306,10 @@ void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
 
 void IRBuilder::emit_single_field_destroy(ValueId obj_ptr, StringView field_name,
                                           u32 slot_offset, u32 slot_count, Type* field_type) {
-    // For struct fields stored as addresses (value-type structs), use GetFieldAddr
-    if (field_type->is_struct() && field_type->noncopyable()) {
+    // For struct fields stored as addresses (value-type structs), use GetFieldAddr.
+    // The caller has already decided this field needs dropping; this only picks
+    // the addressing mode, so it asks about representation, not move-only-ness.
+    if (field_type->is_struct()) {
         ValueId field_addr = emit_get_field_addr(obj_ptr, field_name,
             slot_offset, field_type);
         emit_delete(field_addr, field_type);

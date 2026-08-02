@@ -183,6 +183,20 @@ struct StructTypeInfo {
     bool members_resolved;         // Fields/layout resolved (resolve_struct_members ran, or
                                    // the type is registry-built/synthesized and owns its layout)
 
+    // Whether this struct is move-only — see derive_struct_move_only. Read by
+    // `noncopyable()`; never set it directly.
+    //
+    // Precomputed rather than derived on demand because the definition recurses
+    // through field types, and a recursive predicate would have to defend against
+    // value cycles. Those are rejected as infinitely sized elsewhere, but not
+    // here, and "elsewhere" is not a guarantee a predicate can rely on.
+    bool is_move_only;
+    // Debug tripwire: set once the flag above is derived. Reading `is_move_only`
+    // before then would silently report a move-only struct as copyable — the
+    // unsound direction — so `noncopyable()` asserts on it rather than letting a
+    // default-initialized `false` through.
+    bool move_only_derived;
+
     // Find a field by name, returns nullptr if not found
     const FieldInfo* find_field(StringView field_name) const;
 
@@ -392,22 +406,29 @@ struct Type {
         return kind == TypeKind::ExceptionRef;
     }
 
-    // Returns true for noncopyable types (require move semantics).
-    // This includes:
+    // Returns true for MOVE-ONLY types — those that cannot be implicitly
+    // duplicated, so binding one moves its source. This includes:
     //   - uniq references
     //   - Coro<T> (heap-allocated state struct)
     //   - Function types (own a uniq closure env via the type-erased wrapper)
-    //   - structs with a default destructor (synthetic or user-defined)
-    //   - List<T> where T is noncopyable
-    //   - Map<K,V> where K or V is noncopyable
+    //   - List and Map (each owns a heap buffer)
+    //   - structs that are structurally move-only (see derive_struct_move_only)
+    //
+    // The struct arm used to read "has a default destructor", which welded
+    // move-only-ness to *drop*: a struct earned a destructor and became move-only
+    // in the same instant. That is wrong in both directions — a `string` field is
+    // reference-counted and perfectly copyable, while a `uniq` field is neither —
+    // and it is why a `string` struct field leaked. A type is move-only exactly
+    // when its drop has no inverse (lifetimes.md "The value lifecycle"), which is
+    // a property of what it *holds*, not of whether it has a destructor.
     bool noncopyable() const {
         if (kind == TypeKind::Uniq) return true;
         if (kind == TypeKind::Coroutine) return true;
         if (kind == TypeKind::Function) return true;
         if (kind == TypeKind::Struct) {
-            for (const auto& dtor : struct_info.destructors) {
-                if (dtor.name.empty()) return true;
-            }
+            assert(struct_info.move_only_derived &&
+                   "noncopyable(): is_move_only read before derive_struct_move_only ran");
+            return struct_info.is_move_only;
         }
         // A List of `ref` is noncopyable (move-only): those elements are counted
         // borrows, so the container must be destroyed to release each element's
@@ -692,23 +713,39 @@ RetainPlan compute_retain_plan(Type* type);
 // A recursive form would not terminate on a direct value cycle.
 //
 // ONE EXCEPTION, and it is a known gap rather than a design choice:
-// DropKind::StrRelease is excluded. Including it is what a `string` field needs
-// — and both backends already lower it — but it cannot land until struct COPY
-// grows matching retain glue, because the two decisions are currently welded
-// together: `noncopyable()` on a struct means literally "has a default
-// destructor", so the moment a string-bearing struct gains a synthetic
-// destructor it also becomes move-only. Measured 2026-08-02: flipping this on
-// turned `struct S { s: string; }` into a move-only type and broke four
-// structured-generator cases with "self-assignment of noncopyable variable" /
-// "use of possibly moved value". Making it copyable *without* retain-on-copy is
-// worse — two owners, two releases, use-after-free. See TODO.md for the
-// two-part fix (separate Drop from Copy in `noncopyable()`, then emit clone
-// glue at the StructCopy sites).
+// DropKind::StrRelease is excluded, which is why a `string` struct field leaks —
+// this gate says no while both backends are perfectly able to lower the release.
+//
+// Two of the three things blocking the flip are now done. Move-only is derived
+// structurally (`derive_struct_move_only`), so admitting the release no longer
+// makes a string-bearing struct move-only; and every *struct* duplication site
+// emits matching retain glue (`emit_struct_clone_glue`), keyed on this same
+// predicate so drop and retain turn on together.
+//
+// What remains is the container side. `Map` acquires no count for a `string`
+// key or for a counted value, so flipping this gate — which makes map teardown
+// release both — turns the leak into a use-after-free. See HANDOFF.md; the
+// measured shape is a dangling key (`Map<string, _>` lookups miss after the
+// inserting scope exits) and a double free of a value. `List` is already done.
 inline bool member_needs_drop(Type* t) {
     if (!t) return false;
     DropPlan plan = compute_drop_plan(t);
     if (plan.kind == DropKind::StrRelease) return false;  // see note above
     return plan.kind != DropKind::None || plan.free_obj;
+}
+
+// Whether storing a value of this type into a second owner — a container
+// element, a struct field, a global — must ACQUIRE a count for that owner.
+//
+// True exactly when the value drops and its drop has an inverse. The two halves
+// matter equally: without a drop there is nothing to balance, and a drop with no
+// inverse (`uniq`, a container, a coroutine) belongs to a move-only type, whose
+// value is transferred rather than duplicated. So this is the complement of
+// move-only among the types that carry drop glue, and it is the acquisition
+// counterpart of `member_needs_drop` — the pair is what keeps a container's
+// pushes and its teardown exact inverses.
+inline bool member_needs_retain(Type* t) {
+    return member_needs_drop(t) && compute_retain_plan(t).kind != RetainKind::None;
 }
 
 // True if `type` has a *default* (unnamed) destructor — user-written or
@@ -748,6 +785,26 @@ void append_destructor(BumpAllocator& allocator, StructTypeInfo& info, Destructo
 // struct receives a synthetic default destructor; shared by the whole-program
 // synthetic-destructor pass and both generic-instance resolution paths.
 bool struct_needs_synthetic_dtor(const StructTypeInfo& info);
+
+// Derive `info.is_move_only` and mark it derived. Returns whether the flag
+// changed, so a caller can drive this to a fixpoint across a whole program —
+// embedding a struct that later turns out to be move-only makes the embedder
+// move-only too, and declaration order says nothing about which is seen first.
+//
+//   is_move_only(S) = S (or an ancestor) has a USER-WRITTEN default destructor
+//                  || any field, regular or variant, is of a move-only type
+//
+// The user-written destructor is the one non-structural term, and it is a
+// deliberate escape hatch: a `fun delete S()` has a body with arbitrary effects,
+// and running it twice for one logical value is exactly what move-only prevents.
+// A *synthetic* destructor is not such a term — it only ever releases what the
+// fields hold, so it says nothing beyond what the fields already say. Reading it
+// as one is the conflation this replaces.
+//
+// Must be called before anything asks `noncopyable()` about the struct; that
+// predicate asserts on the flag being derived rather than defaulting to
+// "copyable", which is the unsound answer.
+bool derive_struct_move_only(StructTypeInfo& info);
 
 // Append a synthetic default destructor (empty name, no params, decl == null)
 // to `info`. Does NOT guard against an existing default destructor — callers

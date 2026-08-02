@@ -1142,7 +1142,11 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
     struct_type->struct_info.fields = alloc_span(allocator, fields);
     struct_type->struct_info.slot_count = current_slot;
     struct_type->struct_info.constructors = Span<ConstructorInfo>();
-    // Attach a synthetic default destructor so noncopyable() and cleanup recognize this struct
+    // Attach a synthetic default destructor so the cleanup machinery has one to
+    // call. This no longer decides copyability — a synthetic destructor says only
+    // that fields need releasing (lifetimes.md "The value lifecycle") — but the
+    // state struct is reached solely through a `Coro<T>`, which is move-only on
+    // its own account, so nothing ever tries to duplicate it.
     DestructorInfo* dtor_info = reinterpret_cast<DestructorInfo*>(
         allocator.alloc_bytes(sizeof(DestructorInfo), alignof(DestructorInfo)));
     dtor_info->name = StringView();  // empty = default destructor
@@ -1153,6 +1157,7 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
     struct_type->struct_info.when_clauses = Span<WhenClauseInfo>();
     struct_type->struct_info.implemented_traits = Span<TraitImplRecord>();
     struct_type->struct_info.parent = nullptr;
+    derive_struct_move_only(struct_type->struct_info);
 
     type_env.register_named_type(struct_name, struct_type);
     coro_type->coro_info.generated_struct_type = struct_type;

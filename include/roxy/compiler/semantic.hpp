@@ -111,6 +111,9 @@ private:
     // recursion, i.e. a genuine value-type cycle.
     bool ensure_struct_members_resolved(Type* struct_type, SourceLocation loc);
     // Trailing whole-program pass run after all members are resolved.
+    // Whole-program fixpoint filling StructTypeInfo::is_move_only. Runs before
+    // anything asks `noncopyable()` about a struct — see resolve_type_members.
+    void derive_move_only_flags(Program* program);
     void generate_synthetic_destructors(Program* program);
     void resolve_when_clauses(Span<WhenFieldDecl> when_decls,
                               Vector<FieldInfo>& fields,
