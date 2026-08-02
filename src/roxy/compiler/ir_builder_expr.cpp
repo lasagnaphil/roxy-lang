@@ -459,13 +459,44 @@ void IRBuilder::maybe_str_retain(ValueId val, Type* type) {
     if (type && type->kind == TypeKind::String) emit_str_retain(val);
 }
 
+// Whether the compiler is responsible for a map value's counts.
+//
+// A `ref` value is counted by the *runtime* — the map header's `value_is_ref`
+// flag drives the inc/dec inside roxy_map_insert/remove — so emitting glue for
+// one too would count it twice. Everything else is the compiler's, because only
+// the compiler knows the type well enough to walk it.
+static bool map_value_is_compiler_counted(Type* value_type) {
+    return value_type && value_type->kind != TypeKind::Ref;
+}
+
+void IRBuilder::emit_map_value_ownership(ValueId map_obj, Type* map_type,
+                                         ValueId key_val, ValueId value_val) {
+    if (!map_type || !map_type->is_map()) return;
+    Type* value_type = map_type->map_info.value_type;
+    if (!map_value_is_compiler_counted(value_type)) return;
+
+    // Storing into a map slot makes the map an owner, so the value must acquire
+    // a count — unconditionally, because the slot ends up holding it whether the
+    // entry was new or replaced. The mirror of `List.push`, and for the same
+    // reason: retaining a fresh temporary too is what keeps the count balanced,
+    // since the temporary still releases its own at scope exit.
+    //
+    // A move-only value has no count to acquire — it is moved into the slot, and
+    // the call-argument path consumes the temporary instead.
+    if (member_needs_retain(value_type)) emit_value_retain(value_val, value_type);
+
+    // The replaced value, if any, has to be released or every overwrite leaks it.
+    emit_map_value_delete_if_present(map_obj, map_type, key_val);
+}
+
 void IRBuilder::emit_map_value_delete_if_present(ValueId map_obj, Type* map_type, ValueId key_val) {
     if (!map_type || !map_type->is_map()) return;
     Type* value_type = map_type->map_info.value_type;
-    // Only noncopyable (uniq / container / struct-with-dtor) values need a typed
-    // delete here. A `ref` value is released by the runtime value_is_ref path
-    // (roxy_map_insert/remove); a trivial value needs no cleanup.
-    if (!value_type || value_type->is_copy()) return;
+    // A typed Delete covers both shapes the stored value can have: a move-only
+    // value is destroyed, a counted one is released. The gate is `member_needs_drop`
+    // — the same one map teardown uses — so an overwrite releases exactly what
+    // teardown would have.
+    if (!map_value_is_compiler_counted(value_type) || !member_needs_drop(value_type)) return;
 
     StringView contains_native;
     for (const MethodInfo& method : map_type->map_info.methods) {
@@ -1888,7 +1919,7 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         // their cleanup is a plain pre-call destroy.
         if (struct_type->is_map() && is_map_insert_noncopyable_value(call_expr)
             && args.size() >= 2) {
-            emit_map_value_delete_if_present(obj, struct_type, args[0]);  // destroy old, if present
+            emit_map_value_ownership(obj, struct_type, args[0], args[1]);
             StringView native_name = call_expr.mangled_name;
             i32 native_idx = m_registry.get_index(native_name);
             Span<ValueId> method_args = prepend_self(obj, args);
@@ -1900,7 +1931,13 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
             return result;
         }
         if (struct_type->is_map()) {
-            if (get_expr.name == "remove"_sv && args.size() >= 1) {
+            if (get_expr.name == "insert"_sv && args.size() >= 2) {
+                // The copyable-value case. A move-only value took the deferred
+                // branch above (its consume has to land after the insert); a
+                // counted one has no such ordering constraint, so it is handled
+                // here on the way to the ordinary native call.
+                emit_map_value_ownership(obj, struct_type, args[0], args[1]);
+            } else if (get_expr.name == "remove"_sv && args.size() >= 1) {
                 emit_map_value_delete_if_present(obj, struct_type, args[0]);
             } else if (get_expr.name == "clear"_sv) {
                 emit_map_clear_value_cleanup(obj, struct_type);
@@ -2909,11 +2946,12 @@ ValueId IRBuilder::gen_assign_index(Expr* expr, ValueId value) {
             // exists — destroy it unconditionally.
             ValueId old = emit_index_get(obj, index_val, kind, elem_type);
             emit_delete(old, elem_type);
-        } else if (elem_noncopyable) {
-            // Map: a slot has an old value only for an already-present key, so the
-            // helper guards the destroy with a `contains` check (a new key destroys
-            // nothing). Shared with m.insert / m.remove (lifetimes.md "Value lifecycle").
-            emit_map_value_delete_if_present(obj, container_type, index_val);
+        } else if (!is_list) {
+            // Map: `m[k] = v` is `m.insert(k, v)`, so it carries the same
+            // obligations — acquire for the slot, release whatever it held. A
+            // slot has an old value only for an already-present key, so the
+            // release is `contains`-guarded (a new key releases nothing).
+            emit_map_value_ownership(obj, container_type, index_val, value);
         }
 
         emit_index_set(obj, index_val, value, kind);

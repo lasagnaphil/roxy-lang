@@ -264,6 +264,11 @@ private:
     // removed (`m.remove`) value isn't leaked (lifetimes.md "Value lifecycle"). No-op
     // unless the map's value type is noncopyable (a `ref` value is released by the
     // runtime value_is_ref path; a trivial value needs nothing).
+    // Balance a map value's counts around a store: acquire for the map's slot,
+    // release whatever that slot held before. Shared by `m.insert(k, v)` and
+    // `m[k] = v`, which are the same operation.
+    void emit_map_value_ownership(ValueId map_obj, Type* map_type,
+                                  ValueId key_val, ValueId value_val);
     void emit_map_value_delete_if_present(ValueId map_obj, Type* map_type, ValueId key_val);
     // Emit a bucket-iteration loop that deletes every live noncopyable value of a
     // map (uses the __map_iter_* natives), for `m.clear()` cleanup. No-op unless

@@ -475,8 +475,20 @@ enum class BCCleanupKind : u8 { Delete = 0, RefDec = 1, Unpin = 2, StrRelease = 
 // clean up variables whose scope spans the throw site but not the handler:
 // owned values are destroyed (Delete), ref borrows are decremented (RefDec).
 struct BCCleanupRecord {
-    u32 scope_start_pc;       // PC where variable becomes live (inclusive)
+    u32 scope_start_pc;       // PC where the variable's SCOPE begins (inclusive)
     u32 scope_end_pc;         // PC where variable's normal cleanup occurs (exclusive)
+    // PC from which the register actually holds the value (inclusive). Never
+    // below scope_start_pc, and usually equal to it — a value produced by a call
+    // is the exception: the block-derived scope begins before the call, but the
+    // register is not written until it returns.
+    //
+    // Deliberately separate from scope_start_pc, because the unwinder asks two
+    // different questions. "Is the throw inside the live range" must use this
+    // one, or cleanup reads an uninitialized register. "Is the handler inside
+    // the scope" (i.e. will normal-path cleanup handle it instead) must use
+    // scope_start_pc: narrowing that test lets a handler fall outside a scope it
+    // is really in, so both paths clean up and the value is freed twice.
+    u32 live_start_pc;
     u8 register_idx;          // Register holding the owned value / borrow
     u8 kind;                  // BCCleanupKind: Delete owned value vs RefDec a borrow
     u16 delete_desc_idx;      // Index into BCFunction::delete_descs[] (Delete kind only)

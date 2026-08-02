@@ -10,6 +10,22 @@
 
 namespace rx {
 
+// Whether lowering this op can produce a nested call frame, so an exception
+// raised inside it surfaces in this frame at the op's return address rather than
+// at its own PC. Used to place a value's "ready" PC (see the lowering loop).
+static bool op_may_push_frame(IROp op) {
+    switch (op) {
+        case IROp::Call:
+        case IROp::CallNative:
+        case IROp::CallExternal:
+        case IROp::CallIndirect:
+        case IROp::New:            // runs a constructor
+            return true;
+        default:
+            return false;
+    }
+}
+
 BytecodeBuilder::BytecodeBuilder()
     : m_current_func(nullptr)
     , m_current_ir_func(nullptr)
@@ -139,6 +155,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_unfusable_cmp_pcs.clear();
     m_nullify_pcs.clear();
     m_ref_inc_pcs.clear();
+    m_value_ready_pcs.clear();
     // m_requires_register is rebuilt fresh by compute_const_use_modes().
     m_jump_patches.clear_keep_capacity();
     free_regs_reset();
@@ -521,9 +538,20 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
         // Record block offset
         m_block_offsets[block->id.id] = m_current_func->code.size();
 
-        // Lower all instructions
+        // Lower all instructions, recording where each value becomes readable.
         for (IRInst* inst : block->instructions) {
             lower_instruction(inst);
+            if (inst->result.is_valid()) {
+                // The register holds the value from the instruction's end onward
+                // — except when the instruction pushes a frame. An exception
+                // propagating out of a callee unwinds the caller at
+                // `frame->pc`, which is exactly the CALL's *return address*, and
+                // at that point the result register has not been written. So a
+                // frame-pushing op is ready one PC later than it looks.
+                u32 ready = static_cast<u32>(m_current_func->code.size());
+                if (op_may_push_frame(inst->op)) ready += 1;
+                m_value_ready_pcs[inst->result.id] = ready;
+            }
         }
 
         // Lower terminator
@@ -684,6 +712,33 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
             }
         }
 
+        // An owned local's register holds nothing until the instruction that
+        // produces it has run, but the block-derived start covers the whole
+        // block — including a *call* that initializes it. A throw out of that
+        // call would then unwind through a record naming an uninitialized
+        // register.
+        //
+        // That was survivable while every tracked local was pointer-shaped:
+        // registers start zeroed and a Delete of null is a no-op. A value struct
+        // has no such null form — its register holds an address — so a stale
+        // register (a live loop counter, say) got dereferenced as a struct.
+        // Narrow the start to just past the defining instruction, the same
+        // correction `call_borrow` already makes for a receiver borrow.
+        record.live_start_pc = record.scope_start_pc;
+        auto ready_it = m_value_ready_pcs.find(ir_cleanup.value.id);
+        if (ready_it != m_value_ready_pcs.end() && ready_it->second > record.live_start_pc) {
+            u32 ready_pc = ready_it->second;
+            // Past the end means the value is never live anywhere in the
+            // block-derived range, so the record describes nothing. That happens
+            // when the register is only *made* to hold the value late in the
+            // block — a small struct returns its slots packed in registers, and
+            // the pointer the record names does not exist until the caller has
+            // materialized them into stack storage. Firing there reads the raw
+            // slot data as an address.
+            if (ready_pc >= record.scope_end_pc) continue;
+            record.live_start_pc = ready_pc;
+        }
+
         // Map SSA value to register
         if (!has_register(ir_cleanup.value)) continue;
         record.register_idx = get_register(ir_cleanup.value);
@@ -718,6 +773,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
             // computed above), matching their actual lifetime.
             if (ir_cleanup.whole_function_scope) {
                 record.scope_start_pc = 0;
+                record.live_start_pc = 0;
                 record.scope_end_pc = static_cast<u32>(m_current_func->code.size());
             }
         } else {

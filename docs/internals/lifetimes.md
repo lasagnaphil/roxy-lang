@@ -33,7 +33,7 @@ dies — and a type is move-only exactly when its drop has no inverse.
 - [RAII, moves, and `borrowed`](#raii-moves-and-borrowed) — the user-facing model.
 - [Lifecycle implementation and status](#lifecycle-implementation-and-status) —
   how the lifecycle is derived and lowered, **what is not implemented**, and the
-  plan for [separating Drop from Copy](#planned-separating-drop-from-copy).
+  plan for [separating Drop from Copy](#separating-drop-from-copy--landed-2026-08-02).
 - [Limitations and future directions](#limitations-and-future-directions).
 
 > **A note on status.** This document describes both what the compiler does and
@@ -160,16 +160,17 @@ shallow.
 - **Drop** — `compute_drop_plan(Type) -> DropPlan` (`types.cpp`), lowered by both
   backends. See
   [One derivation, two executions](#one-derivation-two-executions).
-- **Retain** — emitted ad hoc at individual store sites today; there is **no
-  shared derivation**, and struct copies emit none at all. See
+- **Retain** — `compute_retain_plan(Type) -> RetainPlan` (`types.cpp`), emitted by
+  `emit_value_retain` / `emit_struct_clone_glue` at every duplication site. See
   [status](#lifecycle-implementation-and-status).
 - **Move-only** — `Type::noncopyable()` / `is_copy()`, consumed by the move
   checker, call-argument and return lowering, and container element handling.
 
-> ⚠️ **The implementation does not yet separate these three.** `noncopyable()`
-> on a struct currently means literally *"has a default destructor"*, so Drop and
-> Move-only are one bit. The consequences and the fix are in
-> [Separating Drop from Copy](#planned-separating-drop-from-copy).
+> The three were once one bit: `noncopyable()` on a struct meant literally *"has
+> a default destructor"*, so a struct earned a drop and lost copyability in the
+> same instant. They are now derived independently — see
+> [Separating Drop from Copy](#separating-drop-from-copy--landed-2026-08-02) for
+> what that took and what it exposed.
 
 ## The second-class family
 
@@ -943,11 +944,7 @@ move-only (measured: four `Structured Gen` cases start failing), and making them
 copyable *without* retain glue is worse than the leak — two owners, two releases,
 use-after-free.
 
-### PLANNED: separating Drop from Copy
-
-> **Picking this up?** `HANDOFF.md` at the repo root has the operational half —
-> what has landed, the traps that cost a previous session time, the reproductions
-> and the verification commands. This section stays the canonical design.
+### Separating Drop from Copy ✅ *(landed 2026-08-02)*
 
 
 Three changes, in this order. The order matters: making `ref`-bearing structs
@@ -997,11 +994,11 @@ derivation ran; native structs never deriving at all) instead of letting them
 silently report a move-only struct as copyable. `resolve_type_members` is now
 split into three phases for it — shape, derive, everything that may ask.
 
-**3. Clone glue at the duplication sites, and enable `StrRelease`.** ◑ **Partly
-landed.** The glue is in (`emit_struct_clone_glue`, commit "emit clone glue at
-every struct duplication site"), keyed on `member_needs_drop` so acquisition and
-release are inverses by construction. The gate itself is **not yet flipped** —
-see "What remains".
+**3. Clone glue at the duplication sites, and enable `StrRelease`.** ✅
+**Landed.** The glue (`emit_struct_clone_glue` / `emit_value_retain`) is keyed on
+`member_needs_drop`, so acquisition and release are inverses by construction, and
+the carve-out in that predicate is gone. A `string` struct field is now released;
+`examples/lox`'s census went from 38 leaked strings to 0.
 
 ### The ordering constraint
 
@@ -1027,140 +1024,49 @@ because of where it sits in the list. Re-derive the row rather than trusting it.
 Only the full combination is sound overall: the struct earns a drop, stays
 copyable, and every duplication retains.
 
-### What remains: the container side of step 3
+### The container side
 
-The glue covers struct duplication. Flipping the gate additionally makes
-**containers** release `string` keys and counted values on teardown, and `Map`
-acquires no matching count. Measured with the gate open:
+Flipping the gate also makes **containers** release counted keys and values on
+teardown, so each store has to acquire.
 
-- `Map<string, _>` — the map stores the key without retaining it, so the key is
-  freed when the inserting scope exits and every later lookup **misses**. (This
-  one is *already* broken today, independently of the gate: a dynamic key in a
-  loop dangles. It is only invisible because the map does not release keys
-  either.)
-- `Map<_, V>` where `V` is counted — the pushed temporary and the map both
-  release: **double free**, caught by the slab's `ALIVE` assert.
+- `List.push` acquires through `emit_value_retain`, generalized from the
+  `string`-only case.
+- The map value store — `m.insert(k, v)` and `m[k] = v`, which are the same
+  operation — goes through `emit_map_value_ownership`: acquire for the slot
+  unconditionally, and release whatever the slot held before. The release is
+  `contains`-guarded, since a new key replaces nothing.
 
-`List` is done: `push` acquires a count for any counted element via
-`emit_value_retain`, generalized from the `string`-only case.
+**Map keys are still not counted, and that is a live bug** independent of this
+work: `m.insert(f"k{i}", v)` in a loop stores a key the map never retains, so the
+key dies with the inserting scope and every later lookup misses. It stays
+invisible only because the map does not release keys either — the two errors
+cancel. Fixing it needs the acquisition (conditional on the key being *new*,
+since `roxy_map_insert` replaces in place and keeps the stored key), the release
+in `remove`/`clear`, and the teardown descriptor's key gate unified onto
+`member_needs_drop`. `remove` additionally needs a way to reach the *stored* key,
+which no native currently exposes — the `__map_iter_*_at` family gives it by
+bucket index, so a `find_bucket` primitive is the missing piece.
 
-The map is harder than the list for one reason: `roxy_map_insert` **replaces**
-in place, keeping the existing key and overwriting the value. So the key retain
-is conditional on the key being new, and the old value must be released. The
-machinery for exactly that already exists — `emit_map_value_delete_if_present`
-emits a `contains`-guarded destroy before the insert — and wants extending to
-cover copyable-with-drop values and a key retain on the not-present branch.
-`remove` needs the key release to match.
+### What the flip exposed in the unwind path
 
-### Ruled out: just making them move-only
+Turning a copyable struct into something with drop glue put **value structs**
+into exception cleanup records for the first time, and that broke two assumptions
+that had held only because every tracked local used to be pointer-shaped:
 
-The tempting shortcut is to skip the clone glue entirely — enable `StrRelease`,
-accept that string-bearing structs become move-only, and require `.copy()`. It
-fixes the leak, it is trivially safe (a move-only value is never duplicated, so
-no count can go wrong), and it costs one line.
-
-**It is not viable.** Measured 2026-08-02: with it enabled the whole test suite
-passes except four `Structured Gen` seeds — but `examples/lox` **stops
-compiling**:
-
-```
-Semantic error in module 'parser': cannot move a noncopyable value out of a
-container element; borrow it with 'ref' or remove it from the container instead
-```
-
-Lox's `Token` holds a `lexeme: string`, and the parser reads tokens out of a
-`List<Token>` by value (`var t: Token = self.tokens[i];`) in four places. Making
-every string-bearing struct move-only makes that — an ordinary read of a plain
-data record out of a list — illegal. A `string` field is far too common for
-move-only to be an acceptable answer; the largest real Roxy program is the proof.
-
-So the clone glue is not optional, and this shortcut should not be revisited.
-
-### A fourth requirement: copyable values need drop sites ✅ *(landed)*
-
-Found while measuring the above. Flipping the gate *does* fix the leak today —
-but only as a side effect of the welded bit: the struct becomes move-only, and
-move-only locals are the only ones the IR builder **tracks for cleanup**
-(`gen_var_decl` and the parameter setup both gate tracking on `noncopyable()`).
-
-Once move-only becomes structural, a string-bearing struct stays copyable — and
-therefore stops being tracked, so nothing calls its destructor and the leak comes
-straight back. The tracking condition has to move from "is move-only" to "has
-drop glue", across locals, parameters, and temporaries, or steps 2–3 fix nothing.
-
-This is the same conflation one level down: *tracked for cleanup* and *move-only*
-are also currently one decision.
-
-**Landed 2026-08-02.** The three tracking sites — `gen_var_decl`, the parameter
-setup in `begin_function_body`, and `track_noncopyable_call_temp` — now key on
-`tracked_for_cleanup(Type*)` ("carries drop glue", derived from
-`member_needs_drop`) instead of `noncopyable()`. `gen_var_decl` additionally
-splits the two questions it was answering with one condition: the local is
-*tracked* because its type has drop glue, and its initializer's source is
-*consumed* because the type is move-only.
-
-Behaviour-neutral, and verified rather than assumed: a temporary
-`assert(member_needs_drop(t) == t->noncopyable())` inside the predicate survived
-the entire suite on both backends (2460 cases) plus every example including Lox.
-That is the property that makes the remaining steps safe to build on — the
-tracking side is now already in terms of drop glue, so when a copyable struct
-starts carrying some, it is destroyed rather than silently skipped.
-
-### Duplication sites the glue must cover ✅ *(landed)*
-
-Missing one turns the leak into a use-after-free once the gate opens, so this
-list was the gating work — and it is longer than `emit_struct_copy`. A copyable
-value struct is duplicated at:
-
-1. the `emit_struct_copy` calls in the IR builder (var decl, assignment, field
-   store, struct literal, large-struct return, `throw`, global init);
-2. **a by-value struct argument** — the caller packs the struct's slots into the
-   argument registers at *bytecode lowering*, with no `StructCopy` in the IR;
-3. **a small (≤ 4 slot) struct return** — returned in registers, likewise no
-   `StructCopy`;
-4. reading a struct element out of a container (`list[i]` on a `List<Box>`);
-5. reading a struct-typed field out of another struct;
-6. a closure capture by copy.
-
-How each is covered:
-
-- **1** — `emit_struct_copy` takes a required `StructCopyKind`, so every call
-  site states move-or-clone and a new one cannot inherit a default. All ten read
-  the answer off one rule (`struct_copy_kind_for`): storage the producing
-  expression created — a struct literal, a call's return slot — is nobody else's,
-  so copying out of it moves; anything else is still owned, so it clones.
-- **4 and 5** turned out to be *already* routed through site 1: `var b = xs[i]`
-  and `var b = outer.inner` both reach `gen_var_decl`'s aliasing copy.
-- **3** is handled on the *callee* side, in `gen_return_stmt`: retain before
-  `emit_scope_cleanup` releases, leaving exactly the one count handed to the
-  caller. Same shape as the `string` return handoff beside it, and it covers the
-  large-struct case too, so returns need no call-site work.
-- **6** acquires in the capture loop, through the same `member_needs_drop` gate
-  the env's own cleanup uses.
-- **2** needs no glue at all, by a *convention* decision: a by-value parameter of
-  a **copyable** type is a BORROW for the call's duration, exactly as `string`
-  parameters already are. Parameter tracking therefore keys on
-  `param_owns_its_value` ("did the call site hand a count over" — i.e. is it
-  move-only) rather than on drop glue. The alternative — callee owns — would mean
-  cloning at every by-value struct argument, which is the cost the borrow avoids.
-
-That last point generalizes into the rule the two predicates now express:
-**drop where you acquired.** `tracked_for_cleanup` for locals, which acquire
-(their declaration's clone glue put the count there); `param_owns_its_value` for
-parameters, which do not.
-
-**Why this is verifiable.** Both error directions have detectors, which is what
-makes the change tractable rather than frightening:
-
-- **under-retain** → premature free → the VM's double-delete and
-  release-at-zero asserts fire;
-- **over-retain** → leak → the
-  [teardown invariant](#the-teardown-invariant) fires, across every test that
-  runs a program.
-
-**Precedent that the model works.** Containers already do exactly this and are
-clean: `List<string>` retains on push and releases on destroy; a `List<ref T>`
-counts its borrowed elements. Structs are the hole, not the design.
+- **A cleanup record's start was the enclosing block's start**, which covers the
+  *call* that initializes the local. Unwinding out of that call ran cleanup on a
+  register that had not been written. Harmless for a pointer (registers start
+  zeroed, `Delete` of null is a no-op); a value struct has no null form, so a
+  stale register — a live loop counter, in the case that surfaced — was
+  dereferenced as a struct. Records now carry `live_start_pc` separately from
+  `scope_start_pc`: the throw test uses the former, the "is the handler in scope"
+  test must keep using the latter, or narrowing the range lets a handler fall
+  outside a scope it is really in and both paths clean up.
+- **The `DELETE` opcode zeroed its operand register**, which is double-free
+  protection for a freeing delete but pure clobber for an in-place one, where
+  nothing is freed and the address stays valid. It zeroed a struct literal's
+  storage out from under the copy that read it. It now nulls only when
+  `free_obj`.
 
 ### Move-only containers
 

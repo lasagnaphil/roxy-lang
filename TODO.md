@@ -32,53 +32,43 @@ the free-trap only fires on an explicit `delete`, so nothing was looking.*
   inside the catch and an undrained coroutine — yield outside the catch, a fully
   drained coroutine, and a throw/catch in a callee are all clean. Pinned by
   `ExpectedLeak` in the two `E2E Coroutines` cases; remove those when fixed.
-- [ ] **A `string` field in a struct is retained on store but never released**
-  *(in progress — see `HANDOFF.md` for state and next steps)*
-  — `struct Box { s: string; }` leaks the string; this is most of the Lox string
-  leak (`Scanner.source`, `Token.lexeme`, …). Minimal repro:
-  `struct Box { s: string; } fun main(): i32 { var a: string = "x"; var d: string = a + "y"; var b: Box = Box { s = d }; print(b.s); return 0; }`
+- [ ] **A `Map` does not retain its keys**, so a dynamic key dangles:
+  `m.insert(f"k{i}", v)` inside a loop stores a key that dies with the
+  iteration's scope, and every later lookup misses (`Unhandled exception` from
+  the `KeyError` throw). Repro:
+  `fun main(): i32 { var m: Map<string, i32> = Map<string, i32>(); var i: i32 = 0; while (i < 3) { m.insert(f"k{i}", i); i = i + 1; } print(f"{m["k1"]}"); return 0; }`
 
-  Both backends have always lowered `DropKind::StrRelease` correctly, so the
-  release side is one line: the `StrRelease` carve-out in `member_needs_drop`.
-  Three of the four things blocking that line are now done:
+  Predates the Drop/Copy work and survived it: the map does not *release* keys
+  either, so the missing retain and the missing release cancel. Values are done
+  (`emit_map_value_ownership`); keys need the same, with three parts:
+  - acquire at insert, **conditional on the key being new** — `roxy_map_insert`
+    replaces in place and keeps the stored key, so retaining on the replace path
+    would leak;
+  - release in `remove` and `clear`;
+  - the teardown descriptor's key gate unified onto `member_needs_drop` (both
+    backends restate it as `noncopyable()` today — `lowering.cpp`
+    build_delete_desc and `c_emitter.cpp` emit_container_drop_body).
 
-  - ~~**Track copyable values for cleanup.**~~ **Done 2026-08-02** — the three
-    tracking sites key on `tracked_for_cleanup` ("has drop glue") instead of
-    `noncopyable()`, and `gen_var_decl` splits tracking from move-consumption.
-  - ~~**Add clone glue at the duplication sites.**~~ **Done 2026-08-02** —
-    `emit_struct_clone_glue`, reached from a required `StructCopyKind` on
-    `emit_struct_copy` plus explicit calls on the return and closure-capture
-    paths. Keyed on `member_needs_drop`, so acquisition and release are inverses
-    by construction and turn on together. By-value struct *arguments* need no
-    glue: a copyable by-value parameter is a borrow for the call's duration, as
-    `string` parameters already are.
-  - ~~**Decouple move-only from drop glue.**~~ **Done 2026-08-02** —
-    `StructTypeInfo::is_move_only`, derived structurally. A struct holding a
-    `ref` is now copyable (user-visible, correct).
-  - **Give `Map` the acquisition half.** ← *the remaining blocker.* Opening the
-    gate makes container teardown release `string` keys and counted values;
-    `List.push` acquires them, `Map` does not. Measured with the gate open:
-    `Map<string, _>` keys dangle (lookups miss), and `Map<_, V>` values double
-    free. `insert` needs a value retain, a key retain **guarded on the key being
-    new** (the runtime replaces in place and keeps the existing key), and an
-    old-value release on the replace path; `remove`/`clear` need the key
-    release; `m[k] = v` needs the same. The `contains`-guarded branch machinery
-    exists in `emit_map_value_delete_if_present`.
+  `remove` needs the *stored* key, which is a distinct object from the caller's
+  equal-valued one. No native exposes it: the `__map_iter_*_at` family is indexed
+  by bucket, so a `find_bucket(map, key) -> i32` primitive is the missing piece —
+  the probe loop already exists as `map_probe_value` in `roxy_rt.cpp`.
 
-  Note: the `Map<string, _>` dangling key is **already broken today**,
-  independently of this work — `m.insert(f"k{i}", v)` in a loop makes later
-  lookups miss. It is invisible only because the map does not release keys
-  either.
+- [ ] **A generated benchmark program double-frees a string** (regression from
+  the Drop/Copy work, 2026-08-02). Reproduce:
+  `./build/roxy_gen --seed=109 --modules=4 --out=/tmp/g109 && ./build/roxy /tmp/g109/main.roxy`
+  → `slab->states[slot_idx] == SlotState::ALIVE` assert. Deterministic.
 
-  **Ruled out:** skipping the clone glue and letting string-bearing structs be
-  move-only. It fixes the leak in one line and is trivially safe, but
-  `examples/lox` stopped compiling — `Token` holds a `string`, and the parser
-  reads tokens out of a `List<Token>` by value in four places. A `string` field
-  is too common for move-only. Do not revisit.
+  Scope: 1 of 31 seeds at `--modules=4` (seeds 100-130). Three others in that
+  range (128-130) crash on `main` too and are *not* from this work. None of the
+  `Structured Gen` suite's own seeds are affected, which is why the suite is
+  green — worth adding 109 to it once fixed.
 
-  This is the Clone half of the value-lifecycle model (lifetimes.md "Value
-  lifecycle"). The teardown leak check plus the VM's double-delete and
-  release-at-zero asserts make it verifiable.
+  Not yet diagnosed beyond "a string, freed twice". Two candidate mechanisms
+  were ruled out by experiment: the `DELETE` free_obj nulling change (forcing
+  the old always-null behavior back gives a *different* crash, not this one),
+  and cleanup-record narrowing flipping the handler-in-scope test (fixed
+  separately via `live_start_pc`; seed 109 is unchanged by it).
 
 - [ ] **The Lox interpreter leaks one List per interpreter call**:
   `fun f(n) {...} print f(10);` leaks 177 **lists** alongside 38 strings, and the

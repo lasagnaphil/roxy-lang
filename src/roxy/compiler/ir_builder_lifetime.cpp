@@ -295,6 +295,12 @@ void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
     // Null-ify heap-allocated values to prevent double-cleanup from exception handler.
     // Use a Nullify annotation (not a runtime ConstNull) so the bytecode builder
     // narrows the cleanup record scope instead of zeroing the register.
+    //
+    // Pointer-shaped only, and deliberately so: the C backend lowers Nullify on a
+    // value struct to a `memset` of its backing storage, which is a real runtime
+    // action rather than a record narrowing. Widening this to every owned local
+    // therefore zeroed structs that were still being read (`return o;` after a
+    // move, most visibly).
     if (holds_owning_pointer(info.type)) {
         if (info.initial_value.is_valid()) {
             emit_nullify(info.initial_value);

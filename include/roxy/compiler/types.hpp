@@ -712,25 +712,23 @@ RetainPlan compute_retain_plan(Type* type);
 // own synthesized destructor (propagated by the synthetic-destructor fixpoint).
 // A recursive form would not terminate on a direct value cycle.
 //
-// ONE EXCEPTION, and it is a known gap rather than a design choice:
-// DropKind::StrRelease is excluded, which is why a `string` struct field leaks —
-// this gate says no while both backends are perfectly able to lower the release.
+// `DropKind::StrRelease` used to be excluded here, which is why a `string`
+// struct field leaked: this gate said no while both backends were perfectly able
+// to lower the release. It could not simply be included, because move-only-ness
+// was derived from "has a default destructor" — so admitting the release earned
+// the struct a destructor and made it move-only in the same step, which broke
+// ordinary code. Admitting it *without* that, but also without retain-on-copy,
+// is worse still: two owners, two releases, use-after-free.
 //
-// Two of the three things blocking the flip are now done. Move-only is derived
-// structurally (`derive_struct_move_only`), so admitting the release no longer
-// makes a string-bearing struct move-only; and every *struct* duplication site
-// emits matching retain glue (`emit_struct_clone_glue`), keyed on this same
-// predicate so drop and retain turn on together.
-//
-// What remains is the container side. `Map` acquires no count for a `string`
-// key or for a counted value, so flipping this gate — which makes map teardown
-// release both — turns the leak into a use-after-free. See HANDOFF.md; the
-// measured shape is a dangling key (`Map<string, _>` lookups miss after the
-// inserting scope exits) and a double free of a value. `List` is already done.
+// Both preconditions now hold. Move-only is derived structurally
+// (`derive_struct_move_only`), so a string-bearing struct earns a destructor and
+// stays copyable; and every duplication site acquires a matching count —
+// `emit_struct_clone_glue` for structs, `emit_value_retain` at `List.push` and
+// the map value store — all keyed on *this* predicate, so the acquiring and
+// releasing halves cannot drift apart.
 inline bool member_needs_drop(Type* t) {
     if (!t) return false;
     DropPlan plan = compute_drop_plan(t);
-    if (plan.kind == DropKind::StrRelease) return false;  // see note above
     return plan.kind != DropKind::None || plan.free_obj;
 }
 

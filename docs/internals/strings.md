@@ -137,13 +137,11 @@ Strings are **reference-counted** (lifetime audit finding 9b). The `ref_count` i
 
 This is the copyable-with-nontrivial-drop shape that `ref` also has: `string` is `is_copy()` yet needs both a retain and a drop, with `compute_drop_plan(string) → DropKind::StrRelease`. See [lifetimes.md → The value lifecycle](lifetimes.md#the-value-lifecycle) for why such a type is *not* move-only (its drop has an exact inverse).
 
-Retains are emitted **per store site** — var decl, assignment, return, struct-field store, container-element store — rather than derived from a shared plan, and `StrRelease` on every drop (scope exit, overwrite, container destroy), on both backends (`STR_RETAIN` / `STR_RELEASE` opcodes in the VM; `roxy_string_retain` / `roxy_string_release` in the C backend). The absence of a shared retain derivation is what leaves the gap below.
+Retains are emitted at each store site — var decl, assignment, return, struct-field store, container-element store — all now reading one derivation (`compute_retain_plan`), and `StrRelease` on every drop (scope exit, overwrite, container destroy), on both backends (`STR_RETAIN` / `STR_RELEASE` opcodes in the VM; `roxy_string_retain` / `roxy_string_release` in the C backend).
 
-**Scope of reclamation.** Standalone strings and container (`List`/`Map`) string elements are reference-counted and reclaimed. A string held in a **struct field** is retained on store (so it never dangles) but *not* released on struct drop, so it **leaks**.
+**Scope of reclamation.** Standalone strings, container (`List`/`Map`) string elements, and strings held in **struct fields** are all reference-counted and reclaimed. The struct-field case was the last hole: the string was retained on store (so it never dangled) but never released on struct drop.
 
-This is a known gap, not an oversight in the store path: adding the release requires a synthesized destructor, and because `noncopyable()` on a struct means literally "has a default destructor", that would also make every string-bearing struct move-only. Making it copyable *without* matching retain-on-struct-copy is worse — two owners, two releases, use-after-free.
-
-It is **not** the "bounded leak" this section previously called it. The leak is per *value*, not per type: measured 2026-08-02, the Lox interpreter leaks a string per `Token`, and `--check-leaks` reports it growing with the workload. The fix is the three-step plan in [lifetimes.md → Separating Drop from Copy](lifetimes.md#planned-separating-drop-from-copy).
+**Fixed 2026-08-02.** It was never the "bounded leak" this section once called it — the leak was per *value*, not per type, and the Lox interpreter lost a string per `Token`. The fix is the three-step separation in [lifetimes.md → Separating Drop from Copy](lifetimes.md#separating-drop-from-copy--landed-2026-08-02); Lox's census went from 38 leaked strings to 0.
 
 ## Example
 

@@ -458,9 +458,11 @@ static void execute_cleanup(RoxyVM* vm, const BCFunction* func,
     for (i32 i = static_cast<i32>(func->cleanup_records.size()) - 1; i >= 0; i--) {
         const BCCleanupRecord& record = func->cleanup_records[i];
 
-        // Check if the throw site is within this variable's live range
-        if (throw_pc < record.scope_start_pc || throw_pc >= record.scope_end_pc) {
-            continue;  // Throw is outside this variable's scope
+        // Check if the throw site is within this variable's live range. Uses
+        // live_start_pc: before it the register has not been written yet, so
+        // cleaning up would read whatever the register last held.
+        if (throw_pc < record.live_start_pc || throw_pc >= record.scope_end_pc) {
+            continue;  // Throw is outside this variable's live range
         }
 
         // Check if the handler is also within this variable's scope
@@ -2218,14 +2220,30 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         u8 a = decode_a(instr);
         u16 desc_idx = decode_imm16(instr);
         void* ptr = reg_as_ptr(regs[a]);
+        bool freed = false;
         if (ptr) {
             const BCDeleteDesc& desc = func->delete_descs[desc_idx];
             delete_value(vm, ptr, desc, func);
             // A refused free (object still borrowed) sets vm->error — surface it
             // rather than nulling the register and continuing.
             if (vm->error) return false;
+            freed = desc.free_obj;
         }
-        regs[a] = 0;
+        // Null the register only when the pointer it holds has actually become
+        // dangling — i.e. when something was freed. An *in-place* cleanup (a
+        // value struct's fields released where they sit) frees nothing, so the
+        // address stays valid and other live values may legitimately share the
+        // register. Zeroing it there clobbered them: a struct literal's storage
+        // was blanked out from under the copy that read it.
+        //
+        // The nulling doubled as double-free protection, which for a freeing
+        // delete it still is. For an in-place delete the protection now comes
+        // from the normal path marking the local moved (no second delete is
+        // emitted) and from the cleanup record's scope ending at the destroy —
+        // the residual window is between the scope-exit delete and the block's
+        // terminator, where the only thing that can throw is a destructor, and
+        // that is already fatal ("exception thrown during exception unwinding").
+        if (freed) regs[a] = 0;
         DISPATCH();
     }
 

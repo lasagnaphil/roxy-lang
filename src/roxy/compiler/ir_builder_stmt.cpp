@@ -681,11 +681,30 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
         // Order matters and mirrors the string case: this must precede
         // emit_scope_cleanup, or the members would be released — possibly freed —
         // before being retained.
-        // Copyable only: a move-only struct return is a move, already handled by
-        // the mark_moved_from above, and its members' counts transfer with it.
-        if (value_type && value_type->is_struct() && value_type->is_copy()
-            && struct_copy_kind_for(rs.value) == StructCopyKind::Clone) {
-            emit_struct_clone_glue(val, value_type);
+        // Copyable only; a move-only struct return is already handled above.
+        // Which of the three shapes applies depends on who owns the source:
+        if (!returns_borrow && value_type && value_type->is_struct()
+            && value_type->is_copy() && tracked_for_cleanup(value_type)) {
+            OwnedLocalInfo* temp = m_ownership.find_live_temp(val);
+            OwnedLocalInfo* named = (!temp && rs.value->kind == AstKind::ExprIdentifier)
+                ? m_ownership.find_by_name(rs.value->identifier.name) : nullptr;
+            if (temp) {
+                // A producer temporary already holds the counts — adopt them.
+                consume_temp_noncopyable(val);
+            } else if (named && !named->is_moved) {
+                // A local that dies at this return: transfer rather than
+                // retain-then-release. Suppressing its cleanup is not merely an
+                // optimization — the scope-exit Delete would run *before*
+                // RET_STRUCT_SMALL reads the storage, and DELETE nulls the
+                // register it is given, so the return would copy out of null.
+                mark_moved_from(rs.value->identifier.name, /*null_ssa=*/false,
+                                /*nullify_record=*/false);
+            } else if (struct_copy_kind_for(rs.value) == StructCopyKind::Clone) {
+                // A source this frame does not own and that outlives the return —
+                // a field, a container element, a by-value parameter. It stays
+                // live, so the returned copy needs counts of its own.
+                emit_struct_clone_glue(val, value_type);
+            }
         }
 
         // `return o.field`: null the moved-out field before scope cleanup destroys
@@ -1003,6 +1022,7 @@ void IRBuilder::gen_throw_stmt(Stmt* stmt) {
     ThrowStmt& ts = stmt->throw_stmt;
 
     ValueId exception_val = gen_expr(ts.expr);
+    ValueId exception_val_source = exception_val;
     Type* expr_type = ts.expr->resolved_type;
 
     // If the expression is a value type (struct on stack), heap-allocate it
@@ -1021,6 +1041,11 @@ void IRBuilder::gen_throw_stmt(Stmt* stmt) {
         // (`throw e;` on a live local) has to be cloned, not aliased.
         emit_struct_copy(heap_ptr, exception_val, slot_count, base_type,
                          struct_copy_kind_for(ts.expr));
+        // The heap object is the exception's owner from here on. When the source
+        // was a tracked temporary — a constructor call, say — its counts have
+        // just moved into that object, so its own cleanup must stop: leaving it
+        // tracked releases the members the in-flight exception still points at.
+        consume_temp_noncopyable(exception_val_source);
         exception_val = heap_ptr;
     }
 
