@@ -4,6 +4,7 @@
 #include "roxy/vm/list.hpp"
 #include "roxy/vm/map.hpp"
 #include "roxy/vm/string.hpp"
+#include "roxy/rt/roxy_rt.h"
 #include "roxy/core/vector.hpp"
 
 #include <cassert>
@@ -35,9 +36,24 @@ const ObjectTypeInfo* get_object_type(u32 type_id) {
 void init_type_registry() {
     static bool initialized = false;
     if (initialized) return;
-    register_list_type();
-    register_string_type();
-    register_map_type();
+    // Registry indices MUST line up with the shared runtime's ROXY_TYPEID_*
+    // constants. `roxy_rt` stamps those constants straight into the object
+    // header (roxy_string_alloc → 1, roxy_list_alloc → 2, roxy_map_alloc → 3),
+    // and everything VM-side that reads a header back — object_free's
+    // destructor dispatch, the leak census's type naming — resolves it through
+    // this registry. Registering list/string/map in declaration order gave
+    // list=0, string=1, map=2, so a heap map (header id 3) resolved to the
+    // FIRST USER STRUCT type: its map_destructor never ran (leaving stale
+    // map-dispatch entries), and user structs collided with ROXY_TYPEID_MAP.
+    // A reserved slot at 0 makes the two schemes identical; user types
+    // registered by vm_load_module then start after them.
+    register_object_type("<reserved>", 0, nullptr);   // id 0 — unused
+    register_string_type();                            // id 1 == ROXY_TYPEID_STRING
+    register_list_type();                              // id 2 == ROXY_TYPEID_LIST
+    register_map_type();                               // id 3 == ROXY_TYPEID_MAP
+    assert(get_string_type_id() == ROXY_TYPEID_STRING);
+    assert(get_list_type_id() == ROXY_TYPEID_LIST);
+    assert(get_map_type_id() == ROXY_TYPEID_MAP);
     initialized = true;
 }
 

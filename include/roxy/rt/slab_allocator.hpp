@@ -185,6 +185,10 @@ struct SlabAllocator {
         u64 live = 0;      // every ALIVE object
         u64 immortal = 0;  // interned string literals (never freed by design)
         u64 leaked = 0;    // live - immortal
+        // Leaked objects grouped by ObjectHeader.type_id. The allocator has no
+        // type *names* — resolving them is the VM's job (get_object_type) —
+        // but the breakdown is what turns "32 objects leaked" into a lead.
+        tsl::robin_map<u32, u64> leaked_by_type;
     };
     LiveObjectStats live_object_stats() const;
 

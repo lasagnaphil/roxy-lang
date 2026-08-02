@@ -13,6 +13,7 @@
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/string.hpp"
+#include "roxy/vm/object.hpp"
 #include "roxy/vm/list.hpp"
 
 #include <cstdio>
@@ -482,6 +483,11 @@ int main(int argc, char** argv) {
     if (opts.check_leaks && vm.teardown_heap_stats.leaked != 0) {
         fprintf(stderr, "Leak: %llu object(s) still alive after main() returned\n",
                 (unsigned long long)vm.teardown_heap_stats.leaked);
+        for (const auto& entry : vm.teardown_leaks_by_type) {
+            const ObjectTypeInfo* info = get_object_type(entry.first);
+            fprintf(stderr, "  %8llu  %s\n", (unsigned long long)entry.second,
+                    info && info->name ? info->name : "<unknown type>");
+        }
         return 70;  // EX_SOFTWARE — distinct from a program's own exit code
     }
 

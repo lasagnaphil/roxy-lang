@@ -211,12 +211,21 @@ rather than reported.
 
 Two consumers:
 
-- **`roxy --check-leaks`** reports the count and exits 70. Off by default, so a
-  program's own exit code is unaffected.
+- **`roxy --check-leaks`** reports the count, broken down by type name, and exits
+  70. Off by default, so a program's own exit code is unaffected. The breakdown
+  is what turns "215 objects leaked" into a lead — it is how the Lox leak was
+  split into a `string`-field bug and a separate per-call `List` leak.
 - **The E2E harness asserts it on every program it runs** (`run_and_capture`), so
   ~880 existing tests check for leaks without having been written to. A test that
   pins a *known* leak opts out with a scoped `ExpectedLeak` naming the `TODO.md`
   entry it pins — the opt-outs are the live list of unfixed leaks.
+
+Type names in the report resolve through the VM's object-type registry, whose
+indices are kept identical to the shared runtime's `ROXY_TYPEID_*` constants
+(a reserved slot 0, then string/list/map) — `roxy_rt` stamps those constants
+straight into the object header. They used to disagree, which mislabeled every
+container in a leak report *and* meant a heap map resolved to the first user
+struct type, so `object_free` never ran `map_destructor`.
 
 The check covers the **VM only**. The C backend has its own codegen paths (see
 c-backend.md "Known C-backend gaps"), and the generated binary does not run a

@@ -32,18 +32,40 @@ the free-trap only fires on an explicit `delete`, so nothing was looking.*
   inside the catch and an undrained coroutine — yield outside the catch, a fully
   drained coroutine, and a throw/catch in a callee are all clean. Pinned by
   `ExpectedLeak` in the two `E2E Coroutines` cases; remove those when fixed.
-- [ ] **The Lox interpreter leaks in proportion to the work it does**:
-  `./build/roxy --check-leaks examples/lox/main.roxy <script>` reports 5 objects
-  for `print "a";`, 16 for two var decls, **215 for `fun f(n) {...} print f(10);`**
-  (fib(10) ≈ 177 interpreter calls, so roughly one object per call). Cause
-  unknown and worth finding — it is the largest real Roxy program, so whatever
-  this is likely affects any program of that shape. Ruled out 2026-08-02:
-  exceptions are not it (same-frame, cross-frame, and 100-iteration throw/catch
-  loops are all clean), and the basic constructs are not it (all six `examples/`
-  are clean and 1522 E2E cases pass the assertion). Suspect the environment /
-  `LoxValue` structures, or a drop path only Lox exercises. Note it may be a leak
-  in the Lox *program's* own logic rather than a compiler bug — with no GC that
-  is still a real leak, but it changes where the fix goes.
+- [ ] **A `string` field in a struct is retained on store but never released**:
+  `struct Box { s: string; }` + `Box { s = some_dynamic_string }` leaks the
+  string. `member_needs_drop` is `noncopyable() || kind == Ref`, and `string` is
+  neither — it is *reference-counted but copyable* — so
+  `struct_needs_synthetic_dtor` says no destructor is needed, and
+  `emit_field_cleanup` has no `String` arm to emit `StrRelease` even when one is
+  generated for another field. Any struct with a `string` field leaks it; this is
+  most of the Lox string leak (`Scanner.source`, `Token.lexeme`, …). Same
+  "decided from the wrong source of truth" shape as the other bugs found
+  2026-08-02: the field needs a drop action because of how it is *stored*, not
+  because its type is noncopyable.
+  **Not a one-line fix, and the obvious one is dangerous.** There is no retain
+  glue on the copy side either: a copyable struct holding a string is copied
+  bitwise today, so adding the release without a matching retain-on-copy turns a
+  leak into a use-after-free. This is the Clone/Copy half of the value-lifecycle
+  model (lifetimes.md "Value lifecycle") applied to `string` fields, and it needs
+  designing: which of struct copy / assignment / container insert retains, and
+  the matching C-backend descriptor work. Minimal repro:
+  `struct Box { s: string; } fun main(): i32 { var a: string = "x"; var d: string = a + "y"; var b: Box = Box { s = d }; print(b.s); return 0; }`
+- [ ] **The Lox interpreter leaks one List per interpreter call**:
+  `fun f(n) {...} print f(10);` leaks 177 **lists** alongside 38 strings, and the
+  count tracks the interpreter's call count exactly (1 call → 1 list, 3 → 3,
+  178 envs → 177). The strings are the `string`-field bug above; the lists are a
+  separate, unresolved cause. Ruled out 2026-08-02, each with a clean minimal
+  repro: a by-value `List<T>` parameter (with and without an enclosing
+  try/catch + early return), `List<Struct>` where the struct owns a `Map`
+  (at 180 elements, cross-module, and with a tagged-union value type),
+  `.pop()` of a noncopyable element into a local, and exceptions generally.
+  `List<Environment>` built from Lox's own type is also clean in isolation.
+  Next step is to identify the allocation site rather than keep guessing shapes —
+  a temporary alloc-site tag in the census, or bisecting `call_function`, which
+  is where the per-call `args: List<LoxValue>` lives. May yet be a leak in the
+  Lox *program's* own logic rather than a compiler bug; with no GC that is still
+  a real leak, but it changes where the fix goes.
 
 *Two `ref`-counting holes were fixed here on 2026-08-02 (both pre-existing,
 both verified against an unmodified tree before the fix): a discarded

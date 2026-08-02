@@ -463,7 +463,9 @@ SlabAllocator::LiveObjectStats SlabAllocator::live_object_stats() const {
         if (header->type_id == ROXY_TYPEID_STRING &&
             header->ref_count == ROXY_STR_IMMORTAL) {
             stats.immortal++;
+            return;
         }
+        stats.leaked_by_type[header->type_id]++;
     };
 
     for (u32 size_class = 0; size_class < NUM_SIZE_CLASSES; size_class++) {

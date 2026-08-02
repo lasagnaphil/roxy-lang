@@ -101,6 +101,10 @@ struct RoxyVM {
     // an aborted program never ran its cleanup.
     roxy_heap_stats teardown_heap_stats;
 
+    // The same census grouped by ObjectHeader.type_id, so a leak report can name
+    // what leaked instead of only counting it. Pairs are (type_id, count).
+    Vector<std::pair<u32, u64>> teardown_leaks_by_type;
+
     // Exception handling state
     void* in_flight_exception;          // Exception object being propagated (nullptr if none)
     u32 in_flight_exception_type_id;    // type_id from ObjectHeader

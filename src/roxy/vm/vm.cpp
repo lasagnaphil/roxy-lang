@@ -57,6 +57,7 @@ bool vm_init(RoxyVM* vm, const VMConfig& config) {
     vm->running = false;
     vm->error = nullptr;
     vm->teardown_heap_stats = roxy_heap_stats{0, 0, 0};
+    vm->teardown_leaks_by_type.clear();
 
     // Initialize register file (untyped 8-byte slots)
     vm->register_file_size = config.register_file_size;
@@ -156,6 +157,12 @@ void vm_destroy(RoxyVM* vm) {
     // the error path too, where a program aborted mid-flight legitimately leaves
     // objects alive. Callers check it when the run succeeded.
     vm->teardown_heap_stats = vm_heap_stats(vm);
+    vm->teardown_leaks_by_type.clear();
+    if (vm->allocator && vm->teardown_heap_stats.leaked != 0) {
+        for (const auto& entry : vm->allocator->live_object_stats().leaked_by_type) {
+            vm->teardown_leaks_by_type.push_back({entry.first, entry.second});
+        }
+    }
 
     vm->global_slots.reset();
     vm->global_slots_size = 0;
