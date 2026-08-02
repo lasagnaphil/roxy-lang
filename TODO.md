@@ -157,9 +157,9 @@ history. Remaining:
 
 ## Testing Gaps
 
-- The IR optimizer is now covered end-to-end (**landed 2026-08-02**). All three
-  pipeline builders in `tests/e2e/test_helpers.cpp` (`compile`, `compile_to_ir`,
-  `compile_to_ir_with_registry`) call `optimize_module()` between
+- The IR optimizer is now covered end-to-end (**landed 2026-08-02**). Every
+  pipeline builder in `tests/e2e/test_helpers.cpp` routes through the single
+  `build_ir()` helper, which calls `optimize_module()` between
   `coroutine_lower` and `IRValidator`, matching `Compiler::link_modules()`, so
   the whole parametric suite exercises optimized IR on both backends. Before
   this, the optimizer's only coverage was `tests/unit/test_ir_optimize.cpp`'s

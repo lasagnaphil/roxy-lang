@@ -86,14 +86,6 @@ static bool drop_struct_walk_eligible(Type* s) {
     return synthetic_default;
 }
 
-static bool drop_struct_has_default_dtor(Type* s) {
-    if (!s || !s->is_struct()) return false;
-    for (const auto& dtor : s->struct_info.destructors) {
-        if (dtor.name.empty()) return true;
-    }
-    return false;
-}
-
 DropPlan compute_drop_plan(Type* type) {
     DropPlan p;
     if (!type) return p;
@@ -103,7 +95,7 @@ DropPlan compute_drop_plan(Type* type) {
             Type* pointee = type->ref_info.inner_type;
             if (drop_struct_walk_eligible(pointee)) {
                 p.kind = DropKind::WalkFields; p.struct_type = pointee;
-            } else if (drop_struct_has_default_dtor(pointee)) {
+            } else if (struct_has_default_dtor(pointee)) {
                 p.kind = DropKind::CallDtor; p.struct_type = pointee;
             }
             // else: uniq of a primitive / dtor-less value — just free.
@@ -136,7 +128,7 @@ DropPlan compute_drop_plan(Type* type) {
             if (coro_struct) {
                 // Known coroutine value (per-function type): its concrete state
                 // struct — hence destructor — is statically known, so call it.
-                if (drop_struct_has_default_dtor(coro_struct)) {
+                if (struct_has_default_dtor(coro_struct)) {
                     p.kind = DropKind::CallDtor; p.struct_type = coro_struct;
                 }
             } else {
@@ -155,7 +147,7 @@ DropPlan compute_drop_plan(Type* type) {
             if (type->noncopyable()) {
                 if (drop_struct_walk_eligible(type)) {
                     p.kind = DropKind::WalkFields; p.struct_type = type;
-                } else if (drop_struct_has_default_dtor(type)) {
+                } else if (struct_has_default_dtor(type)) {
                     p.kind = DropKind::CallDtor; p.struct_type = type;
                 }
             }
@@ -970,9 +962,7 @@ bool struct_needs_synthetic_dtor(const StructTypeInfo& info) {
     // for embedded value structs.
     for (Type* ancestor = info.parent; ancestor && ancestor->is_struct();
          ancestor = ancestor->struct_info.parent) {
-        for (const auto& dtor : ancestor->struct_info.destructors) {
-            if (dtor.name.empty()) return true;
-        }
+        if (struct_has_default_dtor(ancestor)) return true;
     }
     return false;
 }

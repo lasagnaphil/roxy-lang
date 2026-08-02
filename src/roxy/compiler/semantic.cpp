@@ -904,14 +904,7 @@ void SemanticAnalyzer::generate_synthetic_destructors(Program* program) {
             StructTypeInfo& struct_info = struct_type->struct_info;
 
             // Check if struct already has a default destructor
-            bool has_default_dtor = false;
-            for (const auto& dtor : struct_info.destructors) {
-                if (dtor.name.empty()) {
-                    has_default_dtor = true;
-                    break;
-                }
-            }
-            if (has_default_dtor) continue;
+            if (struct_has_default_dtor(struct_type)) continue;
 
             // Check if any field needs cleanup (regular fields or variant fields)
             if (!struct_needs_synthetic_dtor(struct_info)) continue;
@@ -3856,8 +3849,7 @@ NativeRegistry* SemanticAnalyzer::get_builtin_registry() {
 }
 
 void SemanticAnalyzer::reject_second_class_coroutine_params(Span<Param> params) {
-    for (u32 i = 0; i < params.size(); i++) {
-        const Param& param = params[i];
+    for (const Param& param : params) {
         if (param.modifier == ParamModifier::None) continue;
         const char* modifier = param.modifier == ParamModifier::Out ? "out" : "inout";
         error_fmt(param.loc,

@@ -219,9 +219,6 @@ private:
     // m_current_func->struct_field_deletes, returning [start, count).
     void build_struct_field_deletes(Type* struct_type, u16& out_start, u16& out_count);
 
-    // True if the struct type has a default (empty-name) destructor.
-    bool struct_has_default_destructor(Type* struct_type) const;
-
     // Resolve the bytecode function index of a struct's default destructor
     // ("StructName$$delete"), or 0 if not found.
     u16 lookup_destructor_index(Type* struct_type) const;

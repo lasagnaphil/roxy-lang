@@ -653,6 +653,19 @@ inline bool member_needs_drop(Type* t) {
     return t && (t->noncopyable() || t->kind == TypeKind::Ref);
 }
 
+// True if `type` has a *default* (unnamed) destructor — user-written or
+// synthesized. Only a default destructor chains automatically (named ones are
+// invoked explicitly), so this is the shared "is there something to chain to /
+// call here" test used by sema's synthetic-destructor pass, the IR builder,
+// coroutine lowering, and bytecode lowering.
+inline bool struct_has_default_dtor(const Type* type) {
+    if (!type || !type->is_struct()) return false;
+    for (const auto& dtor : type->struct_info.destructors) {
+        if (dtor.name.empty()) return true;
+    }
+    return false;
+}
+
 // String representation of types (for error messages)
 const char* type_kind_to_string(TypeKind kind);
 void type_to_string(const Type* type, String& out);

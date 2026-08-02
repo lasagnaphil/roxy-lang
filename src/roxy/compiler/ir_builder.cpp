@@ -740,16 +740,6 @@ IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_typ
     return finish_ir_function();
 }
 
-// Whether `type` has a *default* (unnamed) destructor — user-written or
-// synthesized. Only such a destructor is chained to automatically.
-static bool has_default_destructor(Type* type) {
-    if (!type || !type->is_struct()) return false;
-    for (const auto& dtor : type->struct_info.destructors) {
-        if (dtor.name.empty()) return true;
-    }
-    return false;
-}
-
 // The nearest ancestor at or above `parent` that has a default destructor, or
 // null if none does.
 //
@@ -764,9 +754,24 @@ static bool has_default_destructor(Type* type) {
 static Type* nearest_default_destructor(Type* parent) {
     for (Type* current = parent; current && current->is_struct();
          current = current->struct_info.parent) {
-        if (has_default_destructor(current)) return current;
+        if (struct_has_default_dtor(current)) return current;
     }
     return nullptr;
+}
+
+// The tail shared by every default destructor, user-written or synthesized:
+// destruction order mirrors C++, so this struct's own fields are cleaned first,
+// then the nearest ancestor's default destructor runs (cleaning its own fields,
+// and chaining further up). Each level cleans only what it declares — an
+// inherited field belongs to the ancestor that declared it.
+void IRBuilder::emit_default_destructor_epilogue(ValueId self_ptr, Type* struct_type) {
+    emit_field_cleanup(self_ptr, struct_type);
+
+    Type* dtor_owner = nearest_default_destructor(struct_type->struct_info.parent);
+    if (dtor_owner) {
+        emit_call(mangle_destructor(dtor_owner->struct_info.name), alloc_span({self_ptr}),
+                  m_types.void_type());
+    }
 }
 
 IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type) {
@@ -782,20 +787,11 @@ IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type)
     begin_function_body(false);
     gen_body(decl->body);
 
-    // Destruction order mirrors C++: the user body runs, then this struct's own
-    // fields are cleaned, then the nearest ancestor's default destructor runs
-    // (which cleans its own fields, and chains further up). Only default
-    // destructors chain automatically — named ones are called explicitly.
+    // Only default destructors chain automatically — named ones are called
+    // explicitly, and clean nothing implicitly.
     if (decl->name.empty()) {
-        emit_field_cleanup(m_current_func->params[0].value, struct_type);
-
-        Type* dtor_owner = nearest_default_destructor(struct_type->struct_info.parent);
-        if (dtor_owner) {
-            StringView parent_dtor_name = mangle_destructor(dtor_owner->struct_info.name);
-            // 'self' is the first parameter
-            emit_call(parent_dtor_name, alloc_span({m_current_func->params[0].value}),
-                      m_types.void_type());
-        }
+        // 'self' is the first parameter
+        emit_default_destructor_epilogue(m_current_func->params[0].value, struct_type);
     }
 
     end_function_body();
@@ -970,17 +966,7 @@ IRFunction* IRBuilder::build_synthesized_default_destructor(Type* struct_type) {
     // Begin function body
     begin_function_body(false);
 
-    ValueId self_ptr = m_current_func->params[0].value;
-
-    // Own fields first, then the nearest ancestor's default destructor — the
-    // same order as a user-written destructor (see build_destructor).
-    emit_field_cleanup(self_ptr, struct_type);
-
-    Type* dtor_owner = nearest_default_destructor(struct_type->struct_info.parent);
-    if (dtor_owner) {
-        StringView parent_dtor_name = mangle_destructor(dtor_owner->struct_info.name);
-        emit_call(parent_dtor_name, alloc_span({self_ptr}), m_types.void_type());
-    }
+    emit_default_destructor_epilogue(m_current_func->params[0].value, struct_type);
 
     end_function_body();
     return finish_ir_function();

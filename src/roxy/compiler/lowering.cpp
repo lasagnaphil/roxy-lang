@@ -2504,7 +2504,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 // (BCDeleteDesc::Closure — used to drop an erased Coro<T> whose
                 // concrete state struct isn't statically known) can dispatch it
                 // by runtime type_id. Mirrors the closure-env registration below.
-                if (struct_has_default_destructor(struct_type)) {
+                if (struct_has_default_dtor(struct_type)) {
                     u16 dtor_idx = lookup_destructor_index(struct_type);
                     if (dtor_idx != 0) info.dtor_func_idx = dtor_idx;
                 }
@@ -2545,7 +2545,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 // Record the env's synthesized destructor (built in the IR pass)
                 // so the closure delete can dispatch it by type_id. 0 from
                 // lookup means "no destructor"; map it to the 0xFFFFFFFF sentinel.
-                if (struct_has_default_destructor(env_type)) {
+                if (struct_has_default_dtor(env_type)) {
                     u16 dtor_idx = lookup_destructor_index(env_type);
                     if (dtor_idx != 0) env_info.dtor_func_idx = dtor_idx;
                 }
@@ -3302,14 +3302,6 @@ void BytecodeBuilder::build_struct_field_deletes(Type* struct_type,
         m_current_func->struct_field_deletes.push_back(action);
     }
     out_count = static_cast<u16>(local.size());
-}
-
-bool BytecodeBuilder::struct_has_default_destructor(Type* struct_type) const {
-    if (!struct_type || !struct_type->is_struct()) return false;
-    for (const auto& dtor : struct_type->struct_info.destructors) {
-        if (dtor.name.empty()) return true;
-    }
-    return false;
 }
 
 u16 BytecodeBuilder::lookup_destructor_index(Type* struct_type) const {

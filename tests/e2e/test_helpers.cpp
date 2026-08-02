@@ -123,33 +123,43 @@ const char* rx_exe_suffix() {
 
 namespace rx {
 
-BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
+namespace {
+
+void dump_ir(IRModule* ir_module, const char* stage) {
+    String ir_str;
+    ir_module_to_string(ir_module, ir_str);
+    ir_str.push_back('\0');
+    fprintf(stderr, "=== IR (%s) ===\n%s\n", stage, ir_str.data());
+}
+
+// Source -> validated SSA IR, in the same order as `Compiler::link_modules()`:
+// parse, analyze, build, then coroutine lowering -> optimization -> validation.
+// Every helper below routes through this, so the harness cannot drift from the
+// pipeline it is meant to be testing — it silently did once, and a fully green
+// suite hid a crash on every coroutine program.
+//
+// `registry` must already have its builtin natives registered; the caller owns
+// it (and `type_env`) because `compile()` still needs both after IR building.
+IRModule* build_ir(BumpAllocator& allocator, const char* source,
+                   NativeRegistry& registry, TypeEnv& type_env, bool debug) {
     u32 len = 0;
     while (source[len]) len++;
 
-    // Create type environment and registry
-    TypeEnv type_env(allocator);
-    NativeRegistry registry(allocator, type_env.types());
-    register_builtin_natives(registry);
-
-    // Create module registry and register builtin module for prelude auto-import
+    // Register the builtin module for prelude auto-import
     ModuleRegistry modules(allocator);
     modules.register_native_module(BUILTIN_MODULE_NAME, &registry, type_env.types());
 
     Lexer lexer(source, len);
     Parser parser(lexer, allocator);
     Program* program = parser.parse();
-
-    if (!program || parser.has_error()) {
-        return nullptr;
-    }
+    if (!program || parser.has_error()) return nullptr;
 
     SemanticAnalyzer analyzer(allocator, type_env, modules);
     if (!analyzer.analyze(program)) {
         if (debug) {
-            printf("Semantic errors:\n");
+            fprintf(stderr, "Semantic errors:\n");
             for (const auto& err : analyzer.errors()) {
-                printf("  Line %u: %s\n", err.loc.line, err.message);
+                fprintf(stderr, "  Line %u: %s\n", err.loc.line, err.message);
             }
         }
         return nullptr;
@@ -169,41 +179,35 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
 
     IRBuilder ir_builder(allocator, type_env, registry, analyzer.symbols(), modules);
     IRModule* ir_module = ir_builder.build(program, synthetic_decls);
-    if (!ir_module) {
-        return nullptr;
-    }
+    if (!ir_module) return nullptr;
 
-    if (debug) {
-        String ir_str;
-        ir_module_to_string(ir_module, ir_str);
-        ir_str.push_back('\0');
-        printf("=== IR (before coroutine lowering) ===\n%s\n", ir_str.data());
-    }
+    if (debug) dump_ir(ir_module, "before coroutine lowering");
 
     // Coroutine lowering pass: transform coroutine functions into init/resume/done
     coroutine_lower(ir_module, allocator, type_env);
-
-    if (debug) {
-        String ir_str;
-        ir_module_to_string(ir_module, ir_str);
-        ir_str.push_back('\0');
-        printf("=== IR (after coroutine lowering) ===\n%s\n", ir_str.data());
-    }
+    if (debug) dump_ir(ir_module, "after coroutine lowering");
 
     optimize_module(ir_module, allocator);
-
-    if (debug) {
-        String ir_str;
-        ir_module_to_string(ir_module, ir_str);
-        ir_str.push_back('\0');
-        printf("=== IR (after optimization) ===\n%s\n", ir_str.data());
-    }
+    if (debug) dump_ir(ir_module, "after optimization");
 
     IRValidator validator;
     if (!validator.validate(ir_module)) {
-        if (debug) printf("IR validation failed: %s\n", validator.error());
+        if (debug) fprintf(stderr, "IR validation failed: %s\n", validator.error());
         return nullptr;
     }
+
+    return ir_module;
+}
+
+}  // namespace
+
+BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
+    TypeEnv type_env(allocator);
+    NativeRegistry registry(allocator, type_env.types());
+    register_builtin_natives(registry);
+
+    IRModule* ir_module = build_ir(allocator, source, registry, type_env, debug);
+    if (!ir_module) return nullptr;
 
     BytecodeBuilder bc_builder;
     bc_builder.set_registry(&registry);
@@ -217,69 +221,11 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
 }
 
 IRModule* compile_to_ir(BumpAllocator& allocator, const char* source, bool debug) {
-    u32 len = 0;
-    while (source[len]) len++;
-
     TypeEnv type_env(allocator);
     NativeRegistry registry(allocator, type_env.types());
     register_builtin_natives(registry);
 
-    ModuleRegistry modules(allocator);
-    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, type_env.types());
-
-    Lexer lexer(source, len);
-    Parser parser(lexer, allocator);
-    Program* program = parser.parse();
-
-    if (!program || parser.has_error()) {
-        return nullptr;
-    }
-
-    SemanticAnalyzer analyzer(allocator, type_env, modules);
-    if (!analyzer.analyze(program)) {
-        if (debug) {
-            fprintf(stderr, "Semantic errors:\n");
-            for (const auto& err : analyzer.errors()) {
-                fprintf(stderr, "  Line %u: %s\n", err.loc.line, err.message);
-            }
-        }
-        return nullptr;
-    }
-
-    const auto& syn_vec = analyzer.synthetic_decls();
-    Span<Decl*> synthetic_decls;
-    if (!syn_vec.empty()) {
-        Decl** data = reinterpret_cast<Decl**>(allocator.alloc_bytes(
-            sizeof(Decl*) * syn_vec.size(), alignof(Decl*)));
-        for (u32 j = 0; j < syn_vec.size(); j++) {
-            data[j] = syn_vec[j];
-        }
-        synthetic_decls = Span<Decl*>(data, static_cast<u32>(syn_vec.size()));
-    }
-
-    IRBuilder ir_builder(allocator, type_env, registry, analyzer.symbols(), modules);
-    IRModule* ir_module = ir_builder.build(program, synthetic_decls);
-    if (!ir_module) {
-        return nullptr;
-    }
-
-    if (debug) {
-        String ir_str;
-        ir_module_to_string(ir_module, ir_str);
-        ir_str.push_back('\0');
-        fprintf(stderr, "=== IR ===\n%s\n", ir_str.data());
-    }
-
-    coroutine_lower(ir_module, allocator, type_env);
-    optimize_module(ir_module, allocator);
-
-    IRValidator validator;
-    if (!validator.validate(ir_module)) {
-        if (debug) fprintf(stderr, "IR validation failed: %s\n", validator.error());
-        return nullptr;
-    }
-
-    return ir_module;
+    return build_ir(allocator, source, registry, type_env, debug);
 }
 
 String compile_to_cpp(const char* source, bool debug, const char* source_path) {
@@ -302,63 +248,6 @@ String compile_to_cpp(const char* source, bool debug, const char* source_path) {
     }
 
     return output;
-}
-
-// Variant of compile_to_ir that uses an externally-supplied NativeRegistry
-// (so the caller can pre-bind user functions). Must be called with a registry
-// whose builtin natives are already registered.
-static IRModule* compile_to_ir_with_registry(BumpAllocator& allocator,
-                                             const char* source,
-                                             NativeRegistry& registry,
-                                             TypeEnv& type_env,
-                                             bool debug) {
-    u32 len = 0;
-    while (source[len]) len++;
-
-    ModuleRegistry modules(allocator);
-    modules.register_native_module(BUILTIN_MODULE_NAME, &registry, type_env.types());
-
-    Lexer lexer(source, len);
-    Parser parser(lexer, allocator);
-    Program* program = parser.parse();
-    if (!program || parser.has_error()) return nullptr;
-
-    SemanticAnalyzer analyzer(allocator, type_env, modules);
-    if (!analyzer.analyze(program)) {
-        if (debug) {
-            fprintf(stderr, "Semantic errors:\n");
-            for (const auto& err : analyzer.errors()) {
-                fprintf(stderr, "  Line %u: %s\n", err.loc.line, err.message);
-            }
-        }
-        return nullptr;
-    }
-
-    const auto& syn_vec = analyzer.synthetic_decls();
-    Span<Decl*> synthetic_decls;
-    if (!syn_vec.empty()) {
-        Decl** data = reinterpret_cast<Decl**>(allocator.alloc_bytes(
-            sizeof(Decl*) * syn_vec.size(), alignof(Decl*)));
-        for (u32 j = 0; j < syn_vec.size(); j++) {
-            data[j] = syn_vec[j];
-        }
-        synthetic_decls = Span<Decl*>(data, static_cast<u32>(syn_vec.size()));
-    }
-
-    IRBuilder ir_builder(allocator, type_env, registry, analyzer.symbols(), modules);
-    IRModule* ir_module = ir_builder.build(program, synthetic_decls);
-    if (!ir_module) return nullptr;
-
-    coroutine_lower(ir_module, allocator, type_env);
-    optimize_module(ir_module, allocator);
-
-    IRValidator validator;
-    if (!validator.validate(ir_module)) {
-        if (debug) fprintf(stderr, "IR validation failed: %s\n", validator.error());
-        return nullptr;
-    }
-
-    return ir_module;
 }
 
 String compile_to_hpp(const char* source, bool debug) {
@@ -734,7 +623,7 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
     // direct calls.
     BumpAllocator allocator(16384);
     TypeEnv type_env(allocator);
-    IRModule* ir_module = compile_to_ir_with_registry(allocator, source, *registry, type_env, debug);
+    IRModule* ir_module = build_ir(allocator, source, *registry, type_env, debug);
     if (!ir_module) {
         fprintf(stderr, "[C Backend+Registry] IR build failed\n");
         return result;

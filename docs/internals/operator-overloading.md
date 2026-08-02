@@ -106,8 +106,8 @@ Each operator is rewritten to its trait method call (binary trait `Rhs` shown as
 
 `self` is passed as a pointer, so the receiver needs an address. A *place*
 expression (identifier, field access, index) yields one directly; anything else
-is an rvalue routed through `gen_operator_receiver`, which falls back to
-`gen_expr`. No materialization is needed there because lowering already unpacks
+is an rvalue: operator dispatch calls `gen_lvalue_addr(expr, rvalue_ok=true)`,
+whose fallback is `gen_expr`. No materialization is needed there because lowering already unpacks
 a struct return into a stack-allocated pointer, so `gen_expr` hands back exactly
 the pointer `self` wants.
 

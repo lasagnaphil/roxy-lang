@@ -279,13 +279,12 @@ private:
     ValueId maybe_wrap_weak(ValueId value, Type* source_type, Type* target_type,
                             Expr* source_expr = nullptr);
 
-    // Generate address of an lvalue expression (for out/inout arguments)
-    ValueId gen_lvalue_addr(Expr* expr);
-
-    // Address of an operator method's receiver. Unlike gen_lvalue_addr this
-    // accepts rvalues (a call result, another operator's result), which is what
+    // Address of a place expression (for out/inout arguments). With `rvalue_ok`,
+    // an expression that has no
+    // place (a call result, another operator's result) falls back to its value
+    // instead of erroring — what an operator method's receiver needs, and what
     // lets operator expressions chain: `(a + b) * 2.0f`.
-    ValueId gen_operator_receiver(Expr* expr);
+    ValueId gen_lvalue_addr(Expr* expr, bool rvalue_ok = false);
 
     // For an out/inout argument lvalue, return a heap data pointer to the heap
     // object whose storage the argument points into (its "heap root"), or invalid
@@ -765,6 +764,11 @@ private:
 
     // Emit cleanup code for uniq fields of a struct (called from destructors)
     void emit_field_cleanup(ValueId self_ptr, Type* struct_type);
+
+    // Own-field cleanup + the chained call to the nearest ancestor's default
+    // destructor. Shared by user-written and synthesized default destructors,
+    // which must agree on destruction order.
+    void emit_default_destructor_epilogue(ValueId self_ptr, Type* struct_type);
 
     // Emit cleanup for a single field (uniq or value-struct with destructor)
     void emit_single_field_destroy(ValueId obj_ptr, StringView field_name,
