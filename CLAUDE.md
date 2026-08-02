@@ -449,7 +449,7 @@ Points worth knowing before touching it:
 - **Framework:** doctest (vendored in `include/roxy/core/doctest/`)
 - **Single executable:** `roxy_tests` contains all unit and E2E tests
 - **Helpers:** `tests/e2e/test_helpers.hpp` provides `compile()`, `compile_and_run()`, `run_and_capture()`, `compile_to_cpp()`, `compile_and_run_cpp()`
-- ⚠️ **The E2E harness is not the real pipeline.** `test_helpers.cpp`'s `compile()` runs IRBuilder → `coroutine_lower` → validate → bytecode and **never calls `optimize_module()`**, which `Compiler::compile()` (and so the `roxy` CLI and every shipped program) does. A green E2E run says nothing about the IR optimizer. When a bug reproduces on the CLI but not in tests, check this first. Tracked in TODO.md → Testing Gaps.
+- **The E2E harness mirrors the real pipeline**: IRBuilder → `coroutine_lower` → `optimize_module` → validate → bytecode/C, the same order as `Compiler::link_modules()`. Keep it that way — it did not always run the optimizer, and that gap hid a crash on *every* coroutine program behind a fully green suite.
 
 ### Running Tests
 

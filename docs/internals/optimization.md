@@ -78,7 +78,12 @@ v5 = copy v3              ... uses v3 ...
 
 **Pure-Copy assumption:** a propagatable `IROp::Copy` is a borrow that retypes a uniq pointer as a ref pointer (same representation, 1 slot), always semantically `result := source`. A future Copy with runtime meaning (e.g. a strong-ref bump) must use a new opcode and be added to `has_side_effect`.
 
-**The `no_copy_prop` exception:** a call-site heap-root borrow rides a `Copy` flagged `IRInst::no_copy_prop`, and `is_copy_candidate` skips those. The flag exists to keep that borrow a *distinct SSA value* — hence a distinct register from the receiver it straddles — so its `RefDec` + `Nullify` cleanup cannot clobber the owner's own `Delete` record. Propagating it away would collapse the two and reintroduce spurious free-traps; see [lifetimes.md](lifetimes.md) → "Call-site heap-root borrows".
+**The `no_copy_prop` exception:** some `Copy`s carry an identity that later cleanup names, and `is_copy_candidate` skips those (`IRInst::no_copy_prop`). Two kinds:
+
+- **Call-site heap-root borrows** — the flag keeps the borrow a *distinct SSA value*, hence a distinct register from the receiver it straddles, so its `RefDec` + `Nullify` cleanup cannot clobber the owner's own `Delete` record. See [lifetimes.md](lifetimes.md) → "Call-site heap-root borrows".
+- **`ref` locals** (`var r: ref T = ref x`) — the local's cleanup record and its scope-exit `Nullify` both name the Copy's ValueId. Folding it into the source retargets them at the source: `var current: ref Node = ref node` emitted `nullify node; ref_dec node`, releasing a nulled pointer and leaving the param's borrow uncounted. Pinned in `pin_tracked_value` where the local is tracked.
+
+The general rule: **a `Copy` whose ValueId is recorded anywhere outside the IR — a cleanup record, a drop plan, a `Nullify` — is not a pure copy, and propagating it silently retargets that record.**
 
 Phase 2 only removes/rewrites in place — it never creates unreachable blocks, so no extra `reorder_blocks_rpo()` is needed for it alone.
 

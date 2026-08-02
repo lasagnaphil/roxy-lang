@@ -218,6 +218,12 @@ private:
     void emit_nullify(ValueId value);
     void emit_assert_heap(ValueId value);
 
+    // Keep `value` a distinct SSA value through optimization when its identity
+    // is load-bearing for cleanup — a tracked local's cleanup record and its
+    // `Nullify` both name this ValueId, so folding it into its source would
+    // retarget them at the source. No-op unless the definition is a Copy.
+    void pin_tracked_value(ValueId value);
+
     // Reference counting for constraint reference model
     void emit_ref_inc(ValueId ptr);
     void emit_ref_dec(ValueId ptr);

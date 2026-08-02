@@ -1311,6 +1311,14 @@ void IRBuilder::gen_var_decl(Decl* decl) {
         }
         u32 scope_depth = static_cast<u32>(m_local_scopes.size());
         BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
+        // `ref x` lowers to a Copy of the borrowed pointer, and this local's
+        // cleanup keys on that Copy's ValueId — the scope-exit `Nullify` names
+        // it. Copy propagation would fold it back into the source, so the
+        // Nullify would then zero the *source*: for `var r: ref T = ref param`
+        // it emitted `nullify param; ref_dec param`, releasing null and leaving
+        // the param's own borrow uncounted. Pin the identity, exactly as
+        // call-site heap-root borrows do (see IRInst::no_copy_prop).
+        pin_tracked_value(value);
         m_ownership.track({var_decl.name, type, scope_depth, false, false,
                            current_block_id, value, OwnedKind::RefBorrow});
     } else if (type && type->kind == TypeKind::String) {

@@ -157,19 +157,16 @@ history. Remaining:
 
 ## Testing Gaps
 
-- [ ] **The IR optimizer is untested end-to-end.** `tests/e2e/test_helpers.cpp`'s
-  `compile()` runs IRBuilder → `coroutine_lower` → `IRValidator` → `BytecodeBuilder`
-  and **never calls `optimize_module()`**, while the real `Compiler::compile()`
-  (and therefore the `roxy` CLI and every shipped program) does. So the whole E2E
-  suite — ~1,400 cases across both backends — validates *unoptimized* IR, and the
-  optimizer's only coverage is `tests/unit/test_ir_optimize.cpp`'s hand-built
-  functions. This is how a crash on *every* coroutine program sat in a fully
-  green suite until 2026-08-02. Fix: run the E2E harness through the same
-  pipeline as `Compiler::compile()`, or at minimum add an optimized-pipeline
-  variant of the parametric backend harness. Until then, treat "E2E green" as
-  saying nothing about the optimizer. The `E2E CLI` suite runs the real binary
-  and so does see optimized IR — it now carries two coroutine cases for exactly
-  that reason — but it is a handful of tests, not coverage.
+- The IR optimizer is now covered end-to-end (**landed 2026-08-02**). All three
+  pipeline builders in `tests/e2e/test_helpers.cpp` (`compile`, `compile_to_ir`,
+  `compile_to_ir_with_registry`) call `optimize_module()` between
+  `coroutine_lower` and `IRValidator`, matching `Compiler::link_modules()`, so
+  the whole parametric suite exercises optimized IR on both backends. Before
+  this, the optimizer's only coverage was `tests/unit/test_ir_optimize.cpp`'s
+  hand-built functions — which is how a crash on *every* coroutine program sat
+  in a fully green suite. **Keep the harness and `Compiler::link_modules()` in
+  the same order**; a divergence there is invisible until something reproduces
+  on the CLI but not in tests.
 
 - Fuzzing for the lexer/parser/LSP parser **landed** — coverage-guided libFuzzer
   targets in `tests/fuzz/` (`fuzz_lexer`/`fuzz_parser`/`fuzz_lsp_parser`, built

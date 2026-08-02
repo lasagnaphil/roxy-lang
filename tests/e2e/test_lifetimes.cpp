@@ -1724,4 +1724,46 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.value == 7);
     }
 
+    TEST_CASE_TEMPLATE("ref local borrowing a ref param survives copy propagation", Backend, RX_E2E_BACKENDS) {
+        // `ref x` lowers to a Copy, and a ref local's cleanup names that Copy's
+        // ValueId — the scope-exit Nullify targets it. Copy propagation folded
+        // it back into the source, so `var current: ref Node = ref node` emitted
+        // `nullify node; ref_dec node`: the release read a nulled pointer, and
+        // the param's borrow was never actually decremented.
+        //
+        // The C backend miscompiled outright (it models Nullify as an
+        // assignment, so the ref_dec ran on null); the VM's register mapping
+        // happened to hide it. The Copy is now pinned with `no_copy_prop`, the
+        // same protection call-site heap-root borrows use.
+        const char* source = R"(
+        struct Node { value: i32; next: uniq Node; }
+
+        fun list_sum(node: ref Node): i32 {
+            var sum: i32 = node.value;
+            var current: ref Node = ref node;
+            while (current.next != nil) {
+                current = ref current.next;
+                sum = sum + current.value;
+            }
+            return sum;
+        }
+
+        fun main(): i32 {
+            var n3: uniq Node = uniq Node();
+            n3.value = 3;
+            n3.next = nil;
+            var n2: uniq Node = uniq Node();
+            n2.value = 2;
+            n2.next = n3;
+            var n1: uniq Node = uniq Node();
+            n1.value = 1;
+            n1.next = n2;
+            return list_sum(ref n1);   // borrows released, owners still deletable
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 6);
+    }
+
 }

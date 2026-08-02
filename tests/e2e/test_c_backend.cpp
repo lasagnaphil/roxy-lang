@@ -1765,12 +1765,18 @@ TEST_SUITE("E2E C Backend") {
         // The function-level #line covers the body's first line; subsequent
         // statements on different lines each get their own #line directive
         // so debuggers attribute step-through to the right Roxy line.
+        //
+        // The statements must survive optimization to have any code to attribute
+        // — this pipeline constant-folds, so an earlier version of this test
+        // (three `var` initializers folded into a single `return 60`) checked
+        // for directives belonging to statements that no longer existed. Side
+        // effects keep these alive.
         const char* source =
             "fun main(): i32 {\n"     // line 1
-            "    var a: i32 = 10;\n"  // line 2
-            "    var b: i32 = 20;\n"  // line 3
-            "    var c: i32 = 30;\n"  // line 4
-            "    return a + b + c;\n" // line 5
+            "    print(\"a\");\n"     // line 2
+            "    print(\"b\");\n"     // line 3
+            "    print(\"c\");\n"     // line 4
+            "    return 0;\n"         // line 5
             "}\n";                    // line 6
         String cpp = compile_to_cpp(source, /*debug=*/false, "user.roxy");
         REQUIRE(!cpp.empty());

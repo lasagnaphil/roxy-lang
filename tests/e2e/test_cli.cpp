@@ -175,14 +175,16 @@ TEST_SUITE("E2E CLI") {
         CHECK(result.exit_code == 3);
     }
 
-    // ── Optimizing-pipeline coverage ────────────────────────────────────────
+    // ── Whole-binary pipeline coverage ──────────────────────────────────────
     //
-    // These belong here rather than in the parametric E2E suites because
-    // `test_helpers.cpp`'s `compile()` does NOT run `optimize_module()`, while
-    // `Compiler::compile()` — the CLI, and every shipped program — does. So the
-    // CLI is currently the only test path that sees optimized IR.
+    // The parametric suites now run the optimizer too (test_helpers.cpp mirrors
+    // Compiler::link_modules()), so these are no longer the only optimized-IR
+    // coverage. They keep their own value: they exercise the *shipped binary*
+    // driving Compiler::compile() end to end, which is what catches a harness
+    // that has drifted from the real pipeline — exactly the failure that hid
+    // the bug below.
     //
-    // The bug they pin: coroutine lowering minted result ValueIds with bare
+    // That bug: coroutine lowering minted result ValueIds with bare
     // `new_value()`, leaving `values_by_id` null for every instruction it
     // created. DCE's worklist dereferenced that null, so compiling *any*
     // coroutine segfaulted the compiler while the whole E2E suite stayed green.

@@ -423,6 +423,12 @@ void IRBuilder::emit_assert_heap(ValueId value) {
     if (inst) inst->unary = value;
 }
 
+void IRBuilder::pin_tracked_value(ValueId value) {
+    if (!m_current_func) return;
+    IRInst* def = m_current_func->inst_for(value);
+    if (def && def->op == IROp::Copy) def->no_copy_prop = true;
+}
+
 void IRBuilder::emit_ref_inc(ValueId ptr) {
     IRInst* inst = emit_inst(IROp::RefInc, m_types.void_type());
     if (inst) inst->unary = ptr;

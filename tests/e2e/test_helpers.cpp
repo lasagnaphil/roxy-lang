@@ -7,6 +7,7 @@
 #include "roxy/compiler/ssa_ir.hpp"
 #include "roxy/compiler/ir_builder.hpp"
 #include "roxy/compiler/ir_validator.hpp"
+#include "roxy/compiler/ir_optimize.hpp"
 #include "roxy/compiler/coroutine_lowering.hpp"
 #include "roxy/compiler/lowering.hpp"
 #include "roxy/compiler/module_registry.hpp"
@@ -189,6 +190,15 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
         printf("=== IR (after coroutine lowering) ===\n%s\n", ir_str.data());
     }
 
+    optimize_module(ir_module, allocator);
+
+    if (debug) {
+        String ir_str;
+        ir_module_to_string(ir_module, ir_str);
+        ir_str.push_back('\0');
+        printf("=== IR (after optimization) ===\n%s\n", ir_str.data());
+    }
+
     IRValidator validator;
     if (!validator.validate(ir_module)) {
         if (debug) printf("IR validation failed: %s\n", validator.error());
@@ -261,6 +271,7 @@ IRModule* compile_to_ir(BumpAllocator& allocator, const char* source, bool debug
     }
 
     coroutine_lower(ir_module, allocator, type_env);
+    optimize_module(ir_module, allocator);
 
     IRValidator validator;
     if (!validator.validate(ir_module)) {
@@ -339,6 +350,7 @@ static IRModule* compile_to_ir_with_registry(BumpAllocator& allocator,
     if (!ir_module) return nullptr;
 
     coroutine_lower(ir_module, allocator, type_env);
+    optimize_module(ir_module, allocator);
 
     IRValidator validator;
     if (!validator.validate(ir_module)) {
