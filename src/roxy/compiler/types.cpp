@@ -961,6 +961,19 @@ bool struct_needs_synthetic_dtor(const StructTypeInfo& info) {
             }
         }
     }
+    // An inherited destructor still has to run. Destruction chains from the
+    // most-derived struct upward, so a struct with nothing of its own to drop
+    // needs a synthesized destructor purely to carry the chain to an ancestor
+    // that does — otherwise it has no destructor at all and the ancestor's
+    // never runs (RAII silently skipped). The caller's fixpoint loop propagates
+    // this down a chain regardless of declaration order, the same way it does
+    // for embedded value structs.
+    for (Type* ancestor = info.parent; ancestor && ancestor->is_struct();
+         ancestor = ancestor->struct_info.parent) {
+        for (const auto& dtor : ancestor->struct_info.destructors) {
+            if (dtor.name.empty()) return true;
+        }
+    }
     return false;
 }
 

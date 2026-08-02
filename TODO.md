@@ -10,60 +10,37 @@ Last updated: 2026-08-02
 
 ## High Priority
 
-Both remaining items are **destructor chaining through inheritance**, found on
-2026-08-02 while fixing the "parent has no destructor" bug below. Neither is
-reached by the test suite, and the second is memory-unsafe.
+(none currently)
 
-- [ ] **A struct with no destructor of its own never runs an inherited one.**
-  ```roxy
-  struct A { a: i32; }
-  fun delete A() { print("A gone"); }
-  struct B : A { b: i32; }      // no destructor, no owned fields
-  struct C : B { c: i32; }      // likewise
-  fun new C() { self.a = 1; self.b = 2; self.c = 3; }
-  fun main(): i32 { var x: uniq C = uniq C(); return 0; }   // prints nothing
-  ```
-  `struct_needs_synthetic_dtor` (`types.cpp`) only asks whether the struct's own
-  fields need dropping, so `C` gets no destructor at all and `A`'s never runs —
-  RAII silently skipped. It should also return true when an ancestor has a
-  default destructor. **Fix the double-delete below first**: that predicate
-  change gives more structs a synthesized destructor, and each one currently
-  cleans its inherited fields on top of the parent doing the same.
+*Nine bugs were found and fixed here on 2026-08-02, all traced back to compiling
+`CLAUDE.md`'s example program — which had never been run. Kept as a record of
+what the test suite was not covering:*
 
-- [ ] **An inherited `uniq` field is destroyed twice.**
-  ```roxy
-  struct Res { v: i32; }
-  fun delete Res() { print("res freed"); }
-  struct Parent { r: uniq Res; }        // owned field -> synthesized destructor
-  struct Child : Parent { c: i32; }
-  fun new Child() { self.r = uniq Res { v = 1 }; self.c = 2; }
-  fun delete Child() { print("child"); }
-  fun main(): i32 { var x: uniq Child = uniq Child(); return 0; }
-  ```
-  → `Assertion failed: double-delete: heap object already freed`
-  (`interpreter.cpp:304`). `emit_field_cleanup` walks `struct_info.fields`,
-  which holds inherited fields too (`inheritance.md`, "Type system"), so the
-  child destroys `r` and then chains to the parent, which destroys it again.
-  The assert catches it in debug builds; a release build double-frees. Fix:
-  clean only the struct's *own* fields (those at or after the parent's field
-  count) and let the parent's destructor handle the rest — sound because a
-  parent with owned fields always has a destructor.
+*Five coroutine bugs, each unreachable until the one before it was fixed: the
+DCE null-deref that made compiling any coroutine segfault (`values_by_id` left
+null by `new_value()`, now `new_value_for(inst)` plus an `IRValidator`
+invariant); an init function that hardcoded `param_is_ptr` to `false`, passing a
+method receiver by value while the callee read a pointer; a stack receiver
+reaching the state struct as a counted borrow, whose `RefInc` wrote through
+`data - 8` into a neighbouring local (now `IROp::AssertHeap`, as closures do);
+value structs in coroutine state storing an address into a field sized for the
+struct (now inline, read by address with a `StructCopy` write-back); and
+`out`/`inout` coroutine parameters, now a compile error rather than a pointer
+into a dead frame.*
 
-*(Fixed and removed from this list, all found on 2026-08-02 by compiling
-`CLAUDE.md`'s example program, which had never been run. Five were coroutine
-bugs, each unreachable until the one before it was fixed: the DCE null-deref
-that made compiling any coroutine segfault (`values_by_id` left null by
-`new_value()`, now `new_value_for(inst)` + an `IRValidator` invariant); an init
-function that hardcoded `param_is_ptr` to `false`, passing a method receiver by
-value while the callee read a pointer; a stack receiver reaching the state
-struct as a counted borrow, whose `RefInc` wrote through `data - 8` into a
-neighbouring local (now `IROp::AssertHeap`, as closures do); value structs in
-coroutine state storing an address into a field sized for the struct (now
-inline, read by address with a `StructCopy` write-back); and `out`/`inout`
-coroutine parameters, now a compile error rather than a pointer into a dead
-frame. Plus: a child destructor failing to link when the parent had none, and
-an operator result being rejected as the left operand of another operator
-(`(a + b) * 2.0f`). `CLAUDE.md`'s example now compiles and runs verbatim.)*
+*Three destructor-chaining bugs: a child destructor failing to link when the
+parent had none (chaining now targets the nearest ancestor that has one); an
+inherited `uniq` field destroyed twice, once by the child and again by the
+parent (each level now cleans only its own fields); and an inherited destructor
+never running when the child declared none and had nothing to drop
+(`struct_needs_synthetic_dtor` now treats an ancestor's destructor as an
+obligation to carry the chain).*
+
+*And one operator bug: an operator result was rejected as the left operand of
+another operator, so `(a + b) * 2.0f` did not compile while `a.add(b).mul(2.0f)`
+did.*
+
+*`CLAUDE.md`'s example now compiles and runs verbatim.*
 
 ---
 

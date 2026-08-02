@@ -782,10 +782,13 @@ IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type)
     begin_function_body(false);
     gen_body(decl->body);
 
-    // After child destructor body, chain to the nearest ancestor with a default
-    // destructor. Only default destructors chain automatically (named ones are
-    // called explicitly).
+    // Destruction order mirrors C++: the user body runs, then this struct's own
+    // fields are cleaned, then the nearest ancestor's default destructor runs
+    // (which cleans its own fields, and chains further up). Only default
+    // destructors chain automatically — named ones are called explicitly.
     if (decl->name.empty()) {
+        emit_field_cleanup(m_current_func->params[0].value, struct_type);
+
         Type* dtor_owner = nearest_default_destructor(struct_type->struct_info.parent);
         if (dtor_owner) {
             StringView parent_dtor_name = mangle_destructor(dtor_owner->struct_info.name);
@@ -793,11 +796,6 @@ IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type)
             emit_call(parent_dtor_name, alloc_span({m_current_func->params[0].value}),
                       m_types.void_type());
         }
-    }
-
-    // For default destructors, clean up uniq fields after user body and parent chain
-    if (decl->name.empty()) {
-        emit_field_cleanup(m_current_func->params[0].value, struct_type);
     }
 
     end_function_body();
@@ -974,15 +972,15 @@ IRFunction* IRBuilder::build_synthesized_default_destructor(Type* struct_type) {
 
     ValueId self_ptr = m_current_func->params[0].value;
 
-    // Chain to the nearest ancestor with a default destructor
+    // Own fields first, then the nearest ancestor's default destructor — the
+    // same order as a user-written destructor (see build_destructor).
+    emit_field_cleanup(self_ptr, struct_type);
+
     Type* dtor_owner = nearest_default_destructor(struct_type->struct_info.parent);
     if (dtor_owner) {
         StringView parent_dtor_name = mangle_destructor(dtor_owner->struct_info.name);
         emit_call(parent_dtor_name, alloc_span({self_ptr}), m_types.void_type());
     }
-
-    // Clean up uniq fields
-    emit_field_cleanup(self_ptr, struct_type);
 
     end_function_body();
     return finish_ir_function();

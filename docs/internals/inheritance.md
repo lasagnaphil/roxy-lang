@@ -122,7 +122,20 @@ Supported conversions: `uniq Child → uniq Parent`, `uniq Child → ref Parent`
 
 **Chaining rules.** Constructor chaining is explicit (implicit `super()` to the parent's default when omitted); the child body runs after the parent. Destructor chaining is automatic; the child runs before the parent.
 
-A destructor chains to the **nearest ancestor that has a default destructor**, not necessarily its direct parent. Only structs that need one get a default destructor (a user-written body, or a synthesized one for owned fields), so a plain value struct in the middle of a chain has none — emitting a call to it anyway failed the compile with "function not found during bytecode lowering". Skipping such a level is sound precisely because it has nothing to run: no user body and no owned fields. See `nearest_default_destructor` in `ir_builder.cpp`.
+A destructor chains to the **nearest ancestor that has a default destructor**, not necessarily its direct parent. Only structs that need one get a default destructor, so a plain value struct in the middle of a chain has none — emitting a call to it anyway failed the compile with "function not found during bytecode lowering". Skipping such a level is sound precisely because it has nothing to run: no user body and no owned fields. See `nearest_default_destructor` in `ir_builder.cpp`.
+
+### Who destroys which fields
+
+Destruction runs **most-derived first**, and each level handles exactly its own share:
+
+1. the struct's user destructor body, if any;
+2. the struct's **own** fields (those declared on it, not inherited);
+3. the nearest ancestor's default destructor — which repeats the same three steps.
+
+Two invariants make that split work, and both were bugs before:
+
+- **`emit_field_cleanup` walks only own fields.** `StructTypeInfo::fields` is parent-prefixed, so cleaning the whole span destroyed an inherited `uniq` once in the child and again in the parent — a double free. Own fields start at `parent->struct_info.fields.size()`. (`when_clauses` need no such split; they are resolved per-struct and not inherited.) Nothing is left uncleaned, because a parent with owned fields always has a destructor of its own.
+- **A struct inherits the *obligation* to have a destructor.** `struct_needs_synthetic_dtor` returns true when any ancestor has a default destructor, even if the struct itself has nothing to drop — otherwise it gets no destructor at all and the ancestor's never runs. The synthesis pass's fixpoint loop propagates this down a chain regardless of declaration order.
 
 ### Name mangling
 

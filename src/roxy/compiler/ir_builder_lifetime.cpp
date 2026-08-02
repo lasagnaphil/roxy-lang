@@ -289,8 +289,26 @@ void IRBuilder::emit_single_field_destroy(ValueId obj_ptr, StringView field_name
 
 void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
     StructTypeInfo& struct_info = struct_type->struct_info;
+
+    // Clean only this struct's OWN fields. `struct_info.fields` is
+    // parent-prefixed (inherited fields first, then own — see semantic.cpp's
+    // member resolution and inheritance.md), and the destructor chains to the
+    // parent, whose own destructor cleans the inherited ones. Walking the whole
+    // span destroyed an inherited `uniq` twice: once here, once in the parent
+    // (caught by the interpreter's double-delete assert; a release build would
+    // have double-freed). A parent with owned fields always has a destructor,
+    // so nothing is left uncleaned by stopping at the boundary.
+    //
+    // `when_clauses` need no such split: they are resolved from the struct's
+    // own declarations and are not inherited.
+    Type* parent_type = struct_info.parent;
+    u32 own_field_start = (parent_type && parent_type->is_struct())
+                              ? static_cast<u32>(parent_type->struct_info.fields.size())
+                              : 0;
+
     // Process regular fields in reverse order (LIFO, like C++ member destruction)
-    for (i32 i = static_cast<i32>(struct_info.fields.size()) - 1; i >= 0; i--) {
+    for (i32 i = static_cast<i32>(struct_info.fields.size()) - 1;
+         i >= static_cast<i32>(own_field_start); i--) {
         const FieldInfo& field = struct_info.fields[i];
         if (!field.type) continue;
 

@@ -285,6 +285,59 @@ TEST_SUITE("E2E Inheritance") {
         CHECK(result.stdout_output == "player removed\n");
     }
 
+    TEST_CASE_TEMPLATE("Inherited destructor runs when the child declares none", Backend, RX_E2E_BACKENDS) {
+        // A struct with nothing of its own to drop still needs a destructor to
+        // carry the chain upward. Without one it had no destructor at all and
+        // the ancestor's never ran — RAII silently skipped, no diagnostic.
+        const char* source = R"(
+        struct A { a: i32; }
+        fun delete A() { print("A gone"); }
+
+        struct B : A { b: i32; }          // no destructor, nothing to drop
+        struct C : B { c: i32; }          // likewise
+
+        fun new C() { self.a = 1; self.b = 2; self.c = 3; }
+
+        fun main(): i32 {
+            var x: uniq C = uniq C();
+            delete x;
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "A gone\n");
+    }
+
+    TEST_CASE_TEMPLATE("Inherited owned field is destroyed exactly once", Backend, RX_E2E_BACKENDS) {
+        // `struct_info.fields` is parent-prefixed, so cleaning the whole span
+        // destroyed an inherited `uniq` here *and* again in the parent the
+        // destructor chains to — a double free (the interpreter's assert caught
+        // it in debug; release would not have). Each level cleans only its own
+        // fields.
+        const char* source = R"(
+        struct Res { v: i32; }
+        fun delete Res() { print("res freed"); }
+
+        struct Parent { r: uniq Res; }        // owned field -> synthesized dtor
+        struct Child : Parent { c: i32; }
+
+        fun new Child() { self.r = uniq Res { v = 1 }; self.c = 2; }
+        fun delete Child() { print("child"); }
+
+        fun main(): i32 {
+            var x: uniq Child = uniq Child();
+            delete x;
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "child\nres freed\n");
+    }
+
     TEST_CASE_TEMPLATE("Destructor chaining skips a level with no destructor", Backend, RX_E2E_BACKENDS) {
         // A missing middle level must not break the chain: the grandparent's
         // destructor still runs. Skipping is sound because a level without a
