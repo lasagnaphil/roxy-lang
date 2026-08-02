@@ -945,6 +945,11 @@ use-after-free.
 
 ### PLANNED: separating Drop from Copy
 
+> **Picking this up?** `HANDOFF.md` at the repo root has the operational half —
+> what has landed, the traps that cost a previous session time, the reproductions
+> and the verification commands. This section stays the canonical design.
+
+
 Three changes, in this order. The order matters: step 2 before step 1 would make
 `ref`-bearing structs copyable while the glue that keeps their counts balanced
 does not exist yet — trading an over-restriction for a use-after-free.

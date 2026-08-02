@@ -33,6 +33,7 @@ the free-trap only fires on an explicit `delete`, so nothing was looking.*
   drained coroutine, and a throw/catch in a callee are all clean. Pinned by
   `ExpectedLeak` in the two `E2E Coroutines` cases; remove those when fixed.
 - [ ] **A `string` field in a struct is retained on store but never released**
+  *(in progress — see `HANDOFF.md` for state and next steps)*
   — blocked on separating Drop from Copy. `struct Box { s: string; }` leaks the
   string; this is most of the Lox string leak (`Scanner.source`,
   `Token.lexeme`, …). Minimal repro:
