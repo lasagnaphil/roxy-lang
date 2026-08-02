@@ -134,6 +134,11 @@ static void emit_set_struct_field(BumpAllocator& allocator, IRFunction* func, IR
     copy->struct_copy.dest_ptr = addr->result;
     copy->struct_copy.source_ptr = source_ptr;
     copy->struct_copy.slot_count = slot_count;
+    copy->struct_copy.struct_type = field_type;
+    // Move: spilling a live local into the coroutine state struct (and reloading
+    // it on resume) relocates one value between two storages that are never live
+    // at the same time. No second owner comes into existence, so nothing to retain.
+    copy->struct_copy.kind = StructCopyKind::Move;
 }
 
 static ValueId emit_eq_i(BumpAllocator& allocator, IRFunction* func, IRBlock* block,

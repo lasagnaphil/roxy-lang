@@ -406,6 +406,7 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
             StaticString<32> tmp;
             format_to(tmp, " ({})", inst->struct_copy.slot_count);
             for (char c : tmp) out.push_back(c);
+            if (inst->struct_copy.kind == StructCopyKind::Clone) append_str(out, " clone");
             break;
         }
 

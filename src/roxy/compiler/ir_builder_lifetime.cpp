@@ -444,6 +444,134 @@ void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
     }
 }
 
+void IRBuilder::emit_struct_clone_glue(ValueId struct_ptr, Type* struct_type) {
+    if (!struct_type || !struct_type->is_struct() || !struct_ptr.is_valid()) return;
+    if (!m_current_block) return;  // block already terminated
+
+    // A move-only struct is never duplicated — its copies are moves, and the
+    // source hands its counts over rather than sharing them. Nothing to acquire.
+    // (This is also what keeps the walk below total: only a copyable struct
+    // reaches it, and a copyable struct cannot hold a member whose drop has no
+    // inverse — that member is exactly what would have made it move-only.)
+    if (struct_type->noncopyable()) return;
+
+    StructTypeInfo& struct_info = struct_type->struct_info;
+
+    // Every field, inherited ones included. This is the one place the walk must
+    // NOT mirror emit_field_cleanup's parent-boundary split: cleanup stops at the
+    // boundary because the destructor chains to the parent's, whereas a copy is a
+    // flat memcpy of the whole layout with nothing to chain to. Stopping early
+    // would duplicate an inherited member without retaining it.
+    for (const auto& field : struct_info.fields) {
+        if (!field.type) continue;
+        // The same gate as the drop (member_needs_drop → compute_drop_plan), so
+        // retain and release are inverses by construction rather than by review:
+        // a member acquires a count here exactly when it releases one on
+        // teardown, and the two turn on together.
+        if (!member_needs_drop(field.type)) continue;
+        emit_member_retain(struct_ptr, field.name, field.slot_offset,
+                           field.slot_count, field.type);
+    }
+
+    // Variant fields live in the union, so only the members named by the current
+    // discriminant are actually there to retain — same discriminant-guarded shape
+    // as emit_field_cleanup and build_struct_field_deletes.
+    for (const auto& clause : struct_info.when_clauses) {
+        bool any_retaining_variant = false;
+        for (const auto& variant : clause.variants) {
+            for (const auto& variant_field : variant.fields) {
+                if (variant_field.type && member_needs_drop(variant_field.type)) {
+                    any_retaining_variant = true;
+                    break;
+                }
+            }
+            if (any_retaining_variant) break;
+        }
+        if (!any_retaining_variant) continue;
+
+        const FieldInfo* disc_field = struct_info.find_field(clause.discriminant_name);
+        if (!disc_field) continue;
+
+        ValueId disc_val = emit_get_field(struct_ptr, disc_field->name,
+            disc_field->slot_offset, disc_field->slot_count, disc_field->type);
+
+        IRBlock* merge_block = create_block("variant_retain_done");
+
+        for (const auto& variant : clause.variants) {
+            bool variant_retains = false;
+            for (const auto& variant_field : variant.fields) {
+                if (variant_field.type && member_needs_drop(variant_field.type)) {
+                    variant_retains = true;
+                    break;
+                }
+            }
+            if (!variant_retains) continue;
+
+            ValueId variant_val = emit_const_int(
+                static_cast<i32>(variant.discriminant_value), disc_field->type);
+            ValueId is_match = emit_binary(IROp::EqI, disc_val, variant_val, m_types.bool_type());
+
+            IRBlock* retain_block = create_block("variant_retain");
+            IRBlock* next_block = create_block("variant_retain_next");
+            finish_block_branch(is_match, retain_block->id, next_block->id);
+
+            set_current_block(retain_block);
+            for (const auto& variant_field : variant.fields) {
+                if (!variant_field.type) continue;
+                if (!member_needs_drop(variant_field.type)) continue;
+                emit_member_retain(struct_ptr, variant_field.name,
+                                   clause.union_slot_offset + variant_field.slot_offset,
+                                   variant_field.slot_count, variant_field.type);
+            }
+            finish_block_goto(merge_block->id);
+
+            set_current_block(next_block);
+        }
+
+        finish_block_goto(merge_block->id);
+        set_current_block(merge_block);
+    }
+}
+
+void IRBuilder::emit_value_retain(ValueId value, Type* type) {
+    RetainPlan plan = compute_retain_plan(type);
+    switch (plan.kind) {
+    case RetainKind::StrRetain:
+        emit_str_retain(value);
+        break;
+    case RetainKind::RefInc:
+        emit_ref_inc(value);
+        break;
+    case RetainKind::WalkFields:
+        // A value struct is represented by its address (the IR-wide convention),
+        // so `value` is already what the recursive walk needs. Terminating: a
+        // direct value cycle is rejected as infinitely sized (recursive-types.md),
+        // so the field graph is a DAG.
+        emit_struct_clone_glue(value, plan.struct_type);
+        break;
+    case RetainKind::None:
+        // A value that drops but cannot be retained — `uniq`, a container, a
+        // coroutine. Holding one is precisely what makes a type move-only, so
+        // reaching here means the move-only derivation and the drop derivation
+        // have gone out of sync (lifetimes.md: "a type is move-only exactly when
+        // its drop has no inverse"). Duplicating it anyway would hand two owners
+        // the same pointer.
+        report_error("Internal error: duplicating a value that cannot be retained");
+        break;
+    }
+}
+
+void IRBuilder::emit_member_retain(ValueId struct_ptr, StringView field_name,
+                                   u32 slot_offset, u32 slot_count, Type* field_type) {
+    // A nested value struct lives inline in the enclosing layout, so its "value"
+    // is its address; everything else is loaded out of the slot.
+    bool is_inline_struct = compute_retain_plan(field_type).kind == RetainKind::WalkFields;
+    ValueId member = is_inline_struct
+        ? emit_get_field_addr(struct_ptr, field_name, slot_offset, field_type)
+        : emit_get_field(struct_ptr, field_name, slot_offset, slot_count, field_type);
+    emit_value_retain(member, field_type);
+}
+
 void IRBuilder::emit_discriminant_reassign_cleanup(ValueId obj,
                                                    const WhenClauseInfo& clause,
                                                    ValueId new_disc) {

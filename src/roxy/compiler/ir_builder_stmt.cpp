@@ -653,6 +653,25 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
             consume_or_retain_string(val, value_type, /*adopted_by_variable=*/false);
         }
 
+        // Struct return: the same handoff, one level up. The caller receives a
+        // copy of this struct's slots — packed into registers for a small struct,
+        // written through the hidden output pointer for a large one — so every
+        // counted member it holds needs a count for the caller. Retaining an
+        // identifier/field source here and letting emit_scope_cleanup below
+        // release this frame's own count leaves exactly the one handed off; a
+        // fresh literal or call result carries its counts already and just
+        // transfers them.
+        //
+        // Order matters and mirrors the string case: this must precede
+        // emit_scope_cleanup, or the members would be released — possibly freed —
+        // before being retained.
+        // Copyable only: a move-only struct return is a move, already handled by
+        // the mark_moved_from above, and its members' counts transfer with it.
+        if (value_type && value_type->is_struct() && value_type->is_copy()
+            && struct_copy_kind_for(rs.value) == StructCopyKind::Clone) {
+            emit_struct_clone_glue(val, value_type);
+        }
+
         // `return o.field`: null the moved-out field before scope cleanup destroys
         // the root (val already read its value above). Only when the field was
         // actually moved out — borrowing it leaves the root owning it.
@@ -675,7 +694,9 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
             // Large struct: copy to hidden output pointer (last parameter)
             ValueId output_ptr = m_current_func->params.back().value;
             u32 slot_count = m_current_func->return_type->struct_info.slot_count;
-            emit_struct_copy(output_ptr, val, slot_count);
+            // Move: the return handoff above already produced the caller's count.
+            emit_struct_copy(output_ptr, val, slot_count,
+                             m_current_func->return_type, StructCopyKind::Move);
             finish_block_return(ValueId::invalid());  // Return void
         } else {
             finish_block_return(val);
@@ -979,7 +1000,11 @@ void IRBuilder::gen_throw_stmt(Stmt* stmt) {
 
         // Copy struct data to heap object
         u32 slot_count = base_type->struct_info.slot_count;
-        emit_struct_copy(heap_ptr, exception_val, slot_count);
+        // The heap exception object becomes an independent owner of whatever the
+        // thrown struct holds, and it outlives this frame — so a non-fresh source
+        // (`throw e;` on a live local) has to be cloned, not aliased.
+        emit_struct_copy(heap_ptr, exception_val, slot_count, base_type,
+                         struct_copy_kind_for(ts.expr));
         exception_val = heap_ptr;
     }
 
@@ -1303,7 +1328,9 @@ void IRBuilder::gen_var_decl(Decl* decl) {
                 // validated the move.
                 u32 slot_count = type->struct_info.slot_count;
                 value = emit_stack_alloc(slot_count, type);
-                emit_struct_copy(value, src, slot_count);
+                // Clone: the branch condition is exactly "copyable, and the
+                // source storage stays owned by someone else".
+                emit_struct_copy(value, src, slot_count, type, StructCopyKind::Clone);
             } else {
                 value = src;
             }

@@ -206,7 +206,33 @@ private:
     ValueId emit_set_field(ValueId object, StringView field_name, u32 slot_offset, u32 slot_count, ValueId value, Type* result_type);
     ValueId emit_load_ptr(ValueId ptr, u32 slot_count, Type* result_type);
     ValueId emit_store_ptr(ValueId ptr, ValueId value, u32 slot_count, Type* result_type);
-    void emit_struct_copy(ValueId dest_ptr, ValueId source_ptr, u32 slot_count);
+    // Bitwise slot copy from one struct's storage to another's. `struct_type` and
+    // `kind` are required: see StructCopyKind. A Clone additionally emits the
+    // retain glue (emit_struct_clone_glue) for the destination's counted members.
+    void emit_struct_copy(ValueId dest_ptr, ValueId source_ptr, u32 slot_count,
+                          Type* struct_type, StructCopyKind kind);
+
+    // Acquire a count for every counted member reachable from the struct at
+    // `struct_ptr` — the exact inverse of emit_field_cleanup. Call this at any
+    // site where a struct value is duplicated into a second independent owner.
+    //
+    // Most duplication runs through emit_struct_copy, but three classes do not:
+    // a by-value struct argument and a small (<= 4 slot) struct return are both
+    // materialized during *bytecode lowering*, and a closure capture-by-copy is
+    // packed into the env. Those call this directly.
+    void emit_struct_clone_glue(ValueId struct_ptr, Type* struct_type);
+
+    // Acquire one count for a value that has just been duplicated, per
+    // compute_retain_plan — the exact inverse of the typed Delete that will drop
+    // it. `value` follows the IR-wide convention: a struct is its address, a
+    // string / `ref` is the loaded slot.
+    void emit_value_retain(ValueId value, Type* type);
+
+    // emit_value_retain for a value read out of a struct member. The per-field
+    // half of emit_struct_clone_glue; shared by its regular-field and
+    // tagged-union-variant walks.
+    void emit_member_retain(ValueId struct_ptr, StringView field_name,
+                            u32 slot_offset, u32 slot_count, Type* field_type);
 
     // One-operand emission helpers for the void-result annotation/lifecycle ops.
     // emit_delete: typed Delete (runtime handles null checks, destructor

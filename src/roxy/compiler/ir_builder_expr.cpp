@@ -399,13 +399,19 @@ ValueId IRBuilder::emit_store_ptr(ValueId ptr, ValueId value, u32 slot_count, Ty
     return ValueId::invalid();
 }
 
-void IRBuilder::emit_struct_copy(ValueId dest_ptr, ValueId source_ptr, u32 slot_count) {
+void IRBuilder::emit_struct_copy(ValueId dest_ptr, ValueId source_ptr, u32 slot_count,
+                                 Type* struct_type, StructCopyKind kind) {
     IRInst* inst = emit_inst(IROp::StructCopy, nullptr);
     if (inst) {
         inst->struct_copy.dest_ptr = dest_ptr;
         inst->struct_copy.source_ptr = source_ptr;
         inst->struct_copy.slot_count = slot_count;
+        inst->struct_copy.struct_type = struct_type;
+        inst->struct_copy.kind = kind;
     }
+    // The glue follows the copy: it reads the counted members out of the
+    // destination, which only holds them once the slots have been written.
+    if (kind == StructCopyKind::Clone) emit_struct_clone_glue(dest_ptr, struct_type);
 }
 
 void IRBuilder::emit_delete(ValueId value, Type* type) {
@@ -742,6 +748,23 @@ ValueId IRBuilder::gen_lambda_expr(Expr* expr) {
         // Closure emitter only wraps a capture whose value isn't already weak.)
         if (cap.type && cap.type->kind == TypeKind::Weak) {
             v = maybe_wrap_weak(v, cap.source_expr->resolved_type, cap.type);
+        }
+
+        // A Copy capture duplicates the outer value into the env, and the env is
+        // an owner: its destructor runs emit_field_cleanup over the capture
+        // fields. So the capture has to acquire its own count, exactly as storing
+        // into any other struct field does — this is the third duplication class
+        // with no StructCopy to hang the obligation off (the env's slots are
+        // packed by IROp::Closure). A Move capture transfers the outer count
+        // instead, and is handled below.
+        //
+        // `ref` is excluded because its inc is emitted above, heap-gated. Every
+        // other counted capture goes through the same member_needs_drop gate the
+        // env's cleanup uses, so acquisition and release stay inverses.
+        if (cap.mode == CaptureMode::Copy && cap.type &&
+            cap.type->kind != TypeKind::Ref && member_needs_drop(cap.type) &&
+            struct_copy_kind_for(cap.source_expr) == StructCopyKind::Clone) {
+            emit_value_retain(v, cap.type);
         }
 
         capture_values.push_back(v);
@@ -2561,7 +2584,10 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
             value = maybe_wrap_weak(value, assign_expr.value->resolved_type, gtype, assign_expr.value);
             ValueId result;
             if (gtype && gtype->is_struct()) {
-                emit_struct_copy(addr, value, gslots);
+                // The global outlives every frame, so it must own what it holds
+                // rather than share the assigned local's counts.
+                emit_struct_copy(addr, value, gslots, gtype,
+                                 struct_copy_kind_for(assign_expr.value));
                 result = value;
             } else {
                 result = emit_store_ptr(addr, value, gslots, gtype);
@@ -2632,7 +2658,9 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
         && target_type->is_copy() && !value_is_fresh) {
         u32 slot_count = target_type->struct_info.slot_count;
         ValueId fresh = emit_stack_alloc(slot_count, target_type);
-        emit_struct_copy(fresh, value, slot_count);
+        // Clone, for the same reason as gen_var_decl: the guard above is
+        // "copyable, and the source storage belongs to someone else".
+        emit_struct_copy(fresh, value, slot_count, target_type, StructCopyKind::Clone);
         value = fresh;
     }
 
@@ -2744,7 +2772,11 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
     ValueId result;
     if (field_type && field_type->is_struct()) {
         ValueId field_addr = emit_get_field_addr(obj, get_expr.name, slot_offset, field_type);
-        emit_struct_copy(field_addr, value, slot_count);
+        // The enclosing struct becomes an independent owner of the assigned
+        // struct's members — the same decision consume_or_retain_string makes for
+        // a `string` field just below.
+        emit_struct_copy(field_addr, value, slot_count, field_type,
+                         struct_copy_kind_for(assign_expr.value));
         result = value;
     } else {
         result = emit_set_field(obj, get_expr.name, slot_offset, slot_count, value, expr->resolved_type);
@@ -3091,8 +3123,12 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         if (field_info.type && field_info.type->is_struct()) {
             // Get address of the field
             ValueId field_addr = emit_get_field_addr(struct_ptr, field_info.name, field_info.slot_offset, field_info.type);
-            // Copy struct data from value (source pointer) to field_addr (dest pointer)
-            emit_struct_copy(field_addr, value, field_info.slot_count);
+            // Copy struct data from value (source pointer) to field_addr (dest
+            // pointer). The literal being built owns its fields, so a source that
+            // stays live has to be cloned — the struct-typed counterpart of the
+            // consume_or_retain_string below.
+            emit_struct_copy(field_addr, value, field_info.slot_count, field_info.type,
+                             struct_copy_kind_for(value_expr));
         } else {
             emit_set_field(struct_ptr, field_info.name, field_info.slot_offset, field_info.slot_count, value, field_info.type);
         }
@@ -3148,7 +3184,8 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
                     // For struct-typed variant fields, use StructCopy
                     if (variant_field_info.type && variant_field_info.type->is_struct()) {
                         ValueId field_addr = emit_get_field_addr(struct_ptr, variant_field_info.name, actual_slot_offset, variant_field_info.type);
-                        emit_struct_copy(field_addr, value, variant_field_info.slot_count);
+                        emit_struct_copy(field_addr, value, variant_field_info.slot_count,
+                                         variant_field_info.type, struct_copy_kind_for(value_expr));
                     } else {
                         emit_set_field(struct_ptr, variant_field_info.name, actual_slot_offset, variant_field_info.slot_count, value, variant_field_info.type);
                     }

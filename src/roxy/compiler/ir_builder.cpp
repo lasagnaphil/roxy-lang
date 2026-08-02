@@ -449,7 +449,9 @@ IRFunction* IRBuilder::build_module_init(Program* /*program*/) {
         ValueId val = gen_expr(initializer);
         val = maybe_wrap_weak(val, initializer->resolved_type, type, initializer);
         if (type && type->is_struct()) {
-            emit_struct_copy(addr, val, slot_count);
+            // A module global owns what it holds until __module_shutdown, so an
+            // initializer that names something still live must be cloned.
+            emit_struct_copy(addr, val, slot_count, type, struct_copy_kind_for(initializer));
         } else {
             emit_store_ptr(addr, val, slot_count, type);
         }
@@ -909,7 +911,8 @@ void IRBuilder::emit_own_field_default_init(ValueId self_ptr, Type* struct_type)
             if (field_info->type && field_info->type->is_struct()) {
                 ValueId field_addr = emit_get_field_addr(self_ptr, field_info->name,
                                                          field_info->slot_offset, field_info->type);
-                emit_struct_copy(field_addr, value, field_info->slot_count);
+                emit_struct_copy(field_addr, value, field_info->slot_count,
+                                 field_info->type, struct_copy_kind_for(field.default_value));
             } else {
                 emit_set_field(self_ptr, field_info->name, field_info->slot_offset,
                                field_info->slot_count, value, field_info->type);
@@ -1460,17 +1463,16 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
         // gen_identifier_expr reads it off the binding it already found (§3.7).
         define_local(bp.name, bp.value, bp.type, m_param_is_ptr.count(bp.name) != 0);
 
-        // Track parameters the callee must destroy. Keyed on whether the type
-        // carries drop glue (`tracked_for_cleanup`), not on whether it is
-        // move-only — a by-value parameter of a copyable type that still has
-        // drop glue is the callee's to destroy just the same. The two sets
-        // coincide today; see the note on `tracked_for_cleanup`.
+        // Track parameters the callee must destroy: the ones whose argument was
+        // moved in. See `param_owns_its_value` — a by-value parameter of a
+        // *copyable* type is a borrow for the call's duration, however much drop
+        // glue its type carries, because nothing was retained at the call site.
         //
         // inout/out params are borrows through a pointer: the caller still owns
         // the slot and the callee must not destroy it at scope exit — that would
         // double-free the caller's value. `m_param_is_ptr` is exactly the set of
         // inout/out params, so skip tracking when it contains `bp.name`.
-        if (tracked_for_cleanup(bp.type) && !m_param_is_ptr.count(bp.name)) {
+        if (param_owns_its_value(bp.type) && !m_param_is_ptr.count(bp.name)) {
             u32 scope_depth = static_cast<u32>(m_local_scopes.size());
             BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
             m_ownership.track({bp.name, bp.type, scope_depth, false, false, current_block_id, bp.value});

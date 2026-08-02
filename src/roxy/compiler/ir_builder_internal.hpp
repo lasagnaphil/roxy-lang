@@ -51,6 +51,54 @@ inline bool tracked_for_cleanup(Type* t) {
     return member_needs_drop(t);
 }
 
+// Whether a struct rvalue's storage was created by the expression that produced
+// it — a struct literal's own stack allocation, or the slot a call returned
+// into. Nobody else owns that storage and nothing will ever drop it, so its
+// members' counts have to go somewhere: copying out of it is a MOVE, and the
+// counts transfer. Any other source (an identifier, a field read, a container
+// element) is storage that stays owned by someone else, so copying out of it is
+// a CLONE and every counted member needs its own count.
+//
+// This is the same "produces fresh storage" test gen_var_decl and gen_assign
+// already use to decide whether an aliasing copy is needed at all; naming it
+// keeps the copy decision and the ownership decision reading off one rule.
+inline bool produces_fresh_struct_storage(const Expr* e) {
+    return e && (e->kind == AstKind::ExprStructLiteral || e->kind == AstKind::ExprCall);
+}
+
+inline StructCopyKind struct_copy_kind_for(const Expr* source) {
+    return produces_fresh_struct_storage(source) ? StructCopyKind::Move
+                                                 : StructCopyKind::Clone;
+}
+
+// Whether a BY-VALUE PARAMETER of this type is the callee's to destroy.
+//
+// The question is not "does this type carry drop glue" but "did the call site
+// hand a count over". It did exactly when the argument was MOVED in — that is,
+// when the type is move-only. A copyable argument's slots are duplicated into
+// the callee's registers during bytecode lowering with no retain at the call
+// site, so the parameter is a BORROW for the call's duration; destroying it
+// would release a count the caller still holds and free a live value.
+//
+// This is already the convention for `string` parameters — a `string` argument
+// is passed without a retain and the callee never releases it — and a copyable
+// struct that merely *contains* a string is the same case one level up. Taking
+// the other branch (callee owns) is possible, but it would mean cloning at every
+// by-value struct argument, which is exactly the cost the borrow avoids.
+//
+// Deliberately NOT `tracked_for_cleanup`: locals and parameters answer different
+// questions. A local acquired its own count — the clone glue at its declaration
+// put it there — and so must release it. A by-value parameter acquired nothing.
+// "Drop where you acquired" is the rule that keeps the two halves inverse, and
+// conflating them here is what would turn the leak into a premature free once a
+// copyable struct starts carrying drop glue.
+//
+// `ref`/`string` report false, as they must: both have their own counting at
+// this site (m_ref_params' entry RefInc, and nothing at all for `string`).
+inline bool param_owns_its_value(Type* t) {
+    return t && t->noncopyable();
+}
+
 // A `ref`-typed expression "hands off" a borrow count when it is the result of
 // a call: by the counting convention (gen_return_stmt) every ref-returning
 // function returns with exactly one count handed to the caller. All other ref

@@ -352,6 +352,16 @@ bool IRValidator::validate_instruction(IRFunction* func, IRBlock* block, IRInst*
                                  func->name, block->id.id, inst->struct_copy.source_ptr.id);
                 return false;
             }
+            // A move-only value is never duplicated — that is what move-only
+            // means — so a Clone of one is a classification bug at the emitting
+            // site, and one that would hand two owners the same pointer.
+            if (inst->struct_copy.kind == StructCopyKind::Clone &&
+                inst->struct_copy.struct_type &&
+                inst->struct_copy.struct_type->noncopyable()) {
+                report_error_fmt("function '{}' block {}: struct_copy marked clone but its type is move-only",
+                                 func->name, block->id.id);
+                return false;
+            }
             break;
         }
 

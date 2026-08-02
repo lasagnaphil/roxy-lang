@@ -277,11 +277,36 @@ struct GlobalData {
     u32 slot_offset;    // Offset into the module's global slot array
 };
 
+// Whether a struct copy DUPLICATES its source or MOVES it
+// (docs/internals/lifetimes.md "The value lifecycle").
+//
+// The bitwise slot copy is identical either way; what differs is the ownership
+// obligation. A Move consumes the source, which hands its counted members
+// (`string`, `ref`) straight over — nothing to acquire. A Clone leaves the
+// source live, so a *second* independent owner now points at those members and
+// each one must be retained, or both owners will release and the second release
+// frees a live value.
+//
+// This is a required argument of `IRBuilder::emit_struct_copy` on purpose: the
+// decision cannot be defaulted, and a new duplication site must state which one
+// it is rather than inherit whichever answer happened to be safe before.
+enum class StructCopyKind : u8 { Move, Clone };
+
 // Struct copy data
 struct StructCopyData {
     ValueId dest_ptr;
     ValueId source_ptr;
     u32 slot_count;
+    // The struct being copied. Carried so the copy is self-describing: the
+    // validator can reject a Clone of a move-only type, and an IR dump says what
+    // was duplicated. Null only for copies synthesized without a struct type
+    // (coroutine state-field spills).
+    Type* struct_type = nullptr;
+    // Whether the retain glue for `struct_type`'s counted members has been
+    // emitted alongside this copy. The glue itself is ordinary IR (StrRetain /
+    // RefInc instructions following the copy), so backends need not read this —
+    // it records the intent for validation and dumps.
+    StructCopyKind kind = StructCopyKind::Move;
 };
 
 // Load through pointer data
