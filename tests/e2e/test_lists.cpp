@@ -716,4 +716,41 @@ TEST_SUITE("E2E Lists") {
         CHECK(result.stdout_output == "[4, 5]\n[4, 5]\n");
     }
 
-}  // TEST_SUITE("E2E Lists")
+    // A struct literal used INLINE acquires counts in its field stores (a
+    // `string` field retains) and lands in a bare stack allocation nobody owns,
+    // so those counts need a releaser. Bound to a variable the literal is
+    // adopted; as an argument it had nowhere to go and leaked one count per
+    // push. "Drop where you acquired" applies to a temporary too.
+    TEST_CASE_TEMPLATE("push of an inline struct literal owning a string", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct S { s: string; n: i32; }
+        fun main(): i32 {
+            var xs: List<S> = List<S>();
+            var i: i32 = 0;
+            while (i < 3) { xs.push(S { s = f"e{i}", n = i }); i = i + 1; }
+            print(f"{xs.len()} {xs[2].s}");
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "3 e2\n");
+    }
+
+    TEST_CASE_TEMPLATE("copy() owns its own elements", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var xs: List<string> = List<string>();
+            xs.push(f"e{1}");
+            var ys: List<string> = xs.copy();
+            xs.pop();                 // the original releases its count
+            print(ys[0]);             // the copy must still own one
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "e1\n");
+    }
+
+}

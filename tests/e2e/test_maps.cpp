@@ -1029,4 +1029,86 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.stdout_output == "1 only1\n");
     }
 
+    // ------------------------------------------------------------------------
+    // Producing a second owner: values() / copy()
+    // ------------------------------------------------------------------------
+    //
+    // Both natives memcpy the bucket slots, so the container they hand back
+    // SHARES the original's elements. Both will release on destroy, so the new
+    // one has to acquire — otherwise the second release spends a count nobody
+    // took and the element dies under whichever container outlives the other.
+    // Masked until now by the release-at-zero guard in roxy_string_release,
+    // which turned the double release into a silent under-count.
+
+    TEST_CASE_TEMPLATE("Map<_, string>: values() owns what it hands back", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var m: Map<i32, string> = Map<i32, string>();
+            m.insert(1, f"v{1}");
+            var vs: List<string> = m.values();
+            m.remove(1);              // the map releases its count
+            print(vs[0]);             // the list must still own one
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "v1\n");
+    }
+
+    TEST_CASE_TEMPLATE("Map<_, struct>: values() walks the element's members", Backend, RX_E2E_BACKENDS) {
+        // A struct value lives INLINE in the bucket, so the retain walk has to
+        // address it (`__map_iter_value_ptr_at`) rather than read its leading two
+        // slots as a packed value — that accessor is for pointer-shaped values,
+        // and on a struct it hands back the first eight bytes as an address.
+        const char* source = R"(
+        struct S { s: string; n: i32; }
+        fun main(): i32 {
+            var m: Map<i32, S> = Map<i32, S>();
+            m.insert(1, S { s = f"v{1}", n = 9 });
+            var vs: List<S> = m.values();
+            m.clear();
+            print(vs[0].s);
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "v1\n");
+    }
+
+    TEST_CASE_TEMPLATE("Map: copy() acquires its own keys and values", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var m: Map<string, string> = Map<string, string>();
+            m.insert(f"k{1}", f"v{1}");
+            var m2: Map<string, string> = m.copy();
+            m.clear();
+            print(m2["k1"]);
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "v1\n");
+    }
+
+    TEST_CASE_TEMPLATE("Map<_, string>: clear() releases counted values", Backend, RX_E2E_BACKENDS) {
+        // `clear` used to gate on move-only-ness, so it discarded a counted value
+        // without releasing it — a leak on every clear.
+        const char* source = R"(
+        fun main(): i32 {
+            var m: Map<i32, string> = Map<i32, string>();
+            var i: i32 = 0;
+            while (i < 3) { m.insert(i, f"v{i}"); i = i + 1; }
+            m.clear();
+            print(f"{m.len()}");
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "0\n");
+    }
+
 }  // TEST_SUITE("E2E Maps")

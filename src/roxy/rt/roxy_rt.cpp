@@ -1397,6 +1397,16 @@ void* roxy_map_copy(void* src) {
                sizeof(uint32_t) * static_cast<size_t>(src_hdr->capacity) * src_hdr->key_slot_count);
         memcpy(dst_hdr->values, src_hdr->values,
                sizeof(uint32_t) * static_cast<size_t>(src_hdr->capacity) * src_hdr->value_slot_count);
+
+        // The copy is a second owner of every counted key, and releases them when
+        // it is destroyed — so acquire here. Values are the compiler's to
+        // acquire (it emits a retain loop over the result); only keys are a
+        // closed set of kinds the runtime can walk.
+        if (map_key_is_counted(dst_hdr)) {
+            for (uint32_t i = 0; i < dst_hdr->capacity; i++) {
+                if (dst_hdr->distances[i] != 0) map_key_retain(dst_hdr, map_key_ptr(dst_hdr, i));
+            }
+        }
         // The copy now holds its own borrow on each value pointee.
         if (dst_hdr->value_is_ref) {
             for (uint32_t i = 0; i < dst_hdr->capacity; i++) {

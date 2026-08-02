@@ -264,6 +264,12 @@ private:
     // removed (`m.remove`) value isn't leaked (lifetimes.md "Value lifecycle"). No-op
     // unless the map's value type is noncopyable (a `ref` value is released by the
     // runtime value_is_ref path; a trivial value needs nothing).
+    // Acquire a count for every element of a container the program has just been
+    // handed a second owner of (`m.values()`, `.copy()`). Both containers release
+    // on destroy, so the new one must acquire or it spends a count nobody took.
+    void emit_list_elements_retain(ValueId list_val, Type* list_type);
+    void emit_map_values_retain(ValueId map_obj, Type* map_type);
+
     // Balance a map value's counts around a store: acquire for the map's slot,
     // release whatever that slot held before. Shared by `m.insert(k, v)` and
     // `m[k] = v`, which are the same operation.

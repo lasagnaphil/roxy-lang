@@ -1034,7 +1034,23 @@ teardown, so each store has to acquire.
 - The map value store — `m.insert(k, v)` and `m[k] = v`, which are the same
   operation — goes through `emit_map_value_ownership`: acquire for the slot
   unconditionally, and release whatever the slot held before. The release is
-  `contains`-guarded, since a new key replaces nothing.
+  `contains`-guarded, since a new key replaces nothing. `clear()` and `remove()`
+  release on the same gate, so discarding an entry costs exactly what destroying
+  the container would.
+- `values()` and `copy()` hand back a container that **shares** the original's
+  elements — both natives memcpy the slots — so the new one acquires its own
+  counts through a retain loop (`emit_list_elements_retain` /
+  `emit_map_values_retain`). Without it the two containers release what one of
+  them took, and the element dies under whichever outlives the other.
+
+A **struct literal used inline** is an owner too, which is easy to miss because
+it has no name. Its field stores acquire (a `string` field retains), and the
+storage they land in is a bare stack allocation — so it is tracked for cleanup
+like any other temporary. Bound to a variable it is adopted; as an argument
+(`xs.push(S { s = f"..." })`) its counts previously had nowhere to go. Only
+*copyable value* literals need this: a `uniq S { ... }` is a heap object that
+self-tracks at creation, and a move-only literal's contents are transferred by
+the move machinery.
 
 Map **keys** are counted too, but in the *runtime* rather than in emitted IR —
 `roxy_map_insert` acquires, `roxy_map_remove` / `roxy_map_clear` release, and

@@ -523,14 +523,24 @@ void IRBuilder::emit_map_value_delete_if_present(ValueId map_obj, Type* map_type
 void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
     if (!map_type || !map_type->is_map()) return;
     Type* value_type = map_type->map_info.value_type;
-    if (!value_type || value_type->is_copy()) return;  // ref/trivial: nothing to do here
+    // The same gate as teardown and as `remove` (member_needs_drop), so clearing
+    // releases exactly what destroying the map would have. Gating on
+    // move-only-ness instead leaked every counted value a `clear()` discarded.
+    // `ref` values are released by the runtime's value_is_ref path.
+    if (!map_value_is_compiler_counted(value_type) || !member_needs_drop(value_type)) return;
 
     // Look up the internal iteration natives (pre-provided for exactly this:
     // cleanup of noncopyable map values). If any is missing, skip (the values then
     // leak on clear, as before — no worse than the prior behavior).
     StringView cap_name("__map_iter_capacity", 19);
     StringView next_name("__map_iter_next_occupied", 24);
-    StringView val_name("__map_iter_value_at", 19);
+    // A value struct lives INLINE in the bucket, so its "value" is the address of
+    // its slots — `__map_iter_value_at` packs the leading two slots as a u64,
+    // which is right for a pointer-shaped value and garbage for a struct (it
+    // hands back the struct's first eight bytes as if they were an address).
+    // Latent until now: this walk only ever ran for move-only values.
+    StringView val_name = value_type->is_struct() ? StringView("__map_iter_value_ptr_at", 23)
+                                                  : StringView("__map_iter_value_at", 19);
     i32 cap_idx = m_registry.get_index(cap_name);
     i32 next_idx = m_registry.get_index(next_name);
     i32 val_idx = m_registry.get_index(val_name);
@@ -570,6 +580,116 @@ void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
     ValueId vp = emit_call_native(val_name, alloc_span({map_obj, next}), value_type,
                                   static_cast<u32>(val_idx));
     emit_delete(vp, value_type);
+    ValueId one = emit_const_int(1, i32_type);
+    ValueId idx_next = emit_binary(IROp::AddI, next, one, i32_type);
+    Vector<BlockArgPair> back_args; back_args.push_back({idx_next});
+    finish_block_goto(header->id, alloc_span(back_args));
+
+    set_current_block(exit_block);
+}
+
+// A container the program has just been handed a *second* owner of — the
+// `List<V>` from `m.values()`, the duplicate from `.copy()` — shares its
+// elements with the original. Both will release on destroy, so the new one has
+// to acquire: without it the second release spends a count nobody took, and the
+// element dies while the surviving container still points at it.
+//
+// `ref` elements are excluded: those are counted by the runtime (`roxy_map_values`
+// RefIncs them), and move-only elements by `member_needs_retain`, since a
+// container of those is deep-copied rather than shared.
+void IRBuilder::emit_list_elements_retain(ValueId list_val, Type* list_type) {
+    if (!list_type || !list_type->is_list() || !m_current_block) return;
+    Type* elem_type = list_type->list_info.element_type;
+    if (!elem_type || elem_type->kind == TypeKind::Ref) return;
+    if (!member_needs_retain(elem_type)) return;
+
+    StringView len_name = "List$$len"_sv;
+    i32 len_idx = m_registry.get_index(len_name);
+    if (len_idx < 0) return;
+
+    Type* i32_type = m_types.i32_type();
+    ValueId len = emit_call_native(len_name, alloc_span({list_val}), i32_type,
+                                   static_cast<u32>(len_idx));
+
+    // for (i = 0; i < len; i++) retain(list[i]);
+    // `i` is the header's one block param; `len` is used by dominance.
+    IRBlock* header = create_block("lstretain");
+    IRBlock* body = create_block("lstretainbody");
+    IRBlock* exit_block = create_block("lstretainend");
+
+    ValueId zero = emit_const_int(0, i32_type);
+    ValueId idx_param = m_current_func->new_value();
+    header->params.push_back({idx_param, i32_type, "__lstretain_idx"_sv});
+
+    Vector<BlockArgPair> init_args; init_args.push_back({zero});
+    finish_block_goto(header->id, alloc_span(init_args));
+
+    set_current_block(header);
+    ValueId cond = emit_binary(IROp::LtI, idx_param, len, m_types.bool_type());
+    finish_block_branch(cond, body->id, exit_block->id);
+
+    set_current_block(body);
+    // In range by construction, so no bounds check: a struct element yields its
+    // address, everything else the slot value — which is what emit_value_retain
+    // expects either way.
+    ValueId elem = emit_index_get(list_val, idx_param, ContainerKind::List, elem_type);
+    emit_value_retain(elem, elem_type);
+    ValueId one = emit_const_int(1, i32_type);
+    ValueId idx_next = emit_binary(IROp::AddI, idx_param, one, i32_type);
+    Vector<BlockArgPair> back_args; back_args.push_back({idx_next});
+    finish_block_goto(header->id, alloc_span(back_args));
+
+    set_current_block(exit_block);
+}
+
+// The map form of the above, for `m.copy()`. Keys need no loop here — they are
+// counted by the runtime, which duplicates them inside roxy_map_copy.
+void IRBuilder::emit_map_values_retain(ValueId map_obj, Type* map_type) {
+    if (!map_type || !map_type->is_map() || !m_current_block) return;
+    Type* value_type = map_type->map_info.value_type;
+    if (!map_value_is_compiler_counted(value_type) || !member_needs_retain(value_type)) return;
+
+    StringView cap_name("__map_iter_capacity", 19);
+    StringView next_name("__map_iter_next_occupied", 24);
+    // A value struct lives INLINE in the bucket, so its "value" is the address of
+    // its slots — `__map_iter_value_at` packs the leading two slots as a u64,
+    // which is right for a pointer-shaped value and garbage for a struct (it
+    // hands back the struct's first eight bytes as if they were an address).
+    // Latent until now: this walk only ever ran for move-only values.
+    StringView val_name = value_type->is_struct() ? StringView("__map_iter_value_ptr_at", 23)
+                                                  : StringView("__map_iter_value_at", 19);
+    i32 cap_idx = m_registry.get_index(cap_name);
+    i32 next_idx = m_registry.get_index(next_name);
+    i32 val_idx = m_registry.get_index(val_name);
+    if (cap_idx < 0 || next_idx < 0 || val_idx < 0) return;
+
+    Type* i32_type = m_types.i32_type();
+    ValueId cap = emit_call_native(cap_name, alloc_span({map_obj}), i32_type,
+                                   static_cast<u32>(cap_idx));
+
+    // Same counted bucket walk as emit_map_clear_value_cleanup, retaining
+    // instead of destroying.
+    IRBlock* header = create_block("mapretain");
+    IRBlock* body = create_block("mapretainbody");
+    IRBlock* exit_block = create_block("mapretainend");
+
+    ValueId zero = emit_const_int(0, i32_type);
+    ValueId idx_param = m_current_func->new_value();
+    header->params.push_back({idx_param, i32_type, "__mapretain_idx"_sv});
+
+    Vector<BlockArgPair> init_args; init_args.push_back({zero});
+    finish_block_goto(header->id, alloc_span(init_args));
+
+    set_current_block(header);
+    ValueId next = emit_call_native(next_name, alloc_span({map_obj, idx_param}), i32_type,
+                                    static_cast<u32>(next_idx));
+    ValueId cond = emit_binary(IROp::LtI, next, cap, m_types.bool_type());
+    finish_block_branch(cond, body->id, exit_block->id);
+
+    set_current_block(body);
+    ValueId vp = emit_call_native(val_name, alloc_span({map_obj, next}), value_type,
+                                  static_cast<u32>(val_idx));
+    emit_value_retain(vp, value_type);
     ValueId one = emit_const_int(1, i32_type);
     ValueId idx_next = emit_binary(IROp::AddI, next, one, i32_type);
     Vector<BlockArgPair> back_args; back_args.push_back({idx_next});
@@ -701,8 +821,31 @@ ValueId IRBuilder::gen_expr(Expr* expr) {
             return gen_grouping_expr(expr);
         case AstKind::ExprThis:
             return gen_this_expr(expr);
-        case AstKind::ExprStructLiteral:
-            return gen_struct_literal_expr(expr);
+        case AstKind::ExprStructLiteral: {
+            ValueId result = gen_struct_literal_expr(expr);
+            // A literal's field stores ACQUIRE counts (a `string` field retains,
+            // a struct field clones), and the storage they land in is a bare
+            // stack allocation nobody owns. Track it so those counts are released
+            // at scope exit — "drop where you acquired" applies to a temporary
+            // just as much as to a local.
+            //
+            // Only bites when the literal is used *inline*: bound to a variable
+            // it is adopted (gen_var_decl consumes the temp), but as an argument
+            // — `xs.push(S { s = f"..." })` — its counts had nowhere to go and
+            // leaked.
+            //
+            // Copyable *value* literals only, which is exactly the set that
+            // leaks. A `uniq S { ... }` is a heap object that already self-tracks
+            // at creation, and a move-only literal's counts are transferred by
+            // the move machinery — the literal storage is abandoned, but what it
+            // held has a new owner. Tracking either of those instead just handed
+            // coroutine lowering an extra owned local to promote.
+            Type* literal_type = expr->resolved_type;
+            if (literal_type && literal_type->is_struct() && literal_type->is_copy()) {
+                track_noncopyable_call_temp(result, literal_type);
+            }
+            return result;
+        }
         case AstKind::ExprStaticGet:
             return gen_static_get_expr(expr);
         case AstKind::ExprStringInterp: {
@@ -1946,7 +2089,25 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         StringView native_name = call_expr.mangled_name;
         i32 native_idx = m_registry.get_index(native_name);
         Span<ValueId> method_args = prepend_self(obj, args);
-        return emit_call_native(native_name, method_args, expr->resolved_type, static_cast<u32>(native_idx));
+        ValueId container_result = emit_call_native(native_name, method_args,
+                                                    expr->resolved_type,
+                                                    static_cast<u32>(native_idx));
+
+        // `values()` and `copy()` hand back a container that SHARES the
+        // original's elements — both natives memcpy the slots — so the new one
+        // has to acquire its own counts. Without that the two of them release
+        // what one of them took, and the element dies under whichever container
+        // outlives the other. (`keys()` is absent on purpose: keys are counted by
+        // the runtime, which retains them inside roxy_map_keys.)
+        if (get_expr.name == "values"_sv || get_expr.name == "copy"_sv) {
+            Type* result_type = expr->resolved_type;
+            if (result_type && result_type->is_list()) {
+                emit_list_elements_retain(container_result, result_type);
+            } else if (result_type && result_type->is_map()) {
+                emit_map_values_retain(container_result, result_type);
+            }
+        }
+        return container_result;
     }
 
     // Primitive/enum receiver: builtin trait methods (42.to_string(), x.hash())

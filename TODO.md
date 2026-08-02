@@ -32,19 +32,6 @@ the free-trap only fires on an explicit `delete`, so nothing was looking.*
   inside the catch and an undrained coroutine — yield outside the catch, a fully
   drained coroutine, and a throw/catch in a callee are all clean. Pinned by
   `ExpectedLeak` in the two `E2E Coroutines` cases; remove those when fixed.
-- [ ] **`Map<_, V>.values()` under-retains a counted value**: the produced
-  `List<V>` is a second owner and releases each element when destroyed, but only
-  `ref` values are acquired on the way in (`roxy_map_values`). A `string` value —
-  or a struct holding one — is therefore spent from the map's count, so the value
-  can die while the list still points at it. Masked today by the release-at-zero
-  guard in `roxy_string_release`, which turns the double release into a silent
-  under-count rather than a crash.
-
-  `keys()` has the same shape and IS handled, but only because keys are a closed
-  set of runtime-known kinds (`key_kind`). Values are arbitrary types, so the
-  runtime cannot walk them — this one has to be a compiler-side retain loop over
-  the produced list, in the shape of `emit_map_clear_value_cleanup`.
-
 - [ ] **The Lox interpreter leaks one List per interpreter call**:
   `fun f(n) {...} print f(10);` leaks 177 **lists** alongside 38 strings, and the
   count tracks the interpreter's call count exactly (1 call → 1 list, 3 → 3,

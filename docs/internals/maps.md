@@ -56,6 +56,13 @@ not be retained on that path, and `remove` has to release the *stored* key rathe
 than the caller's equal-valued copy. `key_kind` gives the runtime everything it
 needs, exactly as `value_is_ref` does for borrowed values.
 
+`values()` and `copy()` produce a container that shares the original's elements,
+so the compiler emits a retain loop over the result — the counterpart to
+`keys()`, which the runtime handles because keys are a closed set of kinds. A
+value struct lives *inline* in the bucket, so those walks address it
+(`__map_iter_value_ptr_at`) rather than reading its leading two slots as a packed
+value; the plain `__map_iter_value_at` accessor is for pointer-shaped values only.
+
 A *copyable struct* key holding a counted member is deliberately unsupported: the
 runtime cannot walk it to acquire, and such a key could never match on lookup
 anyway, because `map_keys_equal` compares key bytes. The drop descriptor's key
