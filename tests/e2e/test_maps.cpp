@@ -943,4 +943,90 @@ TEST_SUITE("E2E Maps") {
         CHECK(compile(allocator, source) == nullptr);
     }
 
+    // ------------------------------------------------------------------------
+    // Counted (`string`) keys
+    // ------------------------------------------------------------------------
+    //
+    // A map is an owner of the `string` keys it stores, so it acquires a count on
+    // insert and releases on remove / clear / teardown. Without that the key died
+    // with the expression that produced it: a dynamic key inserted in a loop was
+    // freed at the iteration's scope exit and every later lookup missed. The bug
+    // stayed invisible for as long as the map did not release keys either — the
+    // missing acquire and the missing release cancelled.
+    //
+    // Handled in the runtime rather than in emitted IR, because only the runtime
+    // can see *which* key is actually stored: insert replaces in place and keeps
+    // the key it already has, and remove must release that one rather than the
+    // caller's equal-valued copy.
+
+    TEST_CASE_TEMPLATE("Map<string, V>: a key built per-iteration outlives its scope", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var m: Map<string, i32> = Map<string, i32>();
+            var i: i32 = 0;
+            while (i < 4) { m.insert(f"k{i}", i * 10); i = i + 1; }
+            print(f"{m.len()} {m["k0"]} {m["k3"]}");
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "4 0 30\n");
+    }
+
+    TEST_CASE_TEMPLATE("Map<string, V>: replace keeps the stored key", Backend, RX_E2E_BACKENDS) {
+        // `roxy_map_insert` replaces in place and keeps the key already stored,
+        // so the incoming key must NOT be retained on that path — retaining it
+        // would leak one count per overwrite.
+        const char* source = R"(
+        fun main(): i32 {
+            var m: Map<string, i32> = Map<string, i32>();
+            var i: i32 = 0;
+            while (i < 5) { m.insert(f"dup", i); i = i + 1; }
+            print(f"{m.len()} {m["dup"]}");
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1 4\n");
+    }
+
+    TEST_CASE_TEMPLATE("Map<string, V>: remove and clear release their keys", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun main(): i32 {
+            var m: Map<string, i32> = Map<string, i32>();
+            var i: i32 = 0;
+            while (i < 4) { m.insert(f"k{i}", i); i = i + 1; }
+            m.remove(f"k{1}");
+            print(f"{m.len()} {m.contains("k1")} {m.contains("k2")}");
+            m.clear();
+            print(f"{m.len()}");
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "3 false true\n0\n");
+    }
+
+    TEST_CASE_TEMPLATE("Map<string, V>: keys() hands the list its own counts", Backend, RX_E2E_BACKENDS) {
+        // The produced List<string> is a second owner and releases on destroy,
+        // so it must acquire — otherwise it spends the map's count and the keys
+        // die while the list still points at them.
+        const char* source = R"(
+        fun main(): i32 {
+            var m: Map<string, i32> = Map<string, i32>();
+            m.insert(f"only{1}", 7);
+            var ks: List<string> = m.keys();
+            m.clear();
+            print(f"{ks.len()} {ks[0]}");
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1 only1\n");
+    }
+
 }  // TEST_SUITE("E2E Maps")

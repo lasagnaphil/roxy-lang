@@ -32,27 +32,18 @@ the free-trap only fires on an explicit `delete`, so nothing was looking.*
   inside the catch and an undrained coroutine — yield outside the catch, a fully
   drained coroutine, and a throw/catch in a callee are all clean. Pinned by
   `ExpectedLeak` in the two `E2E Coroutines` cases; remove those when fixed.
-- [ ] **A `Map` does not retain its keys**, so a dynamic key dangles:
-  `m.insert(f"k{i}", v)` inside a loop stores a key that dies with the
-  iteration's scope, and every later lookup misses (`Unhandled exception` from
-  the `KeyError` throw). Repro:
-  `fun main(): i32 { var m: Map<string, i32> = Map<string, i32>(); var i: i32 = 0; while (i < 3) { m.insert(f"k{i}", i); i = i + 1; } print(f"{m["k1"]}"); return 0; }`
+- [ ] **`Map<_, V>.values()` under-retains a counted value**: the produced
+  `List<V>` is a second owner and releases each element when destroyed, but only
+  `ref` values are acquired on the way in (`roxy_map_values`). A `string` value —
+  or a struct holding one — is therefore spent from the map's count, so the value
+  can die while the list still points at it. Masked today by the release-at-zero
+  guard in `roxy_string_release`, which turns the double release into a silent
+  under-count rather than a crash.
 
-  Predates the Drop/Copy work and survived it: the map does not *release* keys
-  either, so the missing retain and the missing release cancel. Values are done
-  (`emit_map_value_ownership`); keys need the same, with three parts:
-  - acquire at insert, **conditional on the key being new** — `roxy_map_insert`
-    replaces in place and keeps the stored key, so retaining on the replace path
-    would leak;
-  - release in `remove` and `clear`;
-  - the teardown descriptor's key gate unified onto `member_needs_drop` (both
-    backends restate it as `noncopyable()` today — `lowering.cpp`
-    build_delete_desc and `c_emitter.cpp` emit_container_drop_body).
-
-  `remove` needs the *stored* key, which is a distinct object from the caller's
-  equal-valued one. No native exposes it: the `__map_iter_*_at` family is indexed
-  by bucket, so a `find_bucket(map, key) -> i32` primitive is the missing piece —
-  the probe loop already exists as `map_probe_value` in `roxy_rt.cpp`.
+  `keys()` has the same shape and IS handled, but only because keys are a closed
+  set of runtime-known kinds (`key_kind`). Values are arbitrary types, so the
+  runtime cannot walk them — this one has to be a compiler-side retain loop over
+  the produced list, in the shape of `emit_map_clear_value_cleanup`.
 
 - [ ] **The Lox interpreter leaks one List per interpreter call**:
   `fun f(n) {...} print f(10);` leaks 177 **lists** alongside 38 strings, and the

@@ -571,7 +571,10 @@ void CEmitter::emit_container_drop_body(Type* type, StringView self_var, String&
     // Map
     Type* kt = type->map_info.key_type;
     Type* vt = type->map_info.value_type;
-    bool kc = kt && kt->noncopyable();          // keys can't be `ref`
+    // See the note in lowering.cpp's build_delete_desc: a move-only key is moved
+    // in and simply destroyed, a `string` key is counted by the runtime and must
+    // be released, and a copyable struct key holding a counted member is neither.
+    bool kc = kt && (kt->noncopyable() || kt->kind == TypeKind::String);  // keys can't be `ref`
     bool vc = member_needs_drop(vt);   // shared condition (lifetimes.md "Value lifecycle")
     String h = format("_dm{}", n);
     out.append("    roxy_map_header* "); ap(out, h);

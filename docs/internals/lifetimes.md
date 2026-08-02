@@ -1036,16 +1036,22 @@ teardown, so each store has to acquire.
   unconditionally, and release whatever the slot held before. The release is
   `contains`-guarded, since a new key replaces nothing.
 
-**Map keys are still not counted, and that is a live bug** independent of this
-work: `m.insert(f"k{i}", v)` in a loop stores a key the map never retains, so the
-key dies with the inserting scope and every later lookup misses. It stays
-invisible only because the map does not release keys either — the two errors
-cancel. Fixing it needs the acquisition (conditional on the key being *new*,
-since `roxy_map_insert` replaces in place and keeps the stored key), the release
-in `remove`/`clear`, and the teardown descriptor's key gate unified onto
-`member_needs_drop`. `remove` additionally needs a way to reach the *stored* key,
-which no native currently exposes — the `__map_iter_*_at` family gives it by
-bucket index, so a `find_bucket` primitive is the missing piece.
+Map **keys** are counted too, but in the *runtime* rather than in emitted IR —
+`roxy_map_insert` acquires, `roxy_map_remove` / `roxy_map_clear` release, and
+`roxy_map_keys` acquires for the `List<K>` it hands back. The split is forced by
+what each side can see: only the runtime knows *which* key is actually stored
+(insert replaces in place and keeps the key it already has, so the incoming one
+must not be retained, and remove must release the stored one rather than the
+caller's equal-valued copy), while only the compiler knows enough about an
+arbitrary value type to walk it. Keys are a closed set of runtime-known kinds
+(`key_kind`), which is what makes the runtime side possible at all.
+
+A **copyable struct key holding a counted member** is deliberately unhandled: the
+runtime cannot walk it to acquire, and such a key could never match on lookup
+anyway, since `map_keys_equal` compares key bytes and two equal strings at
+different addresses miss. The teardown descriptor's key gate excludes it to
+match — it drops a key that is move-only (moved in, so nothing was acquired) or a
+`string` (counted), and nothing else.
 
 ### What the flip exposed in the unwind path
 

@@ -1139,6 +1139,40 @@ bool roxy_map_contains(void* self, const void* key_src) {
     }
 }
 
+// ===== Counted map keys =====
+//
+// A `string` key is reference-counted, and a map that stores one is an owner of
+// it: the key has to survive the scope that inserted it. Without this the key
+// died with the expression that produced it and every later lookup missed —
+// `m.insert(f"k{i}", v)` in a loop was unusable.
+//
+// Keys live in the runtime rather than in emitted IR (which is where map
+// *values* are handled) because only the runtime can see which key is actually
+// stored: `insert` replaces in place and keeps the key it already has, and
+// `remove` has to release that stored key, not the caller's equal-valued one.
+// `key_kind` tells the runtime everything it needs, exactly as `value_is_ref`
+// does for borrowed values.
+//
+// Scope: `ROXY_MAP_KEY_STRUCT` is deliberately excluded. A struct key holding a
+// counted field cannot work regardless — `map_keys_equal` compares key bytes, so
+// two equal strings at different addresses would never match — and the drop
+// descriptor's key gate leaves such keys alone to match.
+static inline bool map_key_is_counted(const roxy_map_header* hdr) {
+    return hdr->key_kind == ROXY_MAP_KEY_STRING;
+}
+
+static inline void* map_key_object(const uint32_t* key_slot) {
+    return reinterpret_cast<void*>(read_packed_u64(key_slot));
+}
+
+static inline void map_key_retain(const roxy_map_header* hdr, const uint32_t* key_src) {
+    if (map_key_is_counted(hdr)) roxy_string_retain(map_key_object(key_src));
+}
+
+static inline void map_key_release(const roxy_map_header* hdr, const uint32_t* key_slot) {
+    if (map_key_is_counted(hdr)) roxy_string_release(map_key_object(key_slot));
+}
+
 // Non-asserting Robin Hood probe shared by roxy_map_get / roxy_map_get_or.
 // Returns a pointer to the stored value bytes on a hit, nullptr on a miss
 // (including an empty map).
@@ -1224,6 +1258,9 @@ void roxy_map_insert(void* self, const void* key_src, const void* value_src) {
     }
 
     if (hdr->value_is_ref) roxy_ref_inc(map_ref_value(v));  // acquire the borrow
+    // Only on this path: the replace branch above returns early, and it keeps
+    // the key already stored, so the incoming one is never held.
+    map_key_retain(hdr, k);
     map_insert_internal(hdr, k, v);
     hdr->length++;
 }
@@ -1252,9 +1289,11 @@ bool roxy_map_remove(void* self, const void* key_src) {
         dist++;
     }
 
-    // Release the removed value's borrow. The backward-shift below only *moves*
-    // surviving entries down, so their counts are unaffected.
+    // Release the removed entry's counts. The backward-shift below only *moves*
+    // surviving entries down, so their counts are unaffected — but it overwrites
+    // this bucket, so the key must be released while it is still readable.
     if (hdr->value_is_ref) roxy_ref_dec(map_ref_value(map_value_ptr(hdr, pos)));
+    map_key_release(hdr, map_key_ptr(hdr, pos));
 
     // Backward-shift deletion
     hdr->length--;
@@ -1278,9 +1317,11 @@ bool roxy_map_remove(void* self, const void* key_src) {
 void roxy_map_clear(void* self) {
     auto* hdr = map_hdr(self);
     if (map_mutation_blocked(hdr)) return;
-    if (hdr->value_is_ref && hdr->capacity > 0) {
+    if ((hdr->value_is_ref || map_key_is_counted(hdr)) && hdr->capacity > 0) {
         for (uint32_t i = 0; i < hdr->capacity; i++) {
-            if (hdr->distances[i] != 0) roxy_ref_dec(map_ref_value(map_value_ptr(hdr, i)));
+            if (hdr->distances[i] == 0) continue;
+            if (hdr->value_is_ref) roxy_ref_dec(map_ref_value(map_value_ptr(hdr, i)));
+            map_key_release(hdr, map_key_ptr(hdr, i));
         }
     }
     hdr->length = 0;
@@ -1304,6 +1345,10 @@ void* roxy_map_keys(void* self) {
     for (uint32_t i = 0; i < hdr->capacity; i++) {
         if (hdr->distances[i] != 0) {
             roxy_list_push(lst, map_key_ptr(hdr, i));
+            // The produced List<K> is a second owner of each counted key, and
+            // releases them when it is destroyed — so acquire here, or the map's
+            // own count is what the list would be spending.
+            map_key_retain(hdr, map_key_ptr(hdr, i));
         }
     }
     return lst;

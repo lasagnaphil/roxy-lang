@@ -3411,8 +3411,22 @@ u16 BytecodeBuilder::build_delete_desc(Type* type) {
             // A `ref V` value is count-bearing (shared condition); keys can't be ref.
             desc.container.elem_desc_idx =
                 member_needs_drop(plan.elem_type) ? build_delete_desc(plan.elem_type) : 0xFFFF;
+            // Two kinds of key carry a drop, and they get there differently.
+            // A MOVE-ONLY key (a struct with a destructor) is moved into the map,
+            // so nothing had to be acquired and teardown simply destroys it —
+            // the original rule. A `string` key is COUNTED: the runtime acquires
+            // it on insert and releases it on remove/clear, so teardown has to
+            // release it too.
+            //
+            // A *copyable* struct key holding a counted member is deliberately
+            // neither. The runtime cannot walk it to acquire, and such a key
+            // could never match on lookup anyway — `map_keys_equal` compares key
+            // bytes, so two equal strings at different addresses miss. See
+            // `map_key_is_counted` in roxy_rt.cpp.
             desc.container.key_desc_idx =
-                (plan.key_type && plan.key_type->noncopyable()) ? build_delete_desc(plan.key_type) : 0xFFFF;
+                (plan.key_type && (plan.key_type->noncopyable() ||
+                                   plan.key_type->kind == TypeKind::String))
+                    ? build_delete_desc(plan.key_type) : 0xFFFF;
             break;
         case DropKind::Closure:
             // Type-erased: cleanup dispatches the env's synthesized destructor at

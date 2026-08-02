@@ -41,6 +41,27 @@ The frame's bytecode-function indices (`hash_fn_idx` / `eq_fn_idx`) live in a pe
 
 ## Hash Trait
 
+### Counted keys
+
+A `string` key is reference-counted and the map is one of its owners, so
+`roxy_map_insert` acquires a count, `roxy_map_remove` / `roxy_map_clear` release
+it, `roxy_map_keys` acquires for the `List<K>` it produces, and the teardown
+descriptor releases whatever is left. Without this a key built per-iteration
+(`m.insert(f"k{i}", v)`) died with the loop body and every later lookup missed.
+
+Key counting lives in the **runtime**, unlike map *values*, which are counted by
+emitted IR. Only the runtime can see which key is actually stored: `insert`
+replaces in place and keeps the key it already holds, so the incoming key must
+not be retained on that path, and `remove` has to release the *stored* key rather
+than the caller's equal-valued copy. `key_kind` gives the runtime everything it
+needs, exactly as `value_is_ref` does for borrowed values.
+
+A *copyable struct* key holding a counted member is deliberately unsupported: the
+runtime cannot walk it to acquire, and such a key could never match on lookup
+anyway, because `map_keys_equal` compares key bytes. The drop descriptor's key
+gate matches, dropping only a move-only key (moved in, so nothing was acquired)
+or a `string`.
+
 A builtin `Hash` trait is declared in semantic pass 1.7b with a required `hash(): i64` method. All primitives (bool, integers, floats, string) automatically implement it; enums inherit Hash from their i32 underlying type.
 
 ## API
