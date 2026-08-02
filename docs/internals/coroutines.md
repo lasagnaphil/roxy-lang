@@ -163,8 +163,62 @@ A value struct's SSA value is an *address*, so the by-value path would store
 that pointer into a field sized for the struct's slots and the reader would
 decode an address as contents. Reading its address instead makes the state the
 variable's storage; the `StructCopy` write-back is what populates the field from
-the variable's original stack storage on the way in (later blocks copy the field
-onto itself, harmlessly).
+the variable's original stack storage on the way in. In later blocks the source
+is already the field's own address, and the copy is skipped rather than emitted
+as a self-copy — it would otherwise be a per-resume `memcpy` that no pass can
+remove (`StructCopy` has side effects; `GetFieldAddr` is not CSE-eligible).
+
+### Which values a promoted variable owns
+
+Promotion finds a variable by *name*, from the resume block's parameters, and
+then has to redirect every SSA value that variable is spelled as onto the state
+field. Those values are the variable's block parameters — and, for a variable
+assigned once and never reassigned, its **defining instruction**, which never
+becomes a parameter at all. Missing that case is a null dereference rather than
+a mis-optimization: a use in a later block still names the dominating definition,
+which is legal SSA, but lowering grafts dispatch edges that re-enter that block
+*without* passing through the definition, so on the second `resume()` the value
+was never defined on that path.
+
+Such a definition is published into its state field at the point of definition —
+the field only starts holding it there, so 5d must *not* redirect reads inside
+the defining block itself, only in the blocks that can be re-entered.
+
+This applies to single-definition variables only, and deliberately so:
+
+- **A reassigned variable is left alone.** Its field is written late, on the
+  out-edges 5e handles, and other reads depend on that timing. `var cur = i;`
+  compiles to no instruction at all, so `cur` and `i` are one ValueId and
+  `cur`'s reads are served by `i`'s accessor — correct only while the field
+  still holds the pre-increment value. Publishing `i` early makes the loop
+  yield `i + 1`.
+- **A value already claimed as some variable's parameter is left alone**, since
+  one ValueId can feed two promoted parameters at once and redirecting it to
+  one variable's accessor would corrupt the other.
+
+An inline value struct inverts the rule: the field *is* the storage, so the
+definition itself is redirected onto the field's address (the original stack
+slot falls dead) and nothing is published.
+
+### Cleanup, and who owns it on which path
+
+Two different things can free a promoted field, and exactly one must:
+
+- **Running to completion** — the body's own scope-exit cleanup already dropped
+  every local and parameter, so the return path *clears* the owning fields
+  before setting the done state. A pointer field is nulled; an inline value
+  struct has no pointer of its own, so its owning members are cleared through
+  its address, which is what its destructor null-checks. Owned fields inside a
+  `when` clause are not reached — variant cleanup is discriminant-guarded.
+- **Dropping the `Coro` early** — the generated `$$delete` destroys whatever is
+  still live. What needs destroying is `member_needs_drop`, the same shared
+  predicate the synthetic-destructor pass and `IRBuilder::emit_field_cleanup`
+  use; hand-enumerating the kinds here is how inline value structs came to leak
+  once they gained inline storage.
+
+Borrowing (`ref`) fields are the exception to the first rule: a counted borrow is
+released by `$$delete` on *every* path, so the completion path deliberately does
+not clear them.
 
 `out`/`inout` parameters are second-class ([lifetimes.md](lifetimes.md), "The
 second-class family"): they flow downward and may never be stored. Since a

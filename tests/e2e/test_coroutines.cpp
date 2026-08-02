@@ -692,6 +692,86 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.value == 30);
     }
 
+    TEST_CASE_TEMPLATE("Coroutine promoted local read after a loop back-edge",
+                       Backend, RX_E2E_BACKENDS) {
+        // A promoted local that is assigned once and never reassigned has no
+        // block param at its definition, so its uses just named the dominating
+        // definition in the entry block. Legal SSA — but lowering grafts resume
+        // edges that re-enter the loop body *without* passing through entry, so
+        // on the second resume `r` was an undefined register and `r.id`
+        // dereferenced null (segfault). Promotion now names such a definition,
+        // publishes it into the state field, and redirects later reads to it.
+        //
+        // The straight-line form of this (yields not inside a loop) always
+        // worked, which is why the existing cases missed it.
+        const char* source = R"(
+        struct Res { id: i32 = 0; }
+
+        fun gen(n: i32): Coro<i32> {
+            var r: uniq Res = uniq Res { id = 40 };
+            var i: i32 = 0;
+            while (i < n) {
+                yield i + r.id;
+                i = i + 1;
+            }
+        }
+
+        fun main(): i32 {
+            var c = gen(3);
+            var total: i32 = 0;
+            while (!c.done()) {
+                total = total + c.resume();
+            }
+            return total;
+        }
+    )";
+
+        // Yields 40, 41, 42; the final done-path resume contributes 0.
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 123);
+    }
+
+    TEST_CASE_TEMPLATE("Coroutine value-struct local across a loop, run to completion",
+                       Backend, RX_E2E_BACKENDS) {
+        // The same shape with an inline value struct, driven to completion. Two
+        // things have to agree here: the body's reads resolve against the state
+        // field, and the completion path clears the struct's owned members so
+        // the state destructor does not re-drop what scope-exit cleanup already
+        // dropped (it double-freed once the destructor learned to walk inline
+        // structs at all).
+        const char* source = R"(
+        struct Res { id: i32 = 0; }
+        fun delete Res() { print(f"{"freed"}"); }
+
+        struct Holder { r: uniq Res; }
+
+        fun gen(n: i32): Coro<i32> {
+            var h: Holder = Holder { r = uniq Res { id = 5 } };
+            var i: i32 = 0;
+            while (i < n) {
+                yield i + h.r.id;
+                i = i + 1;
+            }
+        }
+
+        fun main(): i32 {
+            var c = gen(2);
+            var total: i32 = 0;
+            while (!c.done()) {
+                total = total + c.resume();
+            }
+            return total;
+        }
+    )";
+
+        // Yields 5, 6; done-path resume contributes 0. Exactly one destructor run.
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 11);
+        CHECK(result.stdout_output == "freed\n");
+    }
+
     TEST_CASE("Coroutine uniq promoted, run to completion") {  // VM-only: result exceeds 0..255 exit-code range (C exit code is 8-bit)
         // A uniq variable captured across a yield point becomes a promoted field.
         // When the coroutine runs to completion, inline cleanup frees the uniq,
