@@ -102,6 +102,20 @@ Each operator is rewritten to its trait method call (binary trait `Rhs` shown as
 | `~a` | `a.bit_not()` | | |
 | `a[i]` | `a.index(i)` | `a[i] = v` | `a.index_mut(i, v)` |
 
+### The receiver may be an rvalue
+
+`self` is passed as a pointer, so the receiver needs an address. A *place*
+expression (identifier, field access, index) yields one directly; anything else
+is an rvalue routed through `gen_operator_receiver`, which falls back to
+`gen_expr`. No materialization is needed there because lowering already unpacks
+a struct return into a stack-allocated pointer, so `gen_expr` hands back exactly
+the pointer `self` wants.
+
+This is what lets operators chain — `(a + b) * 2` uses one operator's result as
+the next one's receiver. Taking the address with the lvalue path alone rejected
+that with "expression is not a valid lvalue", while `a.add(b).mul(2)` worked,
+since explicit method calls never went through it.
+
 ## Example
 
 A struct opts into an operator by implementing the trait method with a `for Trait` clause. Same-type operations default `Rhs` to `Self`; mixed-type operations name the right-hand type explicitly.

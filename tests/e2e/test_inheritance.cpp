@@ -260,6 +260,58 @@ TEST_SUITE("E2E Inheritance") {
         CHECK(result.stdout_output == "2\n1\n");
     }
 
+    TEST_CASE_TEMPLATE("Destructor chaining when the parent has no destructor", Backend, RX_E2E_BACKENDS) {
+        // Only structs that need one get a default destructor, so a plain value
+        // struct parent has no function to chain to. Emitting the call anyway
+        // failed the whole compile with "function not found during bytecode
+        // lowering" — the case the test above never covered, since it gives
+        // both levels a destructor.
+        const char* source = R"(
+        struct Entity { hp: i32; }
+        struct Player : Entity { mana: i32; }
+
+        fun new Player() { self.hp = 1; self.mana = 50; }
+        fun delete Player() { print("player removed"); }
+
+        fun main(): i32 {
+            var p: uniq Player = uniq Player();
+            delete p;
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "player removed\n");
+    }
+
+    TEST_CASE_TEMPLATE("Destructor chaining skips a level with no destructor", Backend, RX_E2E_BACKENDS) {
+        // A missing middle level must not break the chain: the grandparent's
+        // destructor still runs. Skipping is sound because a level without a
+        // default destructor has nothing to run — no user body, and no owned
+        // fields (or one would have been synthesized).
+        const char* source = R"(
+        struct A { a: i32; }
+        fun delete A() { print("A"); }
+
+        struct B : A { b: i32; }          // no destructor
+
+        struct C : B { c: i32; }
+        fun new C() { self.a = 1; self.b = 2; self.c = 3; }
+        fun delete C() { print("C"); }
+
+        fun main(): i32 {
+            var x: uniq C = uniq C();
+            delete x;
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "C\nA\n");
+    }
+
     TEST_CASE_TEMPLATE("Value slicing on assignment", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Animal {

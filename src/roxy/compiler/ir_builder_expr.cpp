@@ -1113,7 +1113,7 @@ ValueId IRBuilder::gen_unary_expr(Expr* expr) {
             Type* found_in = nullptr;
             const MethodInfo* mi = lookup_method_in_hierarchy(operand_type, method_name, &found_in);
             if (mi && found_in) {
-                ValueId self_ptr = gen_lvalue_addr(unary_expr.operand);
+                ValueId self_ptr = gen_operator_receiver(unary_expr.operand);
                 StringView mangled = mangle_method(found_in->struct_info.name, method_name);
                 return emit_call(mangled, alloc_span({self_ptr}), expr->resolved_type);
             }
@@ -1196,7 +1196,7 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
             const MethodInfo* mi = lookup_method_in_hierarchy(left_type, method_name, &found_in);
             if (mi && found_in) {
                 // Generate a method call: left.method(right)
-                ValueId self_ptr = gen_lvalue_addr(binary_expr.left);
+                ValueId self_ptr = gen_operator_receiver(binary_expr.left);
                 ValueId right_val = gen_expr(binary_expr.right);
 
                 StringView mangled = mangle_method(found_in->struct_info.name, method_name);
@@ -3287,6 +3287,28 @@ ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
     }
 
     return result;
+}
+
+ValueId IRBuilder::gen_operator_receiver(Expr* expr) {
+    // The receiver of an operator method (`a + b` -> `a.add(b)`) is passed as
+    // `self`, a pointer. A *place* expression yields its address; anything else
+    // is an rvalue with no place to address — most importantly the result of
+    // another operator, which is what makes `(a + b) * 2.0f` chain.
+    //
+    // Struct rvalues need no materialization here: lowering already unpacks a
+    // struct return into a stack-allocated pointer, so `gen_expr` hands back
+    // exactly the pointer `self` wants. (`emit_to_string_value` relies on the
+    // same property for `expr.to_string()`.)
+    switch (expr->kind) {
+        case AstKind::ExprIdentifier:
+        case AstKind::ExprGet:
+        case AstKind::ExprIndex:
+            return gen_lvalue_addr(expr);
+        case AstKind::ExprGrouping:
+            return gen_operator_receiver(expr->grouping.expr);
+        default:
+            return gen_expr(expr);
+    }
 }
 
 ValueId IRBuilder::gen_lvalue_addr(Expr* expr) {

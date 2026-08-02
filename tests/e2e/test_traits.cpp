@@ -646,6 +646,56 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.stdout_output == "13\n27\n7\n13\n");
     }
 
+    TEST_CASE_TEMPLATE("Chained operator expressions", Backend, RX_E2E_BACKENDS) {
+        // An operator's receiver is passed as `self`, a pointer, so it used to
+        // go through gen_lvalue_addr — which rejects rvalues. That made an
+        // operator result unusable as the *left* operand of another operator:
+        // `(a + b) * 2` failed to compile ("expression is not a valid lvalue")
+        // while `a.add(b).mul(2)` and `(a + b).mul(2)` both worked.
+        const char* source = R"(
+        trait Add<Rhs>;
+        fun Add.add(other: Rhs): Self;
+
+        trait Mul<Rhs>;
+        fun Mul.mul(other: Rhs): Self;
+
+        trait Neg;
+        fun Neg.neg(): Self;
+
+        struct Vec2 { x: i32; y: i32; }
+
+        fun Vec2.add(other: Vec2): Vec2 for Add {
+            return Vec2 { x = self.x + other.x, y = self.y + other.y };
+        }
+        fun Vec2.mul(k: i32): Vec2 for Mul<i32> {
+            return Vec2 { x = self.x * k, y = self.y * k };
+        }
+        fun Vec2.neg(): Vec2 for Neg {
+            return Vec2 { x = -self.x, y = -self.y };
+        }
+
+        fun main(): i32 {
+            var a: Vec2 = Vec2 { x = 1, y = 2 };
+            var b: Vec2 = Vec2 { x = 3, y = 4 };
+
+            var c: Vec2 = (a + b) * 2;          // binary on a binary result
+            var d: Vec2 = (a + b) + b;          // same operator, twice
+            var e: Vec2 = -(a + b);             // unary on a binary result
+            var f: Vec2 = ((a + b) * 2) + a;    // nested two deep
+
+            print(f"{c.x},{c.y}");
+            print(f"{d.x},{d.y}");
+            print(f"{e.x},{e.y}");
+            print(f"{f.x},{f.y}");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "8,12\n7,10\n-4,-6\n9,14\n");
+    }
+
     TEST_CASE_TEMPLATE("Mixed-type arithmetic (* with scalar)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Mul<Rhs>;

@@ -10,58 +10,60 @@ Last updated: 2026-08-02
 
 ## High Priority
 
-These were found on 2026-08-02 by compiling `CLAUDE.md`'s example program
-through the `roxy` CLI. Each reproduces on the CLI (i.e. through
-`Compiler::compile()`) and none is caught by the parametric test suites — see
-the **optimizer is untested end-to-end** entry under Testing Gaps for why.
+Both remaining items are **destructor chaining through inheritance**, found on
+2026-08-02 while fixing the "parent has no destructor" bug below. Neither is
+reached by the test suite, and the second is memory-unsafe.
 
-*(Fixed and removed from this list — all coroutine-related, all found on
-2026-08-02 and each unreachable until the one before it was fixed:*
-- *the DCE null-deref that made compiling any coroutine segfault — lowering
-  minted result ValueIds with bare `new_value()`, so `values_by_id` was null for
-  every instruction it created; `IRFunction::new_value_for(inst)` now registers
-  the definition and `IRValidator` enforces the invariant;*
-- *a calling-convention mismatch — the init function hardcoded `param_is_ptr` to
-  `false`, so a method receiver was passed by value while the callee read it as
-  a pointer; it now inherits the coroutine's flags;*
-- *a stack-allocated receiver reaching the state struct as a counted borrow,
-  whose `RefInc` wrote through `data - 8` into a neighbouring local — the init
-  function now emits `IROp::AssertHeap` on the receiver, matching how closures
-  guard stack `self` captures;*
-- *value structs in coroutine state (a by-value struct param, or a struct local
-  live across a yield) storing an address into a field sized for the struct —
-  they now live inline in the state struct, read by address with a `StructCopy`
-  write-back;*
-- *`out`/`inout` coroutine parameters, now a compile error rather than a
-  pointer into a dead frame.)*
-
-- [ ] **A destructor on a child struct fails to link when the parent has none.**
+- [ ] **A struct with no destructor of its own never runs an inherited one.**
   ```roxy
-  struct Entity { hp: i32; }
-  struct Player : Entity { mana: i32; }
-  fun new Player() { self.hp = 1; self.mana = 50; }
-  fun delete Player() { print("removed"); }
-  fun main(): i32 { var p: uniq Player = uniq Player(); return 0; }
+  struct A { a: i32; }
+  fun delete A() { print("A gone"); }
+  struct B : A { b: i32; }      // no destructor, no owned fields
+  struct C : B { c: i32; }      // likewise
+  fun new C() { self.a = 1; self.b = 2; self.c = 3; }
+  fun main(): i32 { var x: uniq C = uniq C(); return 0; }   // prints nothing
   ```
-  → `Internal error: function not found during bytecode lowering`. Destructor
-  chaining (child-first, then parent — see `docs/internals/inheritance.md`)
-  emits a call to `Entity$$delete`, which is never synthesized when the parent
-  declares no destructor. Works when the parent *does* declare one, and fails
-  for both stack and `uniq` values. `tests/e2e/test_inheritance.cpp` only
-  covers the both-have-destructors case.
+  `struct_needs_synthetic_dtor` (`types.cpp`) only asks whether the struct's own
+  fields need dropping, so `C` gets no destructor at all and `A`'s never runs —
+  RAII silently skipped. It should also return true when an ancestor has a
+  default destructor. **Fix the double-delete below first**: that predicate
+  change gives more structs a synthesized destructor, and each one currently
+  cleans its inherited fields on top of the parent doing the same.
 
-- [ ] **An operator result cannot be the left operand of another operator.**
+- [ ] **An inherited `uniq` field is destroyed twice.**
   ```roxy
-  var c: Vec2 = (a + b) * 2.0f;   // Internal error: expression is not a valid lvalue
-  var d: Vec2 = (a + b) + b;      // same
-  var e: Vec2 = a.add(b).mul(2.0f);   // works
-  var f: Vec2 = (a + b).mul(2.0f);    // works
+  struct Res { v: i32; }
+  fun delete Res() { print("res freed"); }
+  struct Parent { r: uniq Res; }        // owned field -> synthesized destructor
+  struct Child : Parent { c: i32; }
+  fun new Child() { self.r = uniq Res { v = 1 }; self.c = 2; }
+  fun delete Child() { print("child"); }
+  fun main(): i32 { var x: uniq Child = uniq Child(); return 0; }
   ```
-  Fails in IR generation (before the optimizer). Operator dispatch takes the
-  receiver's address for the `self` argument, and a call result is a temporary
-  with no lvalue; explicit method-call chaining goes through a path that
-  materializes one. `CLAUDE.md`'s example program uses this construct and does
-  not currently compile as written.
+  → `Assertion failed: double-delete: heap object already freed`
+  (`interpreter.cpp:304`). `emit_field_cleanup` walks `struct_info.fields`,
+  which holds inherited fields too (`inheritance.md`, "Type system"), so the
+  child destroys `r` and then chains to the parent, which destroys it again.
+  The assert catches it in debug builds; a release build double-frees. Fix:
+  clean only the struct's *own* fields (those at or after the parent's field
+  count) and let the parent's destructor handle the rest — sound because a
+  parent with owned fields always has a destructor.
+
+*(Fixed and removed from this list, all found on 2026-08-02 by compiling
+`CLAUDE.md`'s example program, which had never been run. Five were coroutine
+bugs, each unreachable until the one before it was fixed: the DCE null-deref
+that made compiling any coroutine segfault (`values_by_id` left null by
+`new_value()`, now `new_value_for(inst)` + an `IRValidator` invariant); an init
+function that hardcoded `param_is_ptr` to `false`, passing a method receiver by
+value while the callee read a pointer; a stack receiver reaching the state
+struct as a counted borrow, whose `RefInc` wrote through `data - 8` into a
+neighbouring local (now `IROp::AssertHeap`, as closures do); value structs in
+coroutine state storing an address into a field sized for the struct (now
+inline, read by address with a `StructCopy` write-back); and `out`/`inout`
+coroutine parameters, now a compile error rather than a pointer into a dead
+frame. Plus: a child destructor failing to link when the parent had none, and
+an operator result being rejected as the left operand of another operator
+(`(a + b) * 2.0f`). `CLAUDE.md`'s example now compiles and runs verbatim.)*
 
 ---
 

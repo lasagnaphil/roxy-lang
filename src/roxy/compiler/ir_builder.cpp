@@ -740,6 +740,35 @@ IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_typ
     return finish_ir_function();
 }
 
+// Whether `type` has a *default* (unnamed) destructor — user-written or
+// synthesized. Only such a destructor is chained to automatically.
+static bool has_default_destructor(Type* type) {
+    if (!type || !type->is_struct()) return false;
+    for (const auto& dtor : type->struct_info.destructors) {
+        if (dtor.name.empty()) return true;
+    }
+    return false;
+}
+
+// The nearest ancestor at or above `parent` that has a default destructor, or
+// null if none does.
+//
+// Not every level of an inheritance chain has one: a struct gets a synthesized
+// default destructor only if it needs cleanup, so a plain value struct in the
+// middle has none. Chaining to that level unconditionally called a function
+// that was never built ("function not found during bytecode lowering"), but
+// simply skipping the level would silently drop the destructors *above* it.
+// Walking up is sound precisely because a level without a default destructor
+// has nothing to run: no user body, and no owned fields (or sema would have
+// synthesized one).
+static Type* nearest_default_destructor(Type* parent) {
+    for (Type* current = parent; current && current->is_struct();
+         current = current->struct_info.parent) {
+        if (has_default_destructor(current)) return current;
+    }
+    return nullptr;
+}
+
 IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type) {
     begin_ir_function(mangle_destructor(decl->struct_name, decl->name), decl->is_pub,
                       decl->body ? decl->body->loc.line : 0);
@@ -753,14 +782,17 @@ IRFunction* IRBuilder::build_destructor(DestructorDecl* decl, Type* struct_type)
     begin_function_body(false);
     gen_body(decl->body);
 
-    // After child destructor body, call parent's default destructor if present
-    // Only chain default destructors (named destructors are called explicitly)
-    Type* parent_type = struct_type->struct_info.parent;
-    if (parent_type && decl->name.empty()) {
-        StringView parent_dtor_name = mangle_destructor(parent_type->struct_info.name);
-        // 'self' is the first parameter
-        emit_call(parent_dtor_name, alloc_span({m_current_func->params[0].value}),
-                  m_types.void_type());
+    // After child destructor body, chain to the nearest ancestor with a default
+    // destructor. Only default destructors chain automatically (named ones are
+    // called explicitly).
+    if (decl->name.empty()) {
+        Type* dtor_owner = nearest_default_destructor(struct_type->struct_info.parent);
+        if (dtor_owner) {
+            StringView parent_dtor_name = mangle_destructor(dtor_owner->struct_info.name);
+            // 'self' is the first parameter
+            emit_call(parent_dtor_name, alloc_span({m_current_func->params[0].value}),
+                      m_types.void_type());
+        }
     }
 
     // For default destructors, clean up uniq fields after user body and parent chain
@@ -942,16 +974,11 @@ IRFunction* IRBuilder::build_synthesized_default_destructor(Type* struct_type) {
 
     ValueId self_ptr = m_current_func->params[0].value;
 
-    // Chain to parent's default destructor if present
-    Type* parent_type = struct_type->struct_info.parent;
-    if (parent_type) {
-        for (const auto& dtor : parent_type->struct_info.destructors) {
-            if (dtor.name.empty()) {
-                StringView parent_dtor_name = mangle_destructor(parent_type->struct_info.name);
-                emit_call(parent_dtor_name, alloc_span({self_ptr}), m_types.void_type());
-                break;
-            }
-        }
+    // Chain to the nearest ancestor with a default destructor
+    Type* dtor_owner = nearest_default_destructor(struct_type->struct_info.parent);
+    if (dtor_owner) {
+        StringView parent_dtor_name = mangle_destructor(dtor_owner->struct_info.name);
+        emit_call(parent_dtor_name, alloc_span({self_ptr}), m_types.void_type());
     }
 
     // Clean up uniq fields

@@ -276,6 +276,11 @@ private:
     // Generate address of an lvalue expression (for out/inout arguments)
     ValueId gen_lvalue_addr(Expr* expr);
 
+    // Address of an operator method's receiver. Unlike gen_lvalue_addr this
+    // accepts rvalues (a call result, another operator's result), which is what
+    // lets operator expressions chain: `(a + b) * 2.0f`.
+    ValueId gen_operator_receiver(Expr* expr);
+
     // For an out/inout argument lvalue, return a heap data pointer to the heap
     // object whose storage the argument points into (its "heap root"), or invalid
     // if the lvalue is stack-rooted or not a pure identifier/field chain. The

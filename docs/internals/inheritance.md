@@ -122,6 +122,8 @@ Supported conversions: `uniq Child → uniq Parent`, `uniq Child → ref Parent`
 
 **Chaining rules.** Constructor chaining is explicit (implicit `super()` to the parent's default when omitted); the child body runs after the parent. Destructor chaining is automatic; the child runs before the parent.
 
+A destructor chains to the **nearest ancestor that has a default destructor**, not necessarily its direct parent. Only structs that need one get a default destructor (a user-written body, or a synthesized one for owned fields), so a plain value struct in the middle of a chain has none — emitting a call to it anyway failed the compile with "function not found during bytecode lowering". Skipping such a level is sound precisely because it has nothing to run: no user body and no owned fields. See `nearest_default_destructor` in `ir_builder.cpp`.
+
 ### Name mangling
 
 | Declaration | Mangled name |
