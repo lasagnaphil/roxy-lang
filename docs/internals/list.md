@@ -61,7 +61,7 @@ ints) are rejected at the call site.
 
 List indexing (`list[i]` and `list[i] = val`) is handled via native `index` and `index_mut` methods registered through `NativeRegistry::bind_generic_method`. The compiler resolves these through `TypeCache::lookup_method()` and emits `CallNative` IR ops, the same path used by all other list methods (`.len()`, `.push()`, etc.). Both perform null checks and bounds checking, setting `vm->error` on failure.
 
-`index` is typed `fun List<T>.index(idx: i32): borrowed T` — the `borrowed` modifier demotes the element type to a borrow so `index` yields a *view*, not a transfer. For `List<uniq Point>` the result is `ref Point`, so `var x: uniq Point = list[i]` is a `ref → uniq` type error (you can't move an element out from under the list; borrow it or `pop()` it). For copyable `T` (`List<i32>`) `borrowed T` is just `T`, so indexing copies as before. See [lifetimes.md §17](lifetimes.md#the-borrowed-type-modifier).
+`index` is typed `fun List<T>.index(idx: i32): borrowed T` — the `borrowed` modifier demotes the element type to a borrow so `index` yields a *view*, not a transfer. For `List<uniq Point>` the result is `ref Point`, so `var x: uniq Point = list[i]` is a `ref → uniq` type error (you can't move an element out from under the list; borrow it or `pop()` it). For copyable `T` (`List<i32>`) `borrowed T` is just `T`, so indexing copies as before. See [lifetimes.md → The `borrowed` type modifier](lifetimes.md#the-borrowed-type-modifier).
 
 An out-of-bounds `list[i]` **read** (`i < 0` or `i >= len`) throws a catchable
 `IndexError` rather than aborting — the IR builder emits a cheap in-IR bounds

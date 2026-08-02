@@ -377,7 +377,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Details:** `docs/internals/overloading.md` | **Tests:** `tests/e2e/test_overloads.cpp`
 
 **Slab Allocator** - Custom allocator with Vale-style random generational references, tombstoning. Exposes a **teardown census** (`SlabAllocator::live_object_stats`): everything still alive, minus immortal string literals. `vm_destroy` takes it after `__module_shutdown` and before freeing the slabs, leaving it on `RoxyVM::teardown_heap_stats`; `roxy_rt_heap_stats()` is the AOT equivalent.
-**Details:** `docs/internals/lifetimes.md` §16 | **Files:** `rt/slab_allocator.hpp`, `rt/vmem.hpp`
+**Details:** `docs/internals/lifetimes.md` → Runtime foundations | **Files:** `rt/slab_allocator.hpp`, `rt/vmem.hpp`
 
 ### Interop and Modules
 **C++ Interop** - Type-safe function binding with automatic wrapper generation via `NativeRegistry`.
@@ -563,7 +563,7 @@ profilers, Tracy, workload classes, guardrails, baseline findings):
   - `vm.md` - VM state, interpreter loop, value representation
   - `bytecode.md` - Instruction encoding, opcode reference
   - `ssa-ir.md` - Block arguments, lowering to bytecode
-  - `lifetimes.md` - **The single memory/lifetime/lifecycle reference.** Constraint-reference borrow soundness (`uniq`/`ref`/`weak`, counting, the free-trap, second-class `out`/`inout`/`self`, container element lvalues); runtime foundations (§16: object header, slab allocator, tombstoning, generational refs); RAII/move/`borrowed` (§17); and the unified value-lifecycle model (§18: Drop/Clone/Copy, move-only containers, the `compute_drop_plan` drop derivation — no runtime vtables). Absorbed the former `memory.md` and `lifecycle-traits.md`.
+  - `lifetimes.md` - **The single memory/lifetime/lifecycle reference.** Two models: constraint-reference *borrow soundness* (`uniq`/`ref`/`weak`, counting, the free-trap, the teardown invariant, second-class `out`/`inout`/`self`, container element lvalues) and the *value lifecycle* — Drop / Retain / Move-only as three independent properties, with the principle that **a type is move-only exactly when its drop has no inverse**. Plus runtime foundations (object header, slab allocator, tombstoning, generational refs) and RAII/move/`borrowed`. **States implementation status explicitly**: Drop is derived once (`compute_drop_plan`) and lowered by both backends; Retain is *not implemented* (`needs_retain()` is a dead predicate, struct copies emit no glue); Move-only is *mis-derived* from "has a default destructor", which is why a `string` struct field leaks and a `ref` struct field wrongly forces move-only. Carries the PLANNED three-step design for separating them. Absorbed the former `memory.md` and `lifecycle-traits.md`.
   - `structs.md` - Stack-allocated structs, slot-based layout, struct parameters/returns
   - `list.md` - Dynamic lists (`List<T>`), bounds checking
   - `maps.md` - Hash tables (`Map<K, V>`), Robin Hood open addressing

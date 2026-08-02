@@ -4,17 +4,22 @@ The single reference for Roxy's no-GC memory model: how heap objects are allocat
 and freed, how `uniq` / `ref` / `weak` stay sound, and how values are dropped,
 copied, and moved.
 
-**In one sentence:** `ref` is a *constraint reference* — a borrow of a **heap**
+**In two sentences:** `ref` is a *constraint reference* — a borrow of a **heap**
 object that increments a count in the object's header while it lives, and an object
 cannot be freed, by any path, while that count is nonzero (the free traps); **stack**
 value-structs are never borrowed with `ref` — they pass by reference only through the
 second-class `out` / `inout` / `self` family, which flows downward and cannot escape;
-and `weak` is the sole user of generational references.
+and `weak` is the sole user of generational references. Orthogonally, every type has
+a **value lifecycle** — what runs when a value is duplicated and when its storage
+dies — and a type is move-only exactly when its drop has no inverse.
 
 **Reading guide:**
 
 - [The three reference types](#the-three-reference-types) and
-  [Constraint references](#constraint-references) — the core model.
+  [Constraint references](#constraint-references) — the borrow model.
+- [The value lifecycle](#the-value-lifecycle) — Drop / Retain / Move-only, the
+  three *independent* properties every type has, and the principle that relates
+  them. **Read this before the mechanics below**; it is what they all implement.
 - [The second-class family](#the-second-class-family),
   [Counting mechanics](#counting-mechanics), and [Promotion](#promotion) — how the
   count stays complete and how stack data is handled without one.
@@ -25,10 +30,20 @@ and `weak` is the sole user of generational references.
   feature interacts with the count.
 - [Runtime foundations](#runtime-foundations) — the object header, the slab
   allocator, and generations that everything above rests on.
-- [RAII, moves, and `borrowed`](#raii-moves-and-borrowed) and
-  [Value lifecycle: Drop, Clone, Copy](#value-lifecycle-drop-clone-copy) — the
-  user-facing model and the unified, vtable-free lifecycle machinery.
+- [RAII, moves, and `borrowed`](#raii-moves-and-borrowed) — the user-facing model.
+- [Lifecycle implementation and status](#lifecycle-implementation-and-status) —
+  how the lifecycle is derived and lowered, **what is not implemented**, and the
+  plan for [separating Drop from Copy](#planned-separating-drop-from-copy).
 - [Limitations and future directions](#limitations-and-future-directions).
+
+> **A note on status.** This document describes both what the compiler does and
+> what the model requires. Where they differ, the gap is called out inline and
+> summarised in
+> [Lifecycle implementation and status](#lifecycle-implementation-and-status).
+> Sections marked **PLANNED** are design, not description. An earlier revision
+> presented the lifecycle model as if it were fully built; it was not, and a
+> struct field silently leaking its `string` went unnoticed for exactly that
+> reason.
 
 ---
 
@@ -90,6 +105,71 @@ A missed *decrement* makes an owner permanently undeletable (a loud trap at its
 `delete`, never silent corruption); a missed *free-trap* would be a hole. Both
 mechanisms are centralized so completeness is auditable: the trap lives in one
 function, and the decrements ride the same scope-cleanup machinery as `uniq` drops.
+
+## The value lifecycle
+
+The borrow model above governs `ref`. Cutting across it — and across every other
+type — is a second question: **what has to run when a value is duplicated, and
+when its storage dies?**
+
+Every type has three *independent* properties:
+
+| Property | Question | Runs when |
+|---|---|---|
+| **Drop** | what must be released? | a location holding the value dies |
+| **Retain** | what must be acquired? | the value is *implicitly duplicated* into a second location |
+| **Move-only** | may it be duplicated at all? | — (a static permission) |
+
+They are independent, and conflating any two of them produces a bug. The one
+principle that ties them together:
+
+> **A type is move-only exactly when its drop has no inverse.**
+
+If dropping a value can be undone by a retain, the value can be duplicated: give
+the second location its own retain and each location drops once. If dropping is
+destructive — a free, a buffer release — there is nothing to undo, so a second
+location cannot exist without a *deep* copy, which Roxy deliberately makes
+explicit (`.copy()`).
+
+### Every type kind
+
+| Type | Drop | Retain | Move-only | Why |
+|---|---|---|---|---|
+| primitives, `enum`, `bool` | — | — | no | trivial: copy is a memcpy |
+| `weak T` | — | — | no | a `{pointer, generation}` snapshot holds no count |
+| **`string`** | `roxy_string_release` | `roxy_string_retain` | **no** | reference-counted — release has an exact inverse |
+| **`ref T`** | `ref_dec` | `ref_inc` | **no** | a counted borrow — a copy is simply another borrow |
+| `uniq T` | run destructor, free | — | **yes** | a free cannot be undone |
+| `List<T>`, `Map<K,V>` | drop members, free buffers | — | **yes** | duplicating means copying the buffer — that is `.copy()` |
+| `Coro<T>` | run `__coro_*$$delete`, free state | — | **yes** | as `uniq` |
+| `fun` closure | dispatch env destructor, free env | — | **yes** | as `uniq` |
+| value `struct` | compose over fields | compose over fields | iff a field is move-only, or it has a **user-written** destructor | composition |
+
+Two rows carry the whole subtlety: **`string` and `ref` need drop glue and are
+still copyable.** They are the reason "needs cleanup" and "is move-only" cannot
+be the same bit. A struct is move-only because of what it *contains*, not
+because it happens to have earned a destructor — a user-written destructor
+forces it too, since arbitrary side effects must not run twice.
+
+`.copy()` is the escape hatch for the move-only rows: an explicit, deep
+duplication. It is a different operation from Retain, which is implicit and
+shallow.
+
+### Where each one is enforced
+
+- **Drop** — `compute_drop_plan(Type) -> DropPlan` (`types.cpp`), lowered by both
+  backends. See
+  [One derivation, two executions](#one-derivation-two-executions).
+- **Retain** — emitted ad hoc at individual store sites today; there is **no
+  shared derivation**, and struct copies emit none at all. See
+  [status](#lifecycle-implementation-and-status).
+- **Move-only** — `Type::noncopyable()` / `is_copy()`, consumed by the move
+  checker, call-argument and return lowering, and container element handling.
+
+> ⚠️ **The implementation does not yet separate these three.** `noncopyable()`
+> on a struct currently means literally *"has a default destructor"*, so Drop and
+> Move-only are one bit. The consequences and the fix are in
+> [Separating Drop from Copy](#planned-separating-drop-from-copy).
 
 ## The second-class family
 
@@ -787,101 +867,153 @@ reads / method calls) intact. An inline value struct *can't* be borrowed out (no
 header) but doesn't need to be; coroutines and noncopyable containers could later
 demote to `ref` once their `ref`-receiver dispatch lands.
 
-## Value lifecycle: Drop, Clone, Copy
+## Lifecycle implementation and status
 
-A unified, trait-based account of value lifecycle — drop, copy, move, clone —
-resolved **statically via monomorphization** and eliminated for trivial types, with
-**no runtime vtables**. This replaces what used to be scattered special cases (the
-`BCDeleteDesc` runtime descriptor, the container `value_is_ref` flag, the move-only
-bit) with one model.
+### One derivation, two executions
 
-### The model
+`compute_drop_plan(Type) -> DropPlan` (`types.cpp`) decides the *kind* of drop
+once — `DropKind` (None / CallDtor / WalkFields / List / Map / Closure / RefDec /
+StrRelease) plus `free_obj` and the involved types — and **both backends lower
+the same plan**:
 
-Every type conceptually has `drop(self)` / `copy_init(dst,src)` /
-`move_init(dst,src)` / `clone(self) -> Self`, exposed as three traits mapped onto
-machinery Roxy already has:
+- **VM** keeps its **native** `delete_value` walk over `BCDeleteDesc` — that *is*
+  the VM's drop-glue executor; nothing is inlined per site, so there is nothing
+  to "factor out", and emitting interpreted bytecode glue would be *slower*.
+- **AOT/C** lowers the plan to generated `roxy_drop__<T>` glue functions (and a
+  struct's `$$delete`), which the C compiler inlines and ICF-folds.
 
-- **`Drop`** ⟵ `fun delete T()` — user-writable; auto-derived for aggregates.
-- **`Clone`** ⟵ `.copy()` — explicit deep copy; auto-derived.
-- **`Copy`** — a marker: *implicit* copy permitted (else move-only). The exact
-  inverse of `Type::noncopyable()`; `is_copy()` is its spelling.
+Each backend keeps the execution that is efficient for it; neither re-derives.
+At a *true* erasure boundary — a closure env dropped by `type_id` — a single
+drop-glue dispatch survives; that is one pointer for one operation, **not** a
+per-operation vtable.
 
-The point is **not** runtime dispatch. Resolution runs through the existing
-monomorphized trait machinery (the `Printable`/`Hash`/`Eq` path), so each lifecycle
-event lowers to a direct call (inlinable) — or, for trivial types, to nothing.
+`member_needs_drop()` — "does a value in an opaque member slot (struct field,
+container element) need cleanup?" — **derives** from `compute_drop_plan`, so the
+eligibility gate and the lowering it gates cannot disagree. It is deliberately
+non-recursive: a nested value struct that owns something carries its own
+synthesized destructor, propagated by the synthetic-destructor fixpoint.
 
-**The `Copy` + `Drop` wrinkle.** Unlike Rust, Roxy lets the two coexist, because
-`ref` is implicitly copyable *and* lifecycle-nontrivial (copy → `ref_inc`,
-drop → `ref_dec`). So `Copy` means only "implicit copy allowed", not "trivially
-memcpy-able"; trivial types are a *subset* of `Copy`. The two count-bearing-copyable
-kinds are `ref` (a counted borrow) and **`string`** (reference-counted since finding
-9b — copy → `roxy_string_retain`, drop → `roxy_string_release`, free at zero, with
-pooled literals immortal); see [strings.md](strings.md). A struct's retain/drop is
-then composed automatically from *containing* one of these.
+### What is actually implemented
 
-### Drop and Copy are currently welded together
+| Property | Derivation | Consumed by | Status |
+|---|---|---|---|
+| **Drop** | `compute_drop_plan` | both backends, `member_needs_drop` | ✅ complete — **except** `StrRelease` on a struct field, gated off (below) |
+| **Retain** | *none* | — | ❌ **not implemented.** `Type::needs_retain()` exists and has **no code-emitting consumer**; retains are emitted ad hoc per store site |
+| **Move-only** | "struct has a default destructor" | move checker, call/return lowering | ⚠️ **mis-derived** — see below |
 
-The model above treats Drop, Clone, and Copy as independent properties. The
-implementation does not: `noncopyable()` on a struct means literally *"has a
-default destructor"*, so anything that earns drop glue also becomes move-only.
+The ad-hoc retain sites that *do* exist and are correct: binding a `string`
+local, storing one into a struct field (retains the new value and releases the
+overwritten one), and pushing one into a container. What has no retain at all is
+**duplicating a whole struct** — `IROp::StructCopy` copies the bytes and nothing
+else.
 
-That holds today only because the two sets coincide — the members that earn a
-synthetic destructor (`uniq`, `List`, `Map`, `Coro`, closures, `ref`) are
-exactly the ones that make a struct move-only. `string` is the member type that
-breaks the coincidence: it is reference-counted and therefore needs a release,
-but it is perfectly copyable given a matching retain. Because the two decisions
-are one bit, a `string` field can have neither — which is why it is excluded
-from `member_needs_drop` and why a struct holding one leaks it.
+`Type::needs_retain()` and `Type::is_trivial()` are currently **dead
+predicates**: they compute the right answer and nobody asks. Treat them as the
+skeleton of the planned derivation, not as working machinery.
 
-Separating them is a two-part change (a structural `is_move_only` flag, and
-clone glue at the `StructCopy` sites); `TODO.md` carries the design. Until then,
-`string` is the one member type whose drop is knowingly skipped.
+### The gap: Drop and Copy are one bit
 
-### Predicates
+`noncopyable()` on a struct means literally *"has a default destructor"*. So the
+moment a struct earns drop glue it also becomes move-only. That has held up only
+because the two sets coincide: the members that earn a synthetic destructor
+(`uniq`, `List`, `Map`, `Coro`, closures, `ref`) are exactly the move-only ones.
 
-`Type` carries the structural decisions the lowering consumes:
+`string` and `ref` are the rows in
+[the lifecycle table](#every-type-kind) that break the coincidence, and the one
+bit gives the **wrong answer in both directions** — both reproducible today:
 
-- `is_copy()` — implicit copy allowed (vs move-only).
-- `needs_drop()` — owns/borrows a resource to release (recurses through value-struct
-  fields; every indirecting kind is a leaf, so it terminates). True for `ref`, `uniq`,
-  containers, coroutines, closures, and **`string`** (release-on-drop, finding 9b).
-- `needs_retain()` — implicit copy has a side effect (transitively contains a `ref`,
-  or **is / contains a `string`**).
-- `is_trivial()` — `is_copy && !needs_drop && !needs_retain` → emit nothing (the
-  `is_trivially_destructible` analogue).
-- `member_needs_drop()` — a non-recursive variant (`noncopyable() || ref`) used by
-  the synthetic-destructor pass, the struct field-walk, and both backends' container
-  drops (cycle-safe).
+| Field | Today | Should be | Symptom |
+|---|---|---|---|
+| `s: string` | struct earns no drop, stays copyable | drop **and** retain-on-copy | **leaks the string** |
+| `r: ref T` | struct earns drop → forced move-only | copyable, `ref_inc` on copy | `var b = a;` rejected as *"use of moved value"* |
+
+```roxy
+struct Box { s: string; }
+var d: string = a + "y";
+var b: Box = Box { s = d };   // leaks: retained on store, never released
+
+struct Holder { r: ref Point; }
+var h2: Holder = h;           // rejected — but a copy is just another borrow
+```
+
+`string`'s drop is therefore **knowingly skipped**: `member_needs_drop` excludes
+`DropKind::StrRelease`, because enabling it alone makes string-bearing structs
+move-only (measured: four `Structured Gen` cases start failing), and making them
+copyable *without* retain glue is worse than the leak — two owners, two releases,
+use-after-free.
+
+### PLANNED: separating Drop from Copy
+
+Three changes, in this order. The order matters: step 2 before step 1 would make
+`ref`-bearing structs copyable while the glue that keeps their counts balanced
+does not exist yet — trading an over-restriction for a use-after-free.
+
+**1. A retain derivation, mirroring the drop plan.**
+
+```
+enum class RetainKind { None, StrRetain, RefInc, WalkFields };
+RetainPlan compute_retain_plan(Type*);
+```
+
+`string` → `StrRetain`, `ref` → `RefInc`, a copyable struct with any retaining
+field → `WalkFields`, everything else (including every move-only kind, which is
+never implicitly duplicated) → `None`. Lives beside `compute_drop_plan` so the
+two are read together and a new kind cannot be added to one alone.
+
+**Clone glue at the duplication sites.** The catch: `IROp::StructCopy` is used
+for both copies *and* moves, and a move must not retain. The obligation has to be
+explicit — a `clone` flag on the op (or a distinct `StructClone`) — so it is
+visible in the IR, checkable by `IRValidator`, and lowered by both backends.
+Sites: the `emit_struct_copy` calls in the IR builder, the callee-prologue
+value-parameter deep copy in `lowering.cpp`, and the C emitter.
+
+Inert on landing: no copyable type today has a retaining field (string-bearing
+structs have no drop; `ref`-bearing structs are move-only), so this step changes
+no generated code and is verified by unit tests on the plan plus IR inspection.
+
+**2. Move-only becomes structural.** An `is_move_only` flag on `StructTypeInfo`,
+computed by the fixpoint that already adds synthetic destructors:
+
+```
+is_move_only(S) = S has a USER-WRITTEN default destructor
+               || ∃ field f : is_move_only_type(f.type)
+
+is_move_only_type(T) = Uniq | List | Map | Coroutine | Function
+                     | (Struct && is_move_only(T))
+```
+
+`noncopyable()`'s struct arm reads the flag instead of scanning destructors.
+`string`, `ref`, `weak`, primitives and enums are not move-only. This is the
+step that makes `ref`-bearing structs copyable — a **user-visible language
+change**, correct but not a silent one.
+
+**3. Enable `StrRelease` in the gate.** Remove the carve-out in
+`member_needs_drop`. String-bearing structs now get drop *and* retain together,
+and the leak closes.
+
+**Why this is verifiable.** Both error directions have detectors, which is what
+makes the change tractable rather than frightening:
+
+- **under-retain** → premature free → the VM's double-delete and
+  release-at-zero asserts fire;
+- **over-retain** → leak → the
+  [teardown invariant](#the-teardown-invariant) fires, across every test that
+  runs a program.
+
+**Precedent that the model works.** Containers already do exactly this and are
+clean: `List<string>` retains on push and releases on destroy; a `List<ref T>`
+counts its borrowed elements. Structs are the hole, not the design.
 
 ### Move-only containers
 
-**Move-only** is the `!is_copy()` case (the inverse of the `Copy` marker): a
-`List`/`Map` (it owns a heap buffer), a struct with a `ref` field, and a coroutine
-with a `ref` param are all move-only, and each counts the borrows it holds for its
+**Move-only** is the `!is_copy()` case: a `List`/`Map` (it owns a heap buffer), a
+struct with a `ref` field (today — see the gap above), and a coroutine with a
+`ref` param are all move-only, and each counts the borrows it holds for its
 lifetime. The per-feature mechanics live under
 [Applying the model](#applying-the-model) —
 [containers](#containers-are-move-only),
 [their counted borrows](#containers-of-borrows-hold-counted-borrows), and
 [coroutine `ref` params](#coroutines).
-
-### One drop derivation, two executions
-
-`compute_drop_plan(Type) -> DropPlan` (in `types.cpp`) decides the *kind* of drop
-once — `DropKind` (None / CallDtor / WalkFields / List / Map / Closure / RefDec /
-StrRelease) plus
-`free_obj` and the involved types — and **both backends lower the same plan**:
-
-- **VM** keeps its **native** `delete_value` walk over `BCDeleteDesc` — that *is* the
-  VM's drop-glue executor; nothing is inlined per site, so there is nothing to
-  "factor out", and emitting interpreted bytecode glue would be *slower*.
-  `BCDeleteDesc` is therefore not eliminated.
-- **AOT/C** lowers the plan to generated `roxy_drop__<T>` glue functions (and a
-  struct's `$$delete`), which the C compiler inlines and ICF-folds.
-
-Each backend keeps the execution that's efficient for it; neither re-derives. At a
-*true* erasure boundary — a closure env dropped by `type_id` — a single `drop_glue`
-function pointer in the header survives; that is one pointer for one operation, **not**
-a per-operation vtable.
 
 ## Limitations and future directions
 
