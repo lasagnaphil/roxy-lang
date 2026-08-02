@@ -2260,7 +2260,11 @@ ValueId IRBuilder::gen_index_expr(Expr* expr) {
         Type* found_in = nullptr;
         const MethodInfo* method_info = lookup_method_in_hierarchy(base_type, method_name, &found_in);
         if (method_info && found_in) {
-            ValueId self_ptr = gen_lvalue_addr(index_expr.object);
+            // `Index` is an operator trait like Add/Mul, so its receiver may be
+            // an rvalue: `(a + b)[0]`, `mk()[1]`. Reading through a temporary is
+            // fine — only the *assignment* forms (gen_assign_index,
+            // gen_compound_assign) need a real place to write back to.
+            ValueId self_ptr = gen_lvalue_addr(index_expr.object, /*rvalue_ok=*/true);
             ValueId index_val = gen_expr(index_expr.index);
             StringView mangled = mangle_method(found_in->struct_info.name, method_name);
             return emit_call(mangled, alloc_span({self_ptr, index_val}), expr->resolved_type);

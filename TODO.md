@@ -10,7 +10,42 @@ Last updated: 2026-08-02
 
 ## High Priority
 
-(none currently)
+- [ ] **Segfault: a coroutine local that is never reassigned, used after a
+  resume edge.** A `uniq` local plus a `while` loop in a coroutine crashes the
+  VM (`EXC_BAD_ACCESS` in `interpret()`'s `GET_FIELD`, `interpreter.cpp:1952`)
+  as soon as a second `resume()` re-enters the loop body. Minimal repro:
+
+  ```roxy
+  struct Res { id: i32 = 0; }
+  fun gen(n: i32): Coro<i32> {
+      var r: uniq Res = uniq Res { id = 42 };
+      var i: i32 = 0;
+      while (i < n) { yield i + r.id; i = i + 1; }
+  }
+  // main: resume() three times -> segfault on the second
+  ```
+
+  **Not** the optimizer (reproduces with `optimize_module` disabled) and **not**
+  new — reproduces unchanged on `origin/main`. Root cause, from the lowered IR:
+  promotion collects a var's ValueIds in step 5b from *function params and block
+  params only* (`coroutine_lowering.cpp:559-574`). `i` is reassigned in the
+  loop, so every use of it names a block param and gets remapped to the block's
+  state accessor. `r` is never reassigned, so its uses still name the entry
+  block's defining value (`v1 = new Res()`) — legal SSA under dominance, but
+  coroutine lowering grafts dispatch edges that reach the loop body *without*
+  passing through entry, so `v1` is undefined there and `get_field v1.id`
+  dereferences null. The per-block accessor is emitted but left unused, then
+  DCE'd.
+
+  Note the naive fix is wrong: also collecting jump-argument ValueIds would
+  remap `v1` inside the entry block too, turning the initializing write-back
+  `set_field r <- v1` into `set_field r <- (accessor)` and dropping the
+  `new Res()`. The remap has to be use-site/dominance aware — thread promoted
+  vars as block params through every block where they are live before splitting,
+  or remap per-block with the defining block excepted.
+
+  Only the completion path is affected; early drop (abandoning the coroutine
+  mid-iteration) is fine, as are straight-line `yield`s without a loop.
 
 *Nine bugs were found and fixed here on 2026-08-02, all traced back to compiling
 `CLAUDE.md`'s example program — which had never been run. Kept as a record of

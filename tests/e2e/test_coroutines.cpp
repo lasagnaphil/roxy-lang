@@ -767,6 +767,53 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output == "freed\n");
     }
 
+    TEST_CASE_TEMPLATE("Coroutine value-struct local owning a uniq, early drop",
+                       Backend, RX_E2E_BACKENDS) {
+        // A *value struct* that owns a resource, promoted across a yield. Since
+        // value structs live inline in the state struct, its cleanup is not a
+        // pointer-shaped field, and the state destructor's hand-written "uniq |
+        // noncopyable container | Coro" enumeration skipped it entirely — the
+        // Holder's uniq was never freed. The gate is now the shared
+        // `member_needs_drop`, and an inline struct field is destroyed through
+        // its address.
+        const char* source = R"(
+        struct Resource {
+            value: i32;
+        }
+
+        fun delete Resource() {
+            print(f"{"freed"}");
+        }
+
+        struct Holder {
+            r: uniq Resource;
+        }
+
+        fun gen(): Coro<i32> {
+            var h: Holder = Holder { r = uniq Resource() };
+            h.r.value = 7;
+            yield h.r.value;
+            yield h.r.value + 1;
+        }
+
+        fun main(): i32 {
+            var result: i32 = 0;
+            {
+                var g = gen();
+                result = g.resume();
+                // g is dropped here without reaching done: the state destructor
+                // is the only thing that can free Holder's resource.
+            }
+            return result;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 7);
+        CHECK(result.stdout_output == "freed\n");
+    }
+
     TEST_CASE_TEMPLATE("Coroutine uniq parameter", Backend, RX_E2E_BACKENDS) {
         // A uniq parameter to a coroutine is captured in the state struct.
         // Cleanup should free it when the coroutine is destroyed.

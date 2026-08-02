@@ -93,6 +93,17 @@ static ValueId emit_get_field(BumpAllocator& allocator, IRFunction* func, IRBloc
     return inst->result;
 }
 
+static ValueId emit_get_field_addr(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
+                                    ValueId object, StringView field_name,
+                                    u32 slot_offset, u32 slot_count, Type* field_type) {
+    IRInst* inst = make_inst(allocator, func, block, IROp::GetFieldAddr, field_type);
+    inst->field.object = object;
+    inst->field.field_name = field_name;
+    inst->field.slot_offset = slot_offset;
+    inst->field.slot_count = slot_count;
+    return inst->result;
+}
+
 static ValueId emit_set_field(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
                                ValueId object, StringView field_name,
                                u32 slot_offset, u32 slot_count, ValueId value, Type* type) {
@@ -243,19 +254,35 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
         const FieldInfo& field = fields[i];
         if (!field.type) continue;
 
-        bool is_noncopyable_pointer = false;
-        if (field.type->kind == TypeKind::Uniq ||
-            (field.type->is_container() && field.type->noncopyable()) ||
-            field.type->is_coroutine()) {
-            is_noncopyable_pointer = true;
-        }
+        // Which fields need cleanup is the shared, non-recursive decision
+        // (`member_needs_drop`: noncopyable, or a bare `ref`) — the same one the
+        // synthetic-destructor pass and IRBuilder::emit_field_cleanup use. It
+        // was hand-enumerated here as "uniq | noncopyable container | Coro",
+        // which silently skipped every other owning shape: once value structs
+        // began living *inline* in the state struct, a promoted struct owning a
+        // `uniq` was never destroyed at all.
+        if (!member_needs_drop(field.type)) continue;
+
         // A `ref` field is a counted borrow (ref param acquired at init, or ref
         // local acquired mid-body); release it here (RefDec the borrowed pointer,
         // never free the pointee), guarded by the null check below so an
         // already-released local is skipped. Only a catch param `e` is excluded —
         // it's set by exception dispatch, not counted. ("Applying the model".)
-        bool is_ref = field.type->kind == TypeKind::Ref && !is_catch_param_field(field.name);
-        if (!is_noncopyable_pointer && !is_ref) continue;
+        bool is_ref = field.type->kind == TypeKind::Ref;
+        if (is_ref && is_catch_param_field(field.name)) continue;
+
+        // An inline value struct *is* its storage — there is no pointer to
+        // null-check, and no object to free. Address it and run a typed Delete,
+        // which lowers to its destructor in both backends (the same shape as
+        // IRBuilder::emit_single_field_destroy's value-struct arm).
+        if (field.type->is_struct()) {
+            ValueId field_addr = emit_get_field_addr(allocator, dtor_func, entry, self_val,
+                                                     field.name, field.slot_offset,
+                                                     field.slot_count, field.type);
+            emit_unary_void_op(allocator, dtor_func, entry, IROp::Delete,
+                               field_addr, field.type);
+            continue;
+        }
 
         // GetField → null check → call inner destructor → Delete → skip
         ValueId field_val = emit_get_field(allocator, dtor_func, entry, self_val,
@@ -322,6 +349,13 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
                 emit_unary_void_op(allocator, dtor_func, cleanup_block, IROp::Delete,
                                    field_val, types.void_type());
             }
+        }
+        else {
+            // Any other owning pointer shape — today a closure (`fun(..) -> R`
+            // owns its heap env). A typed Delete lets each backend's drop
+            // derivation dispatch it, rather than needing an arm here.
+            emit_unary_void_op(allocator, dtor_func, cleanup_block, IROp::Delete,
+                               field_val, field.type);
         }
 
         finish_goto(allocator, cleanup_block, skip_block->id);

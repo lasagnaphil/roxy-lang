@@ -696,6 +696,45 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.stdout_output == "8,12\n7,10\n-4,-6\n9,14\n");
     }
 
+    TEST_CASE_TEMPLATE("Indexing an operator result", Backend, RX_E2E_BACKENDS) {
+        // `Index` is an operator trait like Add/Mul, so its receiver may be an
+        // rvalue too. The chained-operator fix above initially covered only the
+        // binary and unary paths, leaving `(a + b)[0]` and `mk()[1]` failing
+        // with the same "expression is not a valid lvalue" internal error.
+        // Reading through a temporary is fine — only `x[i] = v` needs a place.
+        const char* source = R"(
+        trait Add<Rhs>;
+        fun Add.add(other: Rhs): Self;
+
+        struct Grid { a: i32; b: i32; }
+
+        fun Grid.add(other: Grid): Grid for Add {
+            return Grid { a = self.a + other.a, b = self.b + other.b };
+        }
+        fun Grid.index(i: i32): i32 for Index<i32, i32> {
+            if (i == 0) { return self.a; }
+            return self.b;
+        }
+
+        fun mk(): Grid { return Grid { a = 7, b = 9 }; }
+
+        fun main(): i32 {
+            var x: Grid = Grid { a = 1, b = 2 };
+            var y: Grid = Grid { a = 10, b = 20 };
+
+            print(x[0]);            // plain place receiver, still works
+            print((x + y)[0]);      // index an operator result
+            print((x + y)[1]);
+            print(mk()[1]);         // index a call result
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n11\n22\n9\n");
+    }
+
     TEST_CASE_TEMPLATE("Mixed-type arithmetic (* with scalar)", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Mul<Rhs>;
