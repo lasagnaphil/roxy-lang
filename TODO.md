@@ -72,6 +72,18 @@ the free-trap only fires on an explicit `delete`, so nothing was looking.*
     use-after-free, so route duplication through an op that carries the
     obligation rather than patching sites.
 
+  - **Track copyable values for cleanup.** `gen_var_decl` and the parameter
+    setup gate cleanup tracking on `noncopyable()`, so once move-only becomes
+    structural a string-bearing struct stops being tracked and nothing calls its
+    destructor — the leak returns. The condition must become "has drop glue".
+    (Found 2026-08-02 while measuring; not in the original plan.)
+
+  **Ruled out:** skipping the clone glue and letting string-bearing structs be
+  move-only. It fixes the leak in one line and is trivially safe, but
+  `examples/lox` stops compiling — `Token` holds a `string`, and the parser reads
+  tokens out of a `List<Token>` by value in four places. A `string` field is too
+  common for move-only. Do not revisit.
+
   **Ordering:** the move-only change and the glue+gate change must land
   **together**. Each alone is unbalanced — retains without releases, a
   destructor that forces move-only, or copyable `ref` structs with unbalanced

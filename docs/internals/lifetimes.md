@@ -997,6 +997,45 @@ has a retaining field, so every one of the three steps is unbalanced alone.
 Only the combination is sound: the struct earns a drop, stays copyable, and
 every duplication retains.
 
+### Ruled out: just making them move-only
+
+The tempting shortcut is to skip the clone glue entirely — enable `StrRelease`,
+accept that string-bearing structs become move-only, and require `.copy()`. It
+fixes the leak, it is trivially safe (a move-only value is never duplicated, so
+no count can go wrong), and it costs one line.
+
+**It is not viable.** Measured 2026-08-02: with it enabled the whole test suite
+passes except four `Structured Gen` seeds — but `examples/lox` **stops
+compiling**:
+
+```
+Semantic error in module 'parser': cannot move a noncopyable value out of a
+container element; borrow it with 'ref' or remove it from the container instead
+```
+
+Lox's `Token` holds a `lexeme: string`, and the parser reads tokens out of a
+`List<Token>` by value (`var t: Token = self.tokens[i];`) in four places. Making
+every string-bearing struct move-only makes that — an ordinary read of a plain
+data record out of a list — illegal. A `string` field is far too common for
+move-only to be an acceptable answer; the largest real Roxy program is the proof.
+
+So the clone glue is not optional, and this shortcut should not be revisited.
+
+### A fourth requirement: copyable values need drop sites
+
+Found while measuring the above. Flipping the gate *does* fix the leak today —
+but only as a side effect of the welded bit: the struct becomes move-only, and
+move-only locals are the only ones the IR builder **tracks for cleanup**
+(`gen_var_decl` and the parameter setup both gate tracking on `noncopyable()`).
+
+Once move-only becomes structural, a string-bearing struct stays copyable — and
+therefore stops being tracked, so nothing calls its destructor and the leak comes
+straight back. The tracking condition has to move from "is move-only" to "has
+drop glue", across locals, parameters, and temporaries, or steps 2–3 fix nothing.
+
+This is the same conflation one level down: *tracked for cleanup* and *move-only*
+are also currently one decision.
+
 ### Duplication sites the glue must cover
 
 Missing one turns the leak into a use-after-free once step 3 lands, so this list
