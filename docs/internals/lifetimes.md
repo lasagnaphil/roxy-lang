@@ -191,6 +191,37 @@ get right:
   it. Both sides now read the declared type, mirroring how `check_call_args`
   decides an argument's move from the *parameter* type.
 
+### The teardown invariant
+
+The free-trap below catches a *premature* free. It cannot catch the opposite
+error — an object that is never freed at all — because it only fires when
+something calls `delete`. That left every leak and every unbalanced retain
+invisible: a missed `RefDec` shows up only if a later `delete` happens to trip
+over it, and a missed drop shows up never.
+
+So the runtime takes a census at the end of its life. `vm_destroy` counts what
+is still alive **after** `__module_shutdown` has torn down the globals and
+**before** the slabs are freed — the one moment the number is meaningful — and
+leaves it on `RoxyVM::teardown_heap_stats` for the caller to read
+(`roxy_rt_heap_stats()` is the AOT-side equivalent over the global slab). At a
+clean exit `leaked` must be **0**: RAII dropped every `uniq` local, every
+container and dynamic string was released, and every borrow's count came back
+down. Interned string *literals* are immortal by design and are counted out
+rather than reported.
+
+Two consumers:
+
+- **`roxy --check-leaks`** reports the count and exits 70. Off by default, so a
+  program's own exit code is unaffected.
+- **The E2E harness asserts it on every program it runs** (`run_and_capture`), so
+  ~880 existing tests check for leaks without having been written to. A test that
+  pins a *known* leak opts out with a scoped `ExpectedLeak` naming the `TODO.md`
+  entry it pins — the opt-outs are the live list of unfixed leaks.
+
+The check covers the **VM only**. The C backend has its own codegen paths (see
+c-backend.md "Known C-backend gaps"), and the generated binary does not run a
+census; extending it there means emitting the check into generated code.
+
 ### The free-trap
 
 The single choke point is **`object_free`** (`object.cpp` / `roxy_free`): before

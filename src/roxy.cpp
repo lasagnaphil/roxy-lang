@@ -86,6 +86,8 @@ static void print_usage(const char* program) {
     fprintf(stderr, "  --time         Print per-phase compile timing and compile-vs-execute split\n");
     fprintf(stderr, "  --repeat=N     Compile N times and report averaged phase timing (skips\n");
     fprintf(stderr, "                 execution when N>1; the in-process loop for sampling profilers)\n");
+    fprintf(stderr, "  --check-leaks  After the program exits, report any heap objects still alive\n");
+    fprintf(stderr, "                 (a missing drop or unbalanced retain); exit 70 if any\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "The program must define a main() function as the entry point.\n");
     fprintf(stderr, "Imported modules are auto-discovered from the source file's directory.\n");
@@ -98,6 +100,7 @@ struct Options {
     bool dump_bc = false;
     bool time = false;           // Print per-phase compile timing + compile-vs-execute split
     u32 repeat = 1;              // Compile-only benchmark loop count (>1 skips execution)
+    bool check_leaks = false;    // Report objects still alive at VM teardown
 };
 
 static bool parse_args(int argc, char** argv, Options& opts) {
@@ -111,6 +114,8 @@ static bool parse_args(int argc, char** argv, Options& opts) {
             opts.dump_bc = true;
         } else if (strcmp(argv[i], "--time") == 0) {
             opts.time = true;
+        } else if (strcmp(argv[i], "--check-leaks") == 0) {
+            opts.check_leaks = true;
         } else if (strncmp(argv[i], "--repeat=", 9) == 0) {
             long n = strtol(argv[i] + 9, nullptr, 10);
             if (n < 1) {
@@ -469,6 +474,16 @@ int main(int argc, char** argv) {
     Value result = vm_get_result(&vm);
 
     vm_destroy(&vm);
+
+    // Teardown invariant: main() returned, so RAII and __module_shutdown should
+    // have released everything. vm_destroy took the census after the globals
+    // came down and before the slabs went; anything left (immortal string
+    // literals aside) is a missing drop or an unbalanced retain.
+    if (opts.check_leaks && vm.teardown_heap_stats.leaked != 0) {
+        fprintf(stderr, "Leak: %llu object(s) still alive after main() returned\n",
+                (unsigned long long)vm.teardown_heap_stats.leaked);
+        return 70;  // EX_SOFTWARE — distinct from a program's own exit code
+    }
 
     // Phase timing: compile breakdown (from the compiler) + execute split.
     if (opts.time) {

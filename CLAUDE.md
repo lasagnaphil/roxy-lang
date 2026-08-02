@@ -376,7 +376,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Function Overloading** - Free functions and natives may have multiple definitions per name, differing in parameter types or arity (`Symbol::next_overload` chains; `$ol$name$types` mangles; exact-then-assignable resolution with settled literals; overloaded refs in value position coerce at typed sites). `print` is an overload set (one member per Printable primitive, direct printf natives) with a sema-side Printable fallback rewriting `print(v)` → `print(v.to_string())` for structs/enums/containers. Methods/ctors/trait methods stay one-per-name; a name is either generic or overloaded, never both; `main` can't be overloaded.
 **Details:** `docs/internals/overloading.md` | **Tests:** `tests/e2e/test_overloads.cpp`
 
-**Slab Allocator** - Custom allocator with Vale-style random generational references, tombstoning.
+**Slab Allocator** - Custom allocator with Vale-style random generational references, tombstoning. Exposes a **teardown census** (`SlabAllocator::live_object_stats`): everything still alive, minus immortal string literals. `vm_destroy` takes it after `__module_shutdown` and before freeing the slabs, leaving it on `RoxyVM::teardown_heap_stats`; `roxy_rt_heap_stats()` is the AOT equivalent.
 **Details:** `docs/internals/lifetimes.md` §16 | **Files:** `rt/slab_allocator.hpp`, `rt/vmem.hpp`
 
 ### Interop and Modules
@@ -449,6 +449,7 @@ Points worth knowing before touching it:
 - **Framework:** doctest (vendored in `include/roxy/core/doctest/`)
 - **Single executable:** `roxy_tests` contains all unit and E2E tests
 - **Helpers:** `tests/e2e/test_helpers.hpp` provides `compile()`, `compile_and_run()`, `run_and_capture()`, `compile_to_cpp()`, `compile_and_run_cpp()`
+- **Every VM program run asserts the teardown leak invariant.** `run_and_capture` checks that nothing is still alive after `main()` returns (immortal string literals aside), so ~880 existing tests cover leaks without having been written to. The free-trap only fires on an explicit `delete`, so before this a missing drop or unbalanced retain was invisible. A test pinning a *known* leak opts out with a scoped `ExpectedLeak` naming its `TODO.md` entry — those opt-outs are the live list of unfixed leaks. VM only; the C backend runs no census (see `docs/internals/lifetimes.md` → "The teardown invariant").
 - **The E2E harness mirrors the real pipeline**: IRBuilder → `coroutine_lower` → `optimize_module` → validate → bytecode/C, the same order as `Compiler::link_modules()`. Keep it that way — it did not always run the optimizer, and that gap hid a crash on *every* coroutine program behind a fully green suite.
 
 ### Running Tests
@@ -535,6 +536,7 @@ cmake -B build-profile -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FL
 ninja -C build-profile roxy
 ./build-profile/roxy --time program.roxy        # per-phase compile timing + compile-vs-execute split
 ./build-profile/roxy --repeat=200 program.roxy  # avg over 200 in-process compiles (profiler loop)
+./build/roxy --check-leaks program.roxy         # heap objects still alive after main() (exit 70 if any)
 
 # Huge-codebase compile benchmarks: generate a reproducible multi-module corpus
 ./build/roxy_gen --seed=7 --modules=400 --out=/tmp/corpus_400   # ~257 KLOC, seeded

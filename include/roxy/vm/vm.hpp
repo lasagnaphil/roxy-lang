@@ -93,6 +93,14 @@ struct RoxyVM {
     bool running;                   // Execution state
     const char* error;              // Error message (null if no error)
 
+    // Heap census taken by vm_destroy at the true end of the VM's life — after
+    // __module_shutdown has torn down globals, before the slabs are freed.
+    // Survives vm_destroy (the caller owns this struct), so an embedder or test
+    // harness can assert `teardown_heap_stats.leaked == 0` on a clean run. Left
+    // zeroed if vm_destroy was never called. Meaningless when `error` is set:
+    // an aborted program never ran its cleanup.
+    roxy_heap_stats teardown_heap_stats;
+
     // Exception handling state
     void* in_flight_exception;          // Exception object being propagated (nullptr if none)
     u32 in_flight_exception_type_id;    // type_id from ObjectHeader
@@ -127,6 +135,11 @@ bool vm_call_index(RoxyVM* vm, u32 func_index, Span<Value> args);
 
 // Get the result of the last call (value in R0)
 Value vm_get_result(RoxyVM* vm);
+
+// Census of everything this VM's slab allocator still holds. After a program
+// has run to completion, `leaked` must be 0 — see roxy_rt_heap_stats for the
+// full contract. Call it BEFORE vm_destroy, which frees the slabs.
+roxy_heap_stats vm_heap_stats(RoxyVM* vm);
 
 // Get error message (or nullptr if no error)
 const char* vm_get_error(RoxyVM* vm);

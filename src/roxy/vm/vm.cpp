@@ -56,6 +56,7 @@ bool vm_init(RoxyVM* vm, const VMConfig& config) {
     vm->module = nullptr;
     vm->running = false;
     vm->error = nullptr;
+    vm->teardown_heap_stats = roxy_heap_stats{0, 0, 0};
 
     // Initialize register file (untyped 8-byte slots)
     vm->register_file_size = config.register_file_size;
@@ -148,6 +149,14 @@ void vm_destroy(RoxyVM* vm) {
         && vm->module->find_function("__module_shutdown"_sv) >= 0) {
         vm_call(vm, "__module_shutdown"_sv, {});
     }
+
+    // Teardown invariant, taken here and nowhere earlier: globals have just been
+    // destroyed and the slabs are still standing, so this is the one moment the
+    // census is meaningful. Recorded rather than asserted — vm_destroy runs on
+    // the error path too, where a program aborted mid-flight legitimately leaves
+    // objects alive. Callers check it when the run succeeded.
+    vm->teardown_heap_stats = vm_heap_stats(vm);
+
     vm->global_slots.reset();
     vm->global_slots_size = 0;
 
@@ -348,6 +357,17 @@ Value vm_get_result(RoxyVM* vm) {
         return Value::from_u64(vm->register_file[0]);
     }
     return Value::make_null();
+}
+
+roxy_heap_stats vm_heap_stats(RoxyVM* vm) {
+    roxy_heap_stats out = {0, 0, 0};
+    if (vm && vm->allocator) {
+        auto stats = vm->allocator->live_object_stats();
+        out.live = stats.live;
+        out.immortal = stats.immortal;
+        out.leaked = stats.leaked;
+    }
+    return out;
 }
 
 const char* vm_get_error(RoxyVM* vm) {

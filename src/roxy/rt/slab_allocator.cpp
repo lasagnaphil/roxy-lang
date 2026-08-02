@@ -452,6 +452,39 @@ bool SlabAllocator::owns(void* ptr) const {
     return large_objects.find(ptr) != large_objects.end();
 }
 
+SlabAllocator::LiveObjectStats SlabAllocator::live_object_stats() const {
+    LiveObjectStats stats;
+
+    // An interned string literal is allocated once and never freed
+    // (ROXY_STR_IMMORTAL). It is the only object a clean exit legitimately
+    // leaves behind, so classify it out instead of reporting it as a leak.
+    auto classify = [&stats](const roxy_object_header* header) {
+        stats.live++;
+        if (header->type_id == ROXY_TYPEID_STRING &&
+            header->ref_count == ROXY_STR_IMMORTAL) {
+            stats.immortal++;
+        }
+    };
+
+    for (u32 size_class = 0; size_class < NUM_SIZE_CLASSES; size_class++) {
+        for (const auto& slab : size_classes[size_class]) {
+            if (!slab || slab->remapped) continue;
+            for (u32 slot = 0; slot < slab->slot_count; slot++) {
+                if (slab->states[slot] != SlotState::ALIVE) continue;
+                classify(static_cast<const roxy_object_header*>(slab->slot_ptr(slot)));
+            }
+        }
+    }
+
+    for (const auto& entry : large_objects) {
+        if (entry.second.tombstoned) continue;
+        classify(static_cast<const roxy_object_header*>(entry.first));
+    }
+
+    stats.leaked = stats.live - stats.immortal;
+    return stats;
+}
+
 u32 SlabAllocator::reclaim_tombstoned() {
     u32 total_reclaimed = 0;
 

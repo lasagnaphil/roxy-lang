@@ -19,6 +19,23 @@ struct TestResult {
     i64 value;                    // Return value (always integer in Roxy)
     String stdout_output;         // Captured stdout
     bool success;                 // true if compilation and execution succeeded
+    // Objects still alive after main() returned, excluding immortal string
+    // literals. Must be 0 for a program that ran to completion: a nonzero
+    // count is a missing drop or an unbalanced retain. See roxy_rt_heap_stats.
+    u64 leaked = 0;
+};
+
+// Scoped opt-out from the harness's teardown leak assertion, for a test that
+// deliberately pins a KNOWN leak. Construct one in the test body:
+//
+//     ExpectedLeak _known;   // see TODO.md: <which bug>
+//
+// Scoped so it cannot bleed into the next test. Every use should name the
+// TODO.md entry it pins, and should disappear when that entry is fixed — at
+// which point the leak assertion starts covering the case for free.
+struct ExpectedLeak {
+    ExpectedLeak();
+    ~ExpectedLeak();
 };
 
 // Result of compiling and running via C backend

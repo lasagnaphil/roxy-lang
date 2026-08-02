@@ -10,7 +10,40 @@ Last updated: 2026-08-02
 
 ## High Priority
 
-(none currently)
+*Found by the teardown leak check added 2026-08-02 (`roxy --check-leaks`; the
+E2E harness asserts it on every program it runs). Both were invisible before:
+the free-trap only fires on an explicit `delete`, so nothing was looking.*
+
+- [ ] **A coroutine suspended inside a `catch` leaks the caught exception when
+  destroyed without being drained**: `fun gen(): Coro<i32> { try { throw MyErr {}; } catch (e: MyErr) { yield 42; } }`
+  followed by one `resume()` and no drain leaves the exception object alive.
+  Yielding from inside the catch promotes `e` into the coroutine's state struct;
+  the resume path deletes it (`get_field self.e` → `delete`), but the generated
+  `__coro_*$$delete` never does, so an undrained coroutine frees the state struct
+  and drops the exception on the floor. Cause: `generate_coro_destructor` selects
+  fields with `member_needs_drop(field.type)`, and an exception is an *ordinary
+  copyable struct* — it is owned by the catch scope, not by its type
+  (lifetimes.md "Caught exceptions"). This is the same "decided from the wrong
+  source of truth" shape as the return-path bugs fixed the same day.
+  Fixing it needs both halves: include catch-param fields in `$$delete`, **and**
+  null the field on the resume path after the existing delete (the pattern the
+  ref-local `RefDec` → `SetField(null)` rewrite in `coroutine_lower` already
+  uses), or a drained coroutine double-frees. Narrowed to needing *both* a yield
+  inside the catch and an undrained coroutine — yield outside the catch, a fully
+  drained coroutine, and a throw/catch in a callee are all clean. Pinned by
+  `ExpectedLeak` in the two `E2E Coroutines` cases; remove those when fixed.
+- [ ] **The Lox interpreter leaks in proportion to the work it does**:
+  `./build/roxy --check-leaks examples/lox/main.roxy <script>` reports 5 objects
+  for `print "a";`, 16 for two var decls, **215 for `fun f(n) {...} print f(10);`**
+  (fib(10) ≈ 177 interpreter calls, so roughly one object per call). Cause
+  unknown and worth finding — it is the largest real Roxy program, so whatever
+  this is likely affects any program of that shape. Ruled out 2026-08-02:
+  exceptions are not it (same-frame, cross-frame, and 100-iteration throw/catch
+  loops are all clean), and the basic constructs are not it (all six `examples/`
+  are clean and 1522 E2E cases pass the assertion). Suspect the environment /
+  `LoxValue` structures, or a drop path only Lox exercises. Note it may be a leak
+  in the Lox *program's* own logic rather than a compiler bug — with no GC that
+  is still a real leak, but it changes where the fix goes.
 
 *Two `ref`-counting holes were fixed here on 2026-08-02 (both pre-existing,
 both verified against an unmodified tree before the fix): a discarded

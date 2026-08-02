@@ -172,6 +172,22 @@ struct SlabAllocator {
     // Returns number of pages reclaimed
     u32 reclaim_tombstoned();
 
+    // Census of everything still allocated. At a clean program exit `leaked`
+    // must be 0: every `uniq` local dropped by RAII, every module global torn
+    // down by __module_shutdown, every container and dynamic string released.
+    //
+    // `immortal` is the one legitimate survivor — interned string LITERALS are
+    // allocated once and never freed by design (ROXY_STR_IMMORTAL), so they are
+    // counted out rather than reported as leaks.
+    //
+    // O(total slots): a debug/teardown diagnostic, not a hot path.
+    struct LiveObjectStats {
+        u64 live = 0;      // every ALIVE object
+        u64 immortal = 0;  // interned string literals (never freed by design)
+        u64 leaked = 0;    // live - immortal
+    };
+    LiveObjectStats live_object_stats() const;
+
 private:
     // Get size class index for a given size, or NUM_SIZE_CLASSES if too large
     u32 size_to_class(u32 size) const;

@@ -1,4 +1,5 @@
 #include "test_helpers.hpp"
+#include "roxy/core/doctest/doctest.h"
 
 #include "roxy/shared/lexer.hpp"
 #include "roxy/compiler/parser.hpp"
@@ -972,6 +973,13 @@ private:
     char m_temp_path[256];
 };
 
+// Set while a test has opted out of the teardown leak assertion (see
+// ExpectedLeak). doctest runs cases sequentially, so a plain flag suffices.
+static bool g_expected_leak = false;
+
+ExpectedLeak::ExpectedLeak() { g_expected_leak = true; }
+ExpectedLeak::~ExpectedLeak() { g_expected_leak = false; }
+
 TestResult run_and_capture(const char* source, StringView func_name, Span<Value> args, bool debug) {
     TestResult result;
     result.success = false;
@@ -1008,7 +1016,26 @@ TestResult run_and_capture(const char* source, StringView func_name, Span<Value>
     result.value = vm_result.as_int;
     result.success = true;
 
+    // Teardown invariant: main() returned normally, so RAII and
+    // __module_shutdown should have released everything the program allocated.
+    // Anything still alive (immortal string literals aside) is a leak.
+    // vm_destroy takes the census itself — after __module_shutdown, before the
+    // slabs go — and leaves it on the (caller-owned) struct for us to read.
     vm_destroy(&vm);
+    result.leaked = vm.teardown_heap_stats.leaked;
+
+    // main() returned normally, so RAII and __module_shutdown should have
+    // released everything the program allocated. Anything still alive is a
+    // missing drop or an unbalanced retain — a class of bug the free-trap can't
+    // catch, because it only fires on an explicit `delete`. Asserted here so
+    // every test that runs a program checks it, rather than only the tests
+    // written to look for it.
+    if (!g_expected_leak) {
+        CHECK_MESSAGE(result.leaked == 0,
+                      "teardown leak: ", result.leaked,
+                      " object(s) still alive after main() returned");
+    }
+
     delete module;
     return result;
 }

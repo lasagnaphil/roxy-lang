@@ -51,6 +51,7 @@ are auto-discovered from its directory. Useful flags:
 | `--dump-bc` | Print the bytecode disassembly to stderr |
 | `--time` | Per-phase compile timing, and the compile-vs-execute split |
 | `--repeat=N` | Compile N times and report averaged timings |
+| `--check-leaks` | Report heap objects still alive after `main()` returns; exit 70 if any |
 
 Every example above runs, but the language as a whole is work in progress —
 `TODO.md` lists the known bugs, including a few that make otherwise-valid

@@ -153,6 +153,29 @@ void roxy_rt_shutdown(void);
 // otherwise.
 roxy_allocator* roxy_rt_default_allocator(void);
 
+// ===== Teardown invariant =====
+//
+// Census of everything the global slab allocator still holds. At a clean
+// program exit `leaked` must be 0: RAII dropped every `uniq` local,
+// `__module_shutdown` tore down every global, and every container / dynamic
+// string was released. A nonzero `leaked` means a missing drop or an
+// unbalanced retain — the class of bug that is otherwise invisible, since the
+// free-trap only fires on an explicit `delete`.
+//
+// `immortal` counts interned string LITERALS, which are allocated once and
+// never freed by design; they are excluded from `leaked` rather than reported.
+//
+// Reads the GLOBAL slab (AOT mode / `roxy_rt_init`). The VM owns its own
+// allocator — use `vm_heap_stats()` there. Returns all zeros when the slab is
+// not the active allocator, since the malloc fallback tracks no liveness.
+typedef struct {
+    uint64_t live;
+    uint64_t immortal;
+    uint64_t leaked;
+} roxy_heap_stats;
+
+roxy_heap_stats roxy_rt_heap_stats(void);
+
 // Zero-initialize a context. Safe to call again after `roxy_ctx_destroy`.
 void roxy_ctx_init(roxy_ctx* ctx);
 

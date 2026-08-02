@@ -215,6 +215,17 @@ void roxy_rt_shutdown(void) {
     }
 }
 
+roxy_heap_stats roxy_rt_heap_stats(void) {
+    roxy_heap_stats out = {0, 0, 0};
+    if (g_rt_init_refcount > 0 && g_global_slab) {
+        auto stats = g_global_slab->live_object_stats();
+        out.live = stats.live;
+        out.immortal = stats.immortal;
+        out.leaked = stats.leaked;
+    }
+    return out;
+}
+
 roxy_allocator* roxy_rt_default_allocator(void) {
     if (g_rt_init_refcount > 0 && g_global_slab) {
         return &g_global_slab_vtable;
