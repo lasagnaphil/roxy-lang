@@ -2684,6 +2684,39 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
         emit_str_release(old_value);
     }
 
+    // Wrap uniq/ref → weak conversion for local assignment. A no-op when the
+    // target is a struct, but it must precede the destroy below for the same
+    // reason gen_return_stmt orders it that way: WeakCreate reads the object's
+    // generation, which a drop would tombstone.
+    value = maybe_wrap_weak(value, assign_expr.value->resolved_type, assign_expr.target->resolved_type,
+                            assign_expr.value);
+
+    // For copyable struct rvalues that alias source storage, allocate fresh
+    // storage and emit a StructCopy — mirrors the gen_var_decl fix. Struct
+    // literals and calls already produce fresh storage, so skip them.
+    // Only applies to simple `=`; compound ops on structs dispatch through
+    // trait methods above, and primitive compound ops don't land here with
+    // a struct target.
+    //
+    // ORDER: this runs BEFORE the old value is destroyed, and that is
+    // load-bearing rather than incidental. `a = a` makes the RHS *the same
+    // storage* as the target, so destroying first would release the members and
+    // then clone from the corpse — a string at count 1 gets freed and re-retained
+    // in its own dead slot, and the next release double-frees it. Same
+    // retain-before-release rule the `string` self-assignment above spells out,
+    // one level up. (Found by reducing a generated program to `a = a;`.)
+    bool value_is_fresh = assign_expr.value->kind == AstKind::ExprStructLiteral ||
+                          assign_expr.value->kind == AstKind::ExprCall;
+    if (assign_expr.op == AssignOp::Assign && target_type && target_type->is_struct()
+        && target_type->is_copy() && !value_is_fresh) {
+        u32 slot_count = target_type->struct_info.slot_count;
+        ValueId fresh = emit_stack_alloc(slot_count, target_type);
+        // Clone, for the same reason as gen_var_decl: the guard above is
+        // "copyable, and the source storage belongs to someone else".
+        emit_struct_copy(fresh, value, slot_count, target_type, StructCopyKind::Clone);
+        value = fresh;
+    }
+
     // Destroying the overwritten value is a CLEANUP question — whether the old
     // value has drop glue — not a move-only one. Gating it on move-only-ness
     // leaked every overwrite of a copyable struct that owns something (`v = mk()`
@@ -2697,28 +2730,6 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
             // Variable was moved but now being reassigned — make it live again
             owned_info->is_moved = false;
         }
-    }
-
-    // Wrap uniq/ref → weak conversion for local assignment
-    value = maybe_wrap_weak(value, assign_expr.value->resolved_type, assign_expr.target->resolved_type,
-                            assign_expr.value);
-
-    // For copyable struct rvalues that alias source storage, allocate fresh
-    // storage and emit a StructCopy — mirrors the gen_var_decl fix. Struct
-    // literals and calls already produce fresh storage, so skip them.
-    // Only applies to simple `=`; compound ops on structs dispatch through
-    // trait methods above, and primitive compound ops don't land here with
-    // a struct target.
-    bool value_is_fresh = assign_expr.value->kind == AstKind::ExprStructLiteral ||
-                          assign_expr.value->kind == AstKind::ExprCall;
-    if (assign_expr.op == AssignOp::Assign && target_type && target_type->is_struct()
-        && target_type->is_copy() && !value_is_fresh) {
-        u32 slot_count = target_type->struct_info.slot_count;
-        ValueId fresh = emit_stack_alloc(slot_count, target_type);
-        // Clone, for the same reason as gen_var_decl: the guard above is
-        // "copyable, and the source storage belongs to someone else".
-        emit_struct_copy(fresh, value, slot_count, target_type, StructCopyKind::Clone);
-        value = fresh;
     }
 
     // Normal variable assignment - in SSA, we create a new value

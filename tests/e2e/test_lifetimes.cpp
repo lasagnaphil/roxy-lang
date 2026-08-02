@@ -2111,4 +2111,29 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.stdout_output == "123\n");
     }
 
+    // ── self-assignment of a struct that owns a counted member ──
+    //
+    // `a = a` makes the RHS the *same storage* as the target, so the clone must
+    // happen before the old value is destroyed. Destroying first released the
+    // string at count 1 — freeing it — and then retained the dead slot, so the
+    // next release double-freed. Exactly the retain-before-release rule the
+    // `string` case (`s = s`) already followed, one level up.
+    //
+    // Reduced from a 1000-line generated program; the whole reproduction is the
+    // one self-assignment.
+    TEST_CASE_TEMPLATE("self-assignment of a struct owning a string", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct S { s: string; n: i32; }
+        fun main(): i32 {
+            var a: S = S { s = f"dyn {1}", n = 7 };
+            a = a;
+            print(a.s);
+            return a.n;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.stdout_output == "dyn 1\n");
+    }
+
 }

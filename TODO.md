@@ -54,22 +54,6 @@ the free-trap only fires on an explicit `delete`, so nothing was looking.*
   by bucket, so a `find_bucket(map, key) -> i32` primitive is the missing piece —
   the probe loop already exists as `map_probe_value` in `roxy_rt.cpp`.
 
-- [ ] **A generated benchmark program double-frees a string** (regression from
-  the Drop/Copy work, 2026-08-02). Reproduce:
-  `./build/roxy_gen --seed=109 --modules=4 --out=/tmp/g109 && ./build/roxy /tmp/g109/main.roxy`
-  → `slab->states[slot_idx] == SlotState::ALIVE` assert. Deterministic.
-
-  Scope: 1 of 31 seeds at `--modules=4` (seeds 100-130). Three others in that
-  range (128-130) crash on `main` too and are *not* from this work. None of the
-  `Structured Gen` suite's own seeds are affected, which is why the suite is
-  green — worth adding 109 to it once fixed.
-
-  Not yet diagnosed beyond "a string, freed twice". Two candidate mechanisms
-  were ruled out by experiment: the `DELETE` free_obj nulling change (forcing
-  the old always-null behavior back gives a *different* crash, not this one),
-  and cleanup-record narrowing flipping the handler-in-scope test (fixed
-  separately via `live_start_pc`; seed 109 is unchanged by it).
-
 - [ ] **The Lox interpreter leaks one List per interpreter call**:
   `fun f(n) {...} print f(10);` leaks 177 **lists** alongside 38 strings, and the
   count tracks the interpreter's call count exactly (1 call → 1 list, 3 → 3,
