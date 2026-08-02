@@ -106,7 +106,10 @@ TEST_SUITE("E2E Structs") {
         CHECK(result.stdout_output == "12\n17\n");
     }
 
-    TEST_CASE("Struct with float fields") {  // VM-only: f64 return inspected via raw Value bits (no exit-code equivalent)
+    TEST_CASE("Struct with float fields returned from main") {  // VM-only: f64 return inspected via raw Value bits (no stdout/exit-code equivalent)
+        // Companion to the parametric case below, which asserts the value through
+        // stdout and so must return i32. This one keeps the `main(): f64` return
+        // path covered.
         const char* source = R"(
         struct Vec2 {
             x: f64;
@@ -124,6 +127,27 @@ TEST_SUITE("E2E Structs") {
         Value result = compile_and_run(source, "main");
         Value float_result = Value::float_from_u64(result.as_u64());
         CHECK(float_result.as_float == doctest::Approx(4.0));  // 1.5 + 2.5
+    }
+
+    TEST_CASE_TEMPLATE("Struct with float fields", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Vec2 {
+            x: f64;
+            y: f64;
+        }
+
+        fun main(): i32 {
+            var v: Vec2;
+            v.x = 1.5;
+            v.y = 2.5;
+            print(v.x + v.y);
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "4\n");  // 1.5 + 2.5
     }
 
     TEST_CASE_TEMPLATE("Struct in conditional", Backend, RX_E2E_BACKENDS) {

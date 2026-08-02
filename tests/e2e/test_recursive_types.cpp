@@ -395,7 +395,7 @@ TEST_SUITE("E2E Recursive Types") {
         CHECK(result.value == 15);
     }
 
-    TEST_CASE("tagged union AST eval") {  // VM-only: result exceeds 0..255 exit-code range (C exit code is 8-bit)
+    TEST_CASE_TEMPLATE("tagged union AST eval", Backend, RX_E2E_BACKENDS) {
         const char* source = R"CODE(
         enum ExprKind { Literal, Negate, Add }
 
@@ -427,13 +427,14 @@ TEST_SUITE("E2E Recursive Types") {
             var neg: uniq Expr = uniq Expr { kind = ExprKind::Negate, operand = lit7 };
             var add: uniq Expr = uniq Expr { kind = ExprKind::Add, left = neg, right = lit5 };
 
-            return eval(ref add);
+            print(eval(ref add));
+            return 0;
         }
     )CODE";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == -2);
+        CHECK(result.stdout_output == "-2\n");
     }
 
     TEST_CASE_TEMPLATE("mutual recursion via List<uniq T>", Backend, RX_E2E_BACKENDS) {
@@ -476,7 +477,7 @@ TEST_SUITE("E2E Recursive Types") {
         CHECK(result.value == 6);
     }
 
-    TEST_CASE("deep linked list construction and destruction") {  // VM-only: result exceeds 0..255 exit-code range (C exit code is 8-bit)
+    TEST_CASE_TEMPLATE("deep linked list construction and destruction", Backend, RX_E2E_BACKENDS) {
         const char* source = R"CODE(
         struct Node {
             value: i32;
@@ -496,13 +497,14 @@ TEST_SUITE("E2E Recursive Types") {
 
         fun main(): i32 {
             var list: uniq Node = build(500);
-            return list.value;
+            print(list.value);
+            return 0;
         }
     )CODE";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 499);
+        CHECK(result.stdout_output == "499\n");
     }
 
 }  // TEST_SUITE("E2E Recursive Types")

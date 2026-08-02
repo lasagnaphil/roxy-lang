@@ -31,7 +31,16 @@
 //
 // NOTE: `value` is the program result — the VM return value, or the process
 // exit code on the C backend. Exit codes truncate to 0..255 (non-negative) on
-// Unix, so prefer asserting on `stdout_output` for results outside that range.
+// Unix, so `value` cannot carry a larger or negative result.
+//
+// **Prefer printing what you want to check and asserting on `stdout_output`.**
+// It is not just a workaround for that range: a single returned number usually
+// encodes several observations (`a * 100 + b * 10 + c`), which loses ordering
+// and reports one opaque integer when it fails. Printing each observation keeps
+// the sequence — including where a destructor runs relative to the values
+// around it — and a mismatch shows exactly which line diverged. Twelve tests
+// were VM-only purely because their result exceeded 255; printing instead made
+// all of them run on both backends.
 
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"

@@ -360,7 +360,7 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.value == 6);
     }
 
-    TEST_CASE("Map<i32, Struct>: rehash preserves struct values") {  // VM-only: result exceeds 0..255 exit-code range (C exit code is 8-bit)
+    TEST_CASE_TEMPLATE("Map<i32, Struct>: rehash preserves struct values", Backend, RX_E2E_BACKENDS) {
         // Exercises map_grow + map_insert_internal's Robin Hood swap on
         // variable-sized values. Insert enough entries to trigger at least one
         // grow, then verify every value is intact.
@@ -381,17 +381,18 @@ TEST_SUITE("E2E Maps") {
                 sum = sum + v.x + v.y + v.z;
                 j = j + 1;
             }
-            return sum;
+            print(sum);
+            return 0;
         }
     )ROXY";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         // sum over j in [0,50) of (j + 2j + 3j) = 6 * sum(0..49) = 6 * 1225 = 7350
-        CHECK(result.value == 7350);
+        CHECK(result.stdout_output == "7350\n");
     }
 
-    TEST_CASE("Map<i32, Struct>: remove keeps other entries intact") {  // VM-only: result exceeds 0..255 exit-code range (C exit code is 8-bit)
+    TEST_CASE_TEMPLATE("Map<i32, Struct>: remove keeps other entries intact", Backend, RX_E2E_BACKENDS) {
         // Exercises backward-shift deletion with variable-sized values.
         const char* source = R"ROXY(
         struct Val { pub x: i32; pub y: i32; pub z: i32; }
@@ -404,14 +405,15 @@ TEST_SUITE("E2E Maps") {
             m.remove(2);
             var v1: Val = m.get(1);
             var v3: Val = m.get(3);
-            return v1.x + v1.y + v1.z + v3.x + v3.y + v3.z;
+            print(v1.x + v1.y + v1.z + v3.x + v3.y + v3.z);
+            return 0;
         }
     )ROXY";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         // 10+20+30 + 70+80+90 = 300
-        CHECK(result.value == 300);
+        CHECK(result.stdout_output == "300\n");
     }
 
     // ============================================================================
@@ -477,7 +479,7 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.value == 60);
     }
 
-    TEST_CASE("Map<Struct, i32>: rehash with struct keys") {  // VM-only: result exceeds 0..255 exit-code range (C exit code is 8-bit)
+    TEST_CASE_TEMPLATE("Map<Struct, i32>: rehash with struct keys", Backend, RX_E2E_BACKENDS) {
         // Inserts cross the 80% load threshold and force map_grow; this exercises
         // the ping-pong scratch buffers for variable-sized keys.
         const char* source = R"ROXY(
@@ -487,12 +489,13 @@ TEST_SUITE("E2E Maps") {
             for (var i: i32 = 0; i < 25; i = i + 1) {
                 m.insert(Key { a = i, b = i * 2, c = i * 3 }, i * 100);
             }
-            return m.get(Key { a = 7, b = 14, c = 21 });
+            print(m.get(Key { a = 7, b = 14, c = 21 }));
+            return 0;
         }
     )ROXY";
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 700);
+        CHECK(result.stdout_output == "700\n");
     }
 
     // ============================================================================
@@ -520,7 +523,7 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE("Map<Struct, i32>: custom eq collapses bytewise-different keys") {  // VM-only: result exceeds 0..255 exit-code range (C exit code is 8-bit)
+    TEST_CASE_TEMPLATE("Map<Struct, i32>: custom eq collapses bytewise-different keys", Backend, RX_E2E_BACKENDS) {
         // Custom Vec2.eq treats (a,b) and (b,a) as equal, so the second insert
         // overwrites the first and the map ends up with one entry.
         const char* source = R"ROXY(
@@ -537,17 +540,17 @@ TEST_SUITE("E2E Maps") {
             var m: Map<Vec2, i32> = Map<Vec2, i32>();
             m.insert(Vec2 { x = 1, y = 2 }, 100);
             m.insert(Vec2 { x = 2, y = 1 }, 200);   // overwrites under custom eq
-            var len: i32 = i32(m.len());
-            var v: i32 = m.get(Vec2 { x = 1, y = 2 });
-            return len * 1000 + v;   // expect 1*1000 + 200 = 1200
+            print(i32(m.len()));                     // one entry, not two
+            print(m.get(Vec2 { x = 1, y = 2 }));     // the overwriting value
+            return 0;
         }
     )ROXY";
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 1200);
+        CHECK(result.stdout_output == "1\n200\n");
     }
 
-    TEST_CASE("Map<Struct, i32>: only hash defined, eq falls back to bytewise") {  // VM-only: result exceeds 0..255 exit-code range (C exit code is 8-bit)
+    TEST_CASE_TEMPLATE("Map<Struct, i32>: only hash defined, eq falls back to bytewise", Backend, RX_E2E_BACKENDS) {
         // No user-defined eq → bytewise memcmp. Two distinct-byte keys remain
         // distinct entries even though they collide on hash.
         const char* source = R"ROXY(
@@ -559,12 +562,14 @@ TEST_SUITE("E2E Maps") {
             var m: Map<K, i32> = Map<K, i32>();
             m.insert(K { x = 1, y = 2 }, 100);
             m.insert(K { x = 3, y = 4 }, 200);
-            return i32(m.len()) * 1000 + m.get(K { x = 3, y = 4 });
+            print(i32(m.len()));                 // two distinct entries
+            print(m.get(K { x = 3, y = 4 }));
+            return 0;
         }
     )ROXY";
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 2200);
+        CHECK(result.stdout_output == "2\n200\n");
     }
 
     TEST_CASE_TEMPLATE("Map<Struct, i32>: hash method without `for Hash` is NOT dispatched", Backend, RX_E2E_BACKENDS) {

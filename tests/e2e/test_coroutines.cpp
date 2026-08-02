@@ -125,7 +125,7 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.value == 61);
     }
 
-    TEST_CASE("Coroutine yield in if/else") {  // VM-only: result exceeds 0..255 exit-code range (C exit code is 8-bit)
+    TEST_CASE_TEMPLATE("Coroutine yield in if/else", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun conditional(flag: bool): Coro<i32> {
             if (flag) {
@@ -138,23 +138,19 @@ TEST_SUITE("E2E Coroutines") {
 
         fun main(): i32 {
             var g1 = conditional(true);
-            var a: i32 = g1.resume();
-            var b: i32 = g1.resume();
+            print(g1.resume());
+            print(g1.resume());
 
             var g2 = conditional(false);
-            var c: i32 = g2.resume();
-            var d: i32 = g2.resume();
-
-            return a + b + c + d;
+            print(g2.resume());
+            print(g2.resume());
+            return 0;
         }
     )";
 
-        // g1 (flag=true): resume() → 100, resume() → 300. Total: 400
-        // g2 (flag=false): resume() → 200, resume() → 300. Total: 500
-        // Result: 400 + 500 = 900
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 900);
+        CHECK(result.stdout_output == "100\n300\n200\n300\n");
     }
 
     TEST_CASE_TEMPLATE("Coroutine error: yield outside coroutine", Backend, RX_E2E_BACKENDS) {
@@ -402,7 +398,7 @@ TEST_SUITE("E2E Coroutines") {
     // Yield in when statements
     // ============================================================================
 
-    TEST_CASE("Coroutine yield in when statement") {  // VM-only: result exceeds 0..255 exit-code range (C exit code is 8-bit)
+    TEST_CASE_TEMPLATE("Coroutine yield in when statement", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Color { Red, Green, Blue }
 
@@ -420,30 +416,27 @@ TEST_SUITE("E2E Coroutines") {
 
         fun main(): i32 {
             var g1 = color_values(Color::Red);
-            var a: i32 = g1.resume();
-            var b: i32 = g1.resume();
+            print(g1.resume());
+            print(g1.resume());
 
             var g2 = color_values(Color::Blue);
-            var c: i32 = g2.resume();
-            var d: i32 = g2.resume();
-
-            return a * 1000 + b * 100 + c * 10 + d;
+            print(g2.resume());
+            print(g2.resume());
+            return 0;
         }
     )";
 
-        // g1(Red): yield 1, yield 0 → a=1, b=0
-        // g2(Blue): yield 3, yield 0 → c=3, d=0
-        // 1*1000 + 0*100 + 3*10 + 0 = 1030
-        auto result = VMBackend::run(source);
+        // g1(Red): yield 1 then the trailing yield 0; g2(Blue): yield 3 then 0.
+        auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 1030);
+        CHECK(result.stdout_output == "1\n0\n3\n0\n");
     }
 
     // ============================================================================
     // Deeply nested yield
     // ============================================================================
 
-    TEST_CASE("Coroutine deeply nested yield") {  // VM-only: result exceeds 0..255 exit-code range (C exit code is 8-bit)
+    TEST_CASE_TEMPLATE("Coroutine deeply nested yield", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun deep(a: bool, b: bool): Coro<i32> {
             if (a) {
@@ -464,23 +457,21 @@ TEST_SUITE("E2E Coroutines") {
 
         fun main(): i32 {
             var g1 = deep(true, true);
-            var v1: i32 = g1.resume();
-            var e1: i32 = g1.resume();
+            print(g1.resume());
+            print(g1.resume());
 
             var g2 = deep(false, true);
-            var v2: i32 = g2.resume();
-            var e2: i32 = g2.resume();
-
-            return v1 * 1000 + e1 * 100 + v2 * 10 + e2;
+            print(g2.resume());
+            print(g2.resume());
+            return 0;
         }
     )";
 
-        // g1(true,true): yield 11, yield 99 → v1=11, e1=99
-        // g2(false,true): yield 1, yield 99 → v2=1, e2=99
-        // 11*1000 + 99*100 + 1*10 + 99 = 11000 + 9900 + 10 + 99 = 21009
-        auto result = VMBackend::run(source);
+        // g1(true,true): yield 11 then the trailing yield 99;
+        // g2(false,true): yield 1 then 99.
+        auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 21009);
+        CHECK(result.stdout_output == "11\n99\n1\n99\n");
     }
 
     // ============================================================================
@@ -554,7 +545,7 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(!result.success);
     }
 
-    TEST_CASE("Coroutine yield in try, no exception") {  // VM-only: result exceeds 0..255 exit-code range (C exit code is 8-bit)
+    TEST_CASE_TEMPLATE("Coroutine yield in try, no exception", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun gen(): Coro<i32> {
             var result: i32 = 0;
@@ -571,17 +562,17 @@ TEST_SUITE("E2E Coroutines") {
 
         fun main(): i32 {
             var g = gen();
-            var a: i32 = g.resume();
-            var b: i32 = g.resume();
-            var c: i32 = g.resume();
-            return a * 100 + b * 10 + c;
+            print(g.resume());
+            print(g.resume());
+            print(g.resume());
+            return 0;
         }
     )";
 
-        // a=10, b=20, c=20 (no exception, so result stays 20 after try)
-        auto result = VMBackend::run(source);
+        // No exception, so `result` stays 20 for the trailing yield.
+        auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 1220);
+        CHECK(result.stdout_output == "10\n20\n20\n");
     }
 
     TEST_CASE_TEMPLATE("Coroutine multiple yields in try", Backend, RX_E2E_BACKENDS) {
@@ -609,7 +600,7 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.value == 123);
     }
 
-    TEST_CASE("Coroutine yield in catch after throw") {  // VM-only: result exceeds 0..255 exit-code range (C exit code is 8-bit)
+    TEST_CASE_TEMPLATE("Coroutine yield in catch after throw", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct MyErr {
             val: i32;
@@ -629,15 +620,15 @@ TEST_SUITE("E2E Coroutines") {
 
         fun main(): i32 {
             var g = gen();
-            var a: i32 = g.resume();
-            var b: i32 = g.resume();
-            return a * 100 + b;
+            print(g.resume());
+            print(g.resume());
+            return 0;
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 9900 + 100);
+        CHECK(result.stdout_output == "99\n100\n");
     }
 
     TEST_CASE_TEMPLATE("Coroutine yield in try with loop", Backend, RX_E2E_BACKENDS) {
@@ -718,18 +709,17 @@ TEST_SUITE("E2E Coroutines") {
 
         fun main(): i32 {
             var c = gen(3);
-            var total: i32 = 0;
             while (!c.done()) {
-                total = total + c.resume();
+                print(c.resume());
             }
-            return total;
+            return 0;
         }
     )";
 
-        // Yields 40, 41, 42; the final done-path resume contributes 0.
+        // The whole sequence, in order — the last line is the done-path resume.
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 123);
+        CHECK(result.stdout_output == "40\n41\n42\n0\n");
     }
 
     TEST_CASE_TEMPLATE("Coroutine promoted local, yield nested inside an inner loop",
@@ -765,19 +755,17 @@ TEST_SUITE("E2E Coroutines") {
 
         fun main(): i32 {
             var c = gen();
-            var total: i32 = 0;
             while (!c.done()) {
-                total = total + c.resume();
+                print(c.resume());
             }
-            return total;
+            return 0;
         }
     )";
 
-        // Yields 10, 11, 20, 21 then warm=30; done-path resume adds 0. Kept
-        // under 256 so the C backend's 8-bit exit code can carry it.
+        // Inner loop yields 10, 11 then 20, 21; then the trailing `yield warm`.
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 92);
+        CHECK(result.stdout_output == "10\n11\n20\n21\n30\n0\n");
     }
 
     TEST_CASE_TEMPLATE("Coroutine promoted local read across a for-loop back-edge",
@@ -795,18 +783,16 @@ TEST_SUITE("E2E Coroutines") {
 
         fun main(): i32 {
             var c = gen(3);
-            var total: i32 = 0;
             while (!c.done()) {
-                total = total + c.resume();
+                print(c.resume());
             }
-            return total;
+            return 0;
         }
     )";
 
-        // Yields 60, 61, 62; the done-path resume contributes 0.
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 183);
+        CHECK(result.stdout_output == "60\n61\n62\n0\n");
     }
 
     TEST_CASE_TEMPLATE("Coroutine value-struct local across a loop, run to completion",
@@ -834,22 +820,25 @@ TEST_SUITE("E2E Coroutines") {
 
         fun main(): i32 {
             var c = gen(2);
-            var total: i32 = 0;
             while (!c.done()) {
-                total = total + c.resume();
+                print(c.resume());
             }
-            return total;
+            print("done");
+            return 0;
         }
     )";
 
-        // Yields 5, 6; done-path resume contributes 0. Exactly one destructor run.
+        // Yields 5 and 6, then the resume that completes the body — which runs
+        // the scope-exit cleanup ("freed") before returning its 0. That "freed"
+        // appears exactly once is the whole point: the completion path drops the
+        // Holder's resource, and the state destructor must not re-drop it when
+        // the Coro later goes out of scope.
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 11);
-        CHECK(result.stdout_output == "freed\n");
+        CHECK(result.stdout_output == "5\n6\nfreed\n0\ndone\n");
     }
 
-    TEST_CASE("Coroutine uniq promoted, run to completion") {  // VM-only: result exceeds 0..255 exit-code range (C exit code is 8-bit)
+    TEST_CASE_TEMPLATE("Coroutine uniq promoted, run to completion", Backend, RX_E2E_BACKENDS) {
         // A uniq variable captured across a yield point becomes a promoted field.
         // When the coroutine runs to completion, inline cleanup frees the uniq,
         // and the destructor (called at Coro scope exit) sees null and skips it.
@@ -871,19 +860,19 @@ TEST_SUITE("E2E Coroutines") {
 
         fun main(): i32 {
             var g = gen();
-            var a: i32 = g.resume();
-            var b: i32 = g.resume();
+            print(g.resume());
+            print(g.resume());
             // Resume once more to reach done state (triggers inline cleanup of r)
             g.resume();
-            return a * 100 + b;
+            return 0;
         }
     )";
 
-        auto result = VMBackend::run(source);
+        // The destructor runs exactly once, on the done path's inline cleanup —
+        // after both yields and before the Coro itself is dropped.
+        auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 4243);
-        // Destructor should be called exactly once (inline cleanup on done path)
-        CHECK(result.stdout_output == "dtor\n");
+        CHECK(result.stdout_output == "42\n43\ndtor\n");
     }
 
     TEST_CASE_TEMPLATE("Coroutine uniq promoted, early drop", Backend, RX_E2E_BACKENDS) {
