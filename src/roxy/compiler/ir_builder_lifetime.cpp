@@ -373,21 +373,26 @@ void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
         }
     }
 
-    // Process variant fields in when clauses (discriminant-aware cleanup)
+    // Process variant fields in when clauses (discriminant-aware cleanup).
+    // Same `member_needs_drop` gate as the regular fields above and as
+    // build_struct_field_deletes — this arm used to restate it as
+    // `Uniq || noncopyable()`, which omits `string`, so a tagged union with a
+    // `string` variant field synthesized an EMPTY destructor. The VM hid that
+    // whenever the struct was walk-eligible (the descriptor uses the shared
+    // gate), but an inherited struct — and every struct on the C backend, which
+    // always calls `$$delete` — leaked the variant's string.
     for (const auto& clause : struct_info.when_clauses) {
-        // Check if any variant in this clause has noncopyable fields
-        bool has_noncopyable_variant = false;
+        bool has_droppable_variant = false;
         for (const auto& variant : clause.variants) {
             for (const auto& variant_field : variant.fields) {
-                if (variant_field.type && (variant_field.type->kind == TypeKind::Uniq ||
-                                           variant_field.type->noncopyable())) {
-                    has_noncopyable_variant = true;
+                if (member_needs_drop(variant_field.type)) {
+                    has_droppable_variant = true;
                     break;
                 }
             }
-            if (has_noncopyable_variant) break;
+            if (has_droppable_variant) break;
         }
-        if (!has_noncopyable_variant) continue;
+        if (!has_droppable_variant) continue;
 
         // Load the discriminant value
         const FieldInfo* disc_field = nullptr;
@@ -409,11 +414,9 @@ void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
         for (u32 vi = 0; vi < clause.variants.size(); vi++) {
             const auto& variant = clause.variants[vi];
 
-            // Check if this variant has any noncopyable fields
             bool variant_has_cleanup = false;
             for (const auto& variant_field : variant.fields) {
-                if (variant_field.type && (variant_field.type->kind == TypeKind::Uniq ||
-                                           variant_field.type->noncopyable())) {
+                if (member_needs_drop(variant_field.type)) {
                     variant_has_cleanup = true;
                     break;
                 }
@@ -430,17 +433,13 @@ void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
 
             finish_block_branch(is_match, cleanup_block->id, next_block->id);
 
-            // Emit cleanup for this variant's noncopyable fields
             set_current_block(cleanup_block);
             for (i32 fi = static_cast<i32>(variant.fields.size()) - 1; fi >= 0; fi--) {
                 const auto& variant_field = variant.fields[fi];
-                if (!variant_field.type) continue;
-                if (variant_field.type->kind == TypeKind::Uniq ||
-                    variant_field.type->noncopyable()) {
-                    u32 actual_offset = clause.union_slot_offset + variant_field.slot_offset;
-                    emit_single_field_destroy(self_ptr, variant_field.name,
-                        actual_offset, variant_field.slot_count, variant_field.type);
-                }
+                if (!member_needs_drop(variant_field.type)) continue;
+                u32 actual_offset = clause.union_slot_offset + variant_field.slot_offset;
+                emit_single_field_destroy(self_ptr, variant_field.name,
+                    actual_offset, variant_field.slot_count, variant_field.type);
             }
             finish_block_goto(merge_block->id);
 
@@ -599,10 +598,11 @@ void IRBuilder::emit_discriminant_reassign_cleanup(ValueId obj,
     // owned field, so teardown frees a garbage pointer → crash / double-free.
     // Fix: drop the outgoing variant's owned fields, then zero the union so the
     // incoming variant starts from null. A no-op when the variant isn't changing.
+    // Shared gate again: re-tagging away from a variant must release exactly
+    // what teardown would have, `string` variant fields included.
     auto variant_has_owned = [](const VariantInfo& v) {
         for (const auto& f : v.fields)
-            if (f.type && (f.type->kind == TypeKind::Uniq || f.type->noncopyable()))
-                return true;
+            if (member_needs_drop(f.type)) return true;
         return false;
     };
 
@@ -637,12 +637,10 @@ void IRBuilder::emit_discriminant_reassign_cleanup(ValueId obj,
         set_current_block(drop_block);
         for (i32 fi = static_cast<i32>(variant.fields.size()) - 1; fi >= 0; fi--) {
             const auto& variant_field = variant.fields[fi];
-            if (!variant_field.type) continue;
-            if (variant_field.type->kind == TypeKind::Uniq || variant_field.type->noncopyable()) {
-                emit_single_field_destroy(obj, variant_field.name,
-                    clause.union_slot_offset + variant_field.slot_offset,
-                    variant_field.slot_count, variant_field.type);
-            }
+            if (!member_needs_drop(variant_field.type)) continue;
+            emit_single_field_destroy(obj, variant_field.name,
+                clause.union_slot_offset + variant_field.slot_offset,
+                variant_field.slot_count, variant_field.type);
         }
         finish_block_goto(drop_merge->id);
         set_current_block(next_block);

@@ -742,4 +742,53 @@ TEST_SUITE("E2E Tagged Unions") {
         CHECK(result.stdout_output == "7\n9\n");
     }
 
-}  // TEST_SUITE("E2E Tagged Unions")
+    // A `string` variant field is counted like any other member, so the struct's
+    // synthesized destructor must release it. That walk restated the drop gate as
+    // `Uniq || noncopyable()`, which omits `string` — so the destructor came out
+    // EMPTY and the variant's string leaked.
+    //
+    // Only visible through the destructor: the VM reaches a *parentless* tagged
+    // union through the descriptor walk, which uses the shared gate and was
+    // always right. An inherited one takes CallDtor instead — and the C backend
+    // routes every struct through `$$delete` — so both go through the walk.
+    TEST_CASE_TEMPLATE("inherited tagged union releases a string variant field", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        enum K { A, B }
+        struct Base { n: i32; }
+        struct T : Base {
+            when k: K {
+                case A: pad: i32;
+                case B: s: string;
+            }
+        }
+        fun main(): i32 {
+            var t: T = T { n = 1, k = K::B, s = f"v{1}" };
+            var t2: T = t;
+            print(t2.s);
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.stdout_output == "v1\n");
+    }
+
+    // Re-tagging away from a variant releases what it held, on the same gate.
+    TEST_CASE_TEMPLATE("re-tagging a union releases the outgoing string variant", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        enum K { A, B }
+        struct T { when k: K { case A: pad: i32; case B: s: string; } }
+        fun main(): i32 {
+            var t: T = T { k = K::B, s = f"v{1}" };
+            t.k = K::A;
+            t.pad = 9;
+            print(f"{t.pad}");
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.stdout_output == "9\n");
+    }
+
+}
