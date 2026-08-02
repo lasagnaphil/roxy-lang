@@ -63,12 +63,19 @@ the free-trap only fires on an explicit `delete`, so nothing was looking.*
     destructor. `noncopyable()`'s struct arm reads that instead of "has any
     default destructor". Should be a no-op for every type today — the structs
     that currently earn a synthetic destructor are exactly the move-only ones.
-  - **Add clone glue at the copy sites.** After each `StructCopy` of a type with
-    string fields (recursively, through nested value structs), emit `StrRetain`
-    per field. ~12 `emit_struct_copy` call sites in the IR builder, plus the
-    callee-prologue deep copy for value params in `lowering.cpp`, plus the C
-    backend. Best done as one `emit_struct_clone_glue(dst, type)` helper so the
-    retain set is derived once, mirroring `compute_drop_plan`.
+  - **Add clone glue at the duplication sites.** `compute_retain_plan` (landed
+    2026-08-02) is the derivation; what remains is emitting it. The site list is
+    longer than `emit_struct_copy` — by-value struct arguments and small struct
+    returns duplicate in *bytecode lowering* with no `StructCopy` in the IR, and
+    container-element and struct-field reads duplicate too. See lifetimes.md →
+    "Duplication sites the glue must cover". Missing one turns the leak into a
+    use-after-free, so route duplication through an op that carries the
+    obligation rather than patching sites.
+
+  **Ordering:** the move-only change and the glue+gate change must land
+  **together**. Each alone is unbalanced — retains without releases, a
+  destructor that forces move-only, or copyable `ref` structs with unbalanced
+  counts. lifetimes.md → "The ordering constraint" has the table.
 
   This is the Clone half of the value-lifecycle model (lifetimes.md "Value
   lifecycle"), which is described there but only implemented for Drop. The

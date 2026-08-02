@@ -5,13 +5,21 @@
 
 using namespace rx;
 
-// Migration step 1 of the lifecycle-traits design
-// (docs/internals/lifetimes.md §18): the structural value-lifecycle predicates
-// is_copy / needs_drop / needs_retain / is_trivial. They have no behavioral
-// consumers yet — they are the source of truth the future drop/copy/clone glue
-// lowering will use; here we just pin their definitions. Struct behavior with
-// *synthesized* destructors (which require the semantic pass) is exercised
-// end-to-end by the build_delete_desc cross-check assertion across the e2e suite.
+// The structural value-lifecycle decisions (docs/internals/lifetimes.md → "The
+// value lifecycle"): the is_copy / needs_drop / needs_retain / is_trivial
+// predicates, and the two *plans* that codegen consumes — compute_drop_plan and
+// compute_retain_plan.
+//
+// The predicates still have no code-emitting consumer; the plans are the source
+// of truth. compute_drop_plan is fully wired (both backends, plus
+// member_needs_drop). compute_retain_plan is NOT yet consumed — these tests pin
+// its answers so the derivation can be reviewed on its own, ahead of the glue
+// (see lifetimes.md → "Separating Drop from Copy" for why the glue cannot land
+// without the rest of that plan in the same change).
+//
+// Struct behavior with *synthesized* destructors (which require the semantic
+// pass) is exercised end-to-end by the build_delete_desc cross-check assertion
+// across the e2e suite.
 
 TEST_SUITE("Lifecycle Predicates") {
 
@@ -138,5 +146,112 @@ TEST_SUITE("Lifecycle Predicates") {
         CHECK(plain->is_copy());
         CHECK_FALSE(plain->needs_drop());
         CHECK(plain->is_trivial());
+    }
+
+    // ---- compute_retain_plan: the mirror of compute_drop_plan --------------
+    //
+    // The invariant these pin: for every type, retain and drop are either both
+    // trivial, or exact inverses, or the type is move-only (retain None, drop
+    // destructive). No type may have a non-trivial drop, no retain, and still be
+    // copyable — that is the shape that leaks or double-frees.
+
+    TEST_CASE("retain plan: trivial types acquire nothing") {
+        BumpAllocator allocator(4096);
+        TypeCache types(allocator);
+        Type* trivial[] = { types.i32_type(), types.i64_type(), types.bool_type(),
+                            types.f64_type(), types.weak_type(types.i32_type()) };
+        for (Type* t : trivial) {
+            CHECK(compute_retain_plan(t).kind == RetainKind::None);
+            CHECK(compute_drop_plan(t).kind == DropKind::None);
+        }
+        CHECK(compute_retain_plan(nullptr).kind == RetainKind::None);
+    }
+
+    TEST_CASE("retain plan: string and ref invert their drops exactly") {
+        BumpAllocator allocator(4096);
+        TypeCache types(allocator);
+
+        Type* s = types.string_type();
+        CHECK(compute_retain_plan(s).kind == RetainKind::StrRetain);
+        CHECK(compute_drop_plan(s).kind == DropKind::StrRelease);
+        CHECK(s->is_copy());   // copyable *because* the drop has an inverse
+
+        Type* r = types.ref_type(types.i32_type());
+        CHECK(compute_retain_plan(r).kind == RetainKind::RefInc);
+        CHECK(compute_drop_plan(r).kind == DropKind::RefDec);
+        CHECK(r->is_copy());
+    }
+
+    TEST_CASE("retain plan: move-only kinds acquire nothing") {
+        // They are moved, never implicitly duplicated; `.copy()` is a separate,
+        // explicit deep copy. A retain here would be meaningless — there is no
+        // count to bump, only a buffer to duplicate.
+        BumpAllocator allocator(4096);
+        TypeCache types(allocator);
+        Type* move_only[] = {
+            types.uniq_type(types.i32_type()),
+            types.list_type(types.i32_type()),
+            types.map_type(types.string_type(), types.i32_type()),
+        };
+        for (Type* t : move_only) {
+            CHECK_FALSE(t->is_copy());
+            CHECK(compute_retain_plan(t).kind == RetainKind::None);
+        }
+    }
+
+    TEST_CASE("retain plan: a copyable struct walks fields; move-only does not") {
+        BumpAllocator allocator(4096);
+        TypeCache types(allocator);
+
+        // A copyable struct holding a `string` retains by walking its fields.
+        // This is the shape that leaks today: the walk has no emitter yet.
+        Type* boxed = types.struct_type("Boxed"_sv, nullptr);
+        auto* bf = reinterpret_cast<FieldInfo*>(
+            allocator.alloc_bytes(sizeof(FieldInfo), alignof(FieldInfo)));
+        bf[0] = FieldInfo{ "s"_sv, types.string_type(), true, 0, 0, 2 };
+        boxed->struct_info.fields = Span<FieldInfo>(bf, 1);
+        boxed->struct_info.when_clauses = Span<WhenClauseInfo>();
+        boxed->struct_info.destructors = Span<DestructorInfo>();
+
+        CHECK(boxed->is_copy());
+        RetainPlan bp = compute_retain_plan(boxed);
+        CHECK(bp.kind == RetainKind::WalkFields);
+        CHECK(bp.struct_type == boxed);
+
+        // Nesting: a struct whose field is *that* struct also walks (the emitter
+        // recurses by consulting the plan per field).
+        Type* outer = types.struct_type("Outer"_sv, nullptr);
+        auto* of = reinterpret_cast<FieldInfo*>(
+            allocator.alloc_bytes(sizeof(FieldInfo), alignof(FieldInfo)));
+        of[0] = FieldInfo{ "inner"_sv, boxed, true, 0, 0, 2 };
+        outer->struct_info.fields = Span<FieldInfo>(of, 1);
+        outer->struct_info.when_clauses = Span<WhenClauseInfo>();
+        outer->struct_info.destructors = Span<DestructorInfo>();
+        CHECK(compute_retain_plan(outer).kind == RetainKind::WalkFields);
+
+        // A struct of plain fields retains nothing.
+        Type* plain = types.struct_type("PlainR"_sv, nullptr);
+        auto* pf = reinterpret_cast<FieldInfo*>(
+            allocator.alloc_bytes(sizeof(FieldInfo), alignof(FieldInfo)));
+        pf[0] = FieldInfo{ "x"_sv, types.i32_type(), true, 0, 0, 1 };
+        plain->struct_info.fields = Span<FieldInfo>(pf, 1);
+        plain->struct_info.when_clauses = Span<WhenClauseInfo>();
+        plain->struct_info.destructors = Span<DestructorInfo>();
+        CHECK(compute_retain_plan(plain).kind == RetainKind::None);
+
+        // A struct made move-only by a destructor retains nothing even though a
+        // field would: it is moved, not duplicated.
+        Type* owned = types.struct_type("OwnedR"_sv, nullptr);
+        auto* wf = reinterpret_cast<FieldInfo*>(
+            allocator.alloc_bytes(sizeof(FieldInfo), alignof(FieldInfo)));
+        wf[0] = FieldInfo{ "s"_sv, types.string_type(), true, 0, 0, 2 };
+        owned->struct_info.fields = Span<FieldInfo>(wf, 1);
+        owned->struct_info.when_clauses = Span<WhenClauseInfo>();
+        auto* dt = reinterpret_cast<DestructorInfo*>(
+            allocator.alloc_bytes(sizeof(DestructorInfo), alignof(DestructorInfo)));
+        dt[0] = DestructorInfo{};
+        owned->struct_info.destructors = Span<DestructorInfo>(dt, 1);
+        CHECK_FALSE(owned->is_copy());
+        CHECK(compute_retain_plan(owned).kind == RetainKind::None);
     }
 }

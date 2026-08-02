@@ -898,7 +898,7 @@ synthesized destructor, propagated by the synthetic-destructor fixpoint.
 | Property | Derivation | Consumed by | Status |
 |---|---|---|---|
 | **Drop** | `compute_drop_plan` | both backends, `member_needs_drop` | ✅ complete — **except** `StrRelease` on a struct field, gated off (below) |
-| **Retain** | *none* | — | ❌ **not implemented.** `Type::needs_retain()` exists and has **no code-emitting consumer**; retains are emitted ad hoc per store site |
+| **Retain** | `compute_retain_plan` | *nobody yet* | ⚠️ **derived but unwired.** The plan landed 2026-08-02 and is pinned by tests; no codegen consumes it, so retains are still emitted ad hoc per store site and struct copies emit none |
 | **Move-only** | "struct has a default destructor" | move checker, call/return lowering | ⚠️ **mis-derived** — see below |
 
 The ad-hoc retain sites that *do* exist and are correct: binding a `string`
@@ -907,9 +907,10 @@ overwritten one), and pushing one into a container. What has no retain at all is
 **duplicating a whole struct** — `IROp::StructCopy` copies the bytes and nothing
 else.
 
-`Type::needs_retain()` and `Type::is_trivial()` are currently **dead
-predicates**: they compute the right answer and nobody asks. Treat them as the
-skeleton of the planned derivation, not as working machinery.
+`Type::needs_retain()` and `Type::is_trivial()` are **dead predicates**: they
+compute the right answer and nobody asks. `compute_retain_plan` supersedes them
+as the derivation codegen will consume; the predicates remain only as the
+`is_trivial` convenience the emitter may want later.
 
 ### The gap: Drop and Copy are one bit
 
@@ -948,28 +949,18 @@ Three changes, in this order. The order matters: step 2 before step 1 would make
 `ref`-bearing structs copyable while the glue that keeps their counts balanced
 does not exist yet — trading an over-restriction for a use-after-free.
 
-**1. A retain derivation, mirroring the drop plan.**
+**1. A retain derivation, mirroring the drop plan.** ✅ **Landed** —
+`compute_retain_plan(Type) -> RetainPlan` in `types.cpp`, beside
+`compute_drop_plan`, pinned by the `Lifecycle Predicates` suite:
 
 ```
 enum class RetainKind { None, StrRetain, RefInc, WalkFields };
-RetainPlan compute_retain_plan(Type*);
 ```
 
 `string` → `StrRetain`, `ref` → `RefInc`, a copyable struct with any retaining
 field → `WalkFields`, everything else (including every move-only kind, which is
-never implicitly duplicated) → `None`. Lives beside `compute_drop_plan` so the
-two are read together and a new kind cannot be added to one alone.
-
-**Clone glue at the duplication sites.** The catch: `IROp::StructCopy` is used
-for both copies *and* moves, and a move must not retain. The obligation has to be
-explicit — a `clone` flag on the op (or a distinct `StructClone`) — so it is
-visible in the IR, checkable by `IRValidator`, and lowered by both backends.
-Sites: the `emit_struct_copy` calls in the IR builder, the callee-prologue
-value-parameter deep copy in `lowering.cpp`, and the C emitter.
-
-Inert on landing: no copyable type today has a retaining field (string-bearing
-structs have no drop; `ref`-bearing structs are move-only), so this step changes
-no generated code and is verified by unit tests on the plan plus IR inspection.
+never implicitly duplicated) → `None`. **Not yet consumed by codegen** — see the
+ordering constraint below for why it cannot be wired on its own.
 
 **2. Move-only becomes structural.** An `is_move_only` flag on `StructTypeInfo`,
 computed by the fixpoint that already adds synthetic destructors:
@@ -987,9 +978,47 @@ is_move_only_type(T) = Uniq | List | Map | Coroutine | Function
 step that makes `ref`-bearing structs copyable — a **user-visible language
 change**, correct but not a silent one.
 
-**3. Enable `StrRelease` in the gate.** Remove the carve-out in
-`member_needs_drop`. String-bearing structs now get drop *and* retain together,
-and the leak closes.
+**3. Clone glue at the duplication sites, and enable `StrRelease`.** Remove the
+carve-out in `member_needs_drop` and emit the retain glue, together.
+
+### The ordering constraint
+
+**Steps 2 and 3 must land in one change.** An earlier revision of this plan
+claimed step 1 could be wired first because "no copyable type today has a
+retaining field". That is **wrong**: a string-bearing struct is copyable *and*
+has a retaining field, so every one of the three steps is unbalanced alone.
+
+| Landed alone | Result |
+|---|---|
+| retain glue | retains with no matching release — the imbalance grows, and the teardown census cannot see it (same object, higher count) |
+| `StrRelease` in the gate | string-bearing structs earn a destructor → become **move-only** (measured: four `Structured Gen` cases fail) |
+| structural move-only | `ref`-bearing structs become copyable while nothing balances their counts → **use-after-free** |
+
+Only the combination is sound: the struct earns a drop, stays copyable, and
+every duplication retains.
+
+### Duplication sites the glue must cover
+
+Missing one turns the leak into a use-after-free once step 3 lands, so this list
+is the gating work — and it is longer than `emit_struct_copy`. A copyable value
+struct is duplicated at:
+
+1. the `emit_struct_copy` calls in the IR builder (var decl, assignment, field
+   store, struct literal, large-struct return, `throw`, global init);
+2. **a by-value struct argument** — the caller packs the struct's slots into the
+   argument registers at *bytecode lowering*, with no `StructCopy` in the IR;
+3. **a small (≤ 4 slot) struct return** — returned in registers, likewise no
+   `StructCopy`;
+4. reading a struct element out of a container (`list[i]` on a `List<Box>`);
+5. reading a struct-typed field out of another struct;
+6. a closure capture by copy.
+
+Sites 2–6 are the reason the glue cannot simply hang off `IROp::StructCopy`.
+Either every duplication has to be routed through an IR op that carries the
+obligation (a `clone` flag on `StructCopy`, or a distinct `StructClone`, so it is
+visible to `IRValidator` and lowered by both backends), or each site emits the
+glue explicitly and a test pins each one. The first is preferable: it makes
+completeness checkable instead of a review exercise.
 
 **Why this is verifiable.** Both error directions have detectors, which is what
 makes the change tractable rather than frightening:

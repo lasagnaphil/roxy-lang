@@ -639,6 +639,37 @@ struct DropPlan {
 };
 DropPlan compute_drop_plan(Type* type);
 
+// The mirror of compute_drop_plan: what must be *acquired* when a value is
+// implicitly duplicated into a second location (lifetimes.md "The value
+// lifecycle"). Kept beside the drop derivation deliberately — the two are read
+// together, and a type whose drop is non-trivial must either have a retain that
+// exactly inverts it or be move-only. Both halves in one place is what makes
+// that checkable.
+//
+// Every move-only kind (`uniq`, List, Map, Coro, closures, and a struct holding
+// one) reports None: they are moved, never implicitly duplicated, and their
+// explicit `.copy()` is a different, deep operation.
+//
+// Single-level like the drop plan: WalkFields hands the per-field recursion to
+// the emitter, which consults the plan again for each field. (The `is_move_only`
+// probe inside the struct arm still recurses through `noncopyable()`, exactly as
+// the drop side does.)
+//
+// NOT YET CONSUMED by codegen — see lifetimes.md "Separating Drop from Copy"
+// for why the glue cannot be wired without the other two steps of that plan
+// landing in the same change.
+enum class RetainKind {
+    None,        // trivial: duplication is a plain memcpy
+    StrRetain,   // string: owner++ (no-op on an immortal literal)
+    RefInc,      // ref: another counted borrow
+    WalkFields,  // copyable struct: retain each field that needs it
+};
+struct RetainPlan {
+    RetainKind kind = RetainKind::None;
+    Type* struct_type = nullptr;  // WalkFields: the struct whose fields to walk
+};
+RetainPlan compute_retain_plan(Type* type);
+
 // Whether a value stored in an *opaque member slot* — a container element/value
 // or a struct field — needs a cleanup action on the container/struct's teardown.
 // Used by the synthetic-destructor pass, the struct field-walk, and both

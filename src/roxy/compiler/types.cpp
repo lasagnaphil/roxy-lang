@@ -158,6 +158,54 @@ DropPlan compute_drop_plan(Type* type) {
     return p;
 }
 
+RetainPlan compute_retain_plan(Type* type) {
+    RetainPlan p;
+    if (!type) return p;
+    switch (type->kind) {
+        case TypeKind::String:
+            // Reference-counted: a second location needs its own owner count.
+            p.kind = RetainKind::StrRetain;
+            break;
+        case TypeKind::Ref:
+            // A counted borrow: a copy is simply another borrow.
+            p.kind = RetainKind::RefInc;
+            break;
+        case TypeKind::Struct: {
+            // Move-only structs are never implicitly duplicated, so they have no
+            // retain — their `.copy()` is a separate, explicit deep copy.
+            if (type->noncopyable()) break;
+            // A copyable struct retains iff any field does. Non-recursive at
+            // this level for the same reason compute_drop_plan is: WalkFields
+            // hands the recursion to the emitter, which walks fields and
+            // consults the plan again per field.
+            for (const auto& field : type->struct_info.fields) {
+                if (field.type && compute_retain_plan(field.type).kind != RetainKind::None) {
+                    p.kind = RetainKind::WalkFields; p.struct_type = type;
+                    return p;
+                }
+            }
+            for (const auto& clause : type->struct_info.when_clauses) {
+                for (const auto& variant : clause.variants) {
+                    for (const auto& variant_field : variant.fields) {
+                        if (variant_field.type &&
+                            compute_retain_plan(variant_field.type).kind != RetainKind::None) {
+                            p.kind = RetainKind::WalkFields; p.struct_type = type;
+                            return p;
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        default:
+            // Primitives, enums, `weak` (a {pointer, generation} snapshot holds
+            // no count), and every move-only kind — `uniq`, List, Map, Coro,
+            // closures — which are moved rather than implicitly duplicated.
+            break;
+    }
+    return p;
+}
+
 // Hash function for type interning
 u64 TypeHash::operator()(const Type* t) const {
     if (!t) return 0;
