@@ -182,9 +182,16 @@ The IR builder normally threads only the variables a loop body assigns through
 the header; a local that is merely read keeps naming its definition from before
 the loop. That is legal SSA right up until the resume edge exists, after which
 the value was never computed on that path — a null dereference on the second
-`resume()`, not a miscompile. So in a coroutine, a loop header threads *every*
-live local (`collect_live_locals`), which restores dominance the ordinary way
-and leaves promotion with the simple rule it already had.
+`resume()`, not a miscompile. So a coroutine loop whose body can suspend threads
+*every* live local through its header (`collect_live_locals`), which restores
+dominance the ordinary way and leaves promotion with the simple rule it already
+had.
+
+"Can suspend" is `stmt_contains_yield` over the loop's statement subtree, and
+the recursion matters in both directions. A yield in an **inner** loop still
+makes resuming re-enter the **outer** loop's header, so the outer one widens
+too. Expressions are not walked: `yield` is a statement, so the only one that
+can sit inside an expression is in a lambda body — a different function.
 
 Fixing it at the loop header rather than inside promotion matters, because
 variable identity still exists there and does not survive into the pass:
@@ -200,10 +207,13 @@ redirect, restrict to single-definition variables to avoid corrupting an
 aliased one) are all workarounds for information the builder still had. The
 threading is ~15 lines and needs none of them.
 
-A local the loop never touches costs nothing: its header parameter receives the
-same value on both edges, so the write-back on that edge stores what the block
-already loaded, and 5e skips it. The state struct is unaffected either way —
-promoted variables come from the *yield's* live set, not from loop headers.
+A loop with no yield in it keeps threading only what it assigns, so it is
+untouched. Inside a suspending loop, a local the loop never modifies is cheap
+rather than free: its header parameter receives the same value on both edges, so
+the write-back stores what the block already loaded and 5e skips it, but the
+parameter itself survives to bytecode as a longer live range. The state struct
+is unaffected either way — promoted variables come from the *yield's* live set,
+not from loop headers.
 
 An inline value struct needs no special handling here either; the field is its
 storage, and 5d hands out its address.

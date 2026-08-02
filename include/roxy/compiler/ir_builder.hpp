@@ -835,6 +835,10 @@ private:
     // definition for why a coroutine cannot thread only the assigned ones.
     void collect_live_locals(Vector<StringView>& out);
 
+    // Whether a `yield` appears anywhere in `stmt`'s statement subtree — i.e.
+    // whether lowering will add a resume edge back into this construct.
+    static bool stmt_contains_yield(Stmt* stmt);
+
     void collect_assigned_vars(Stmt* stmt, Vector<StringView>& out);
     void collect_assigned_vars_expr(Expr* expr, Vector<StringView>& out);
     void collect_assigned_vars_impl(Stmt* stmt, Vector<StringView>& out);

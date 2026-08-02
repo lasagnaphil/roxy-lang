@@ -732,6 +732,54 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.value == 123);
     }
 
+    TEST_CASE_TEMPLATE("Coroutine promoted local, yield nested inside an inner loop",
+                       Backend, RX_E2E_BACKENDS) {
+        // The header widening is gated on the loop's subtree containing a yield,
+        // and that test has to recurse: the yield is in the *inner* loop, but
+        // resuming re-enters the outer loop's header too, so the outer header
+        // needs widening just as much. A non-recursive check would leave `r`
+        // undefined on the outer back-edge.
+        //
+        // The yield-free loop in the same function is the other half: it gets no
+        // resume edge, so it keeps threading only what it assigns.
+        const char* source = R"(
+        struct Res { id: i32 = 0; }
+
+        fun gen(): Coro<i32> {
+            var r: uniq Res = uniq Res { id = 10 };
+            var warm: i32 = 0;
+            var w: i32 = 0;
+            while (w < 3) { warm = warm + r.id; w = w + 1; }   // no yield here
+
+            var i: i32 = 0;
+            while (i < 2) {
+                var j: i32 = 0;
+                while (j < 2) {
+                    yield r.id + i * 10 + j;                    // yield in the inner loop
+                    j = j + 1;
+                }
+                i = i + 1;
+            }
+            yield warm;
+        }
+
+        fun main(): i32 {
+            var c = gen();
+            var total: i32 = 0;
+            while (!c.done()) {
+                total = total + c.resume();
+            }
+            return total;
+        }
+    )";
+
+        // Yields 10, 11, 20, 21 then warm=30; done-path resume adds 0. Kept
+        // under 256 so the C backend's 8-bit exit code can carry it.
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 92);
+    }
+
     TEST_CASE_TEMPLATE("Coroutine promoted local read across a for-loop back-edge",
                        Backend, RX_E2E_BACKENDS) {
         // Same as above through `for`, whose header threads its own params.

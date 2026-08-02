@@ -423,7 +423,9 @@ void IRBuilder::gen_while_stmt(Stmt* stmt) {
     //    every live local — see collect_live_locals)
     Vector<StringView> modified_vars;
     collect_assigned_vars(ws.body, modified_vars);
-    if (m_current_func && m_current_func->is_coroutine) collect_live_locals(modified_vars);
+    if (m_current_func && m_current_func->is_coroutine && stmt_contains_yield(ws.body)) {
+        collect_live_locals(modified_vars);
+    }
 
     // 2. Create blocks
     IRBlock* header_block = create_block("while");
@@ -496,7 +498,9 @@ void IRBuilder::gen_for_stmt(Stmt* stmt) {
     Vector<StringView> modified_vars;
     collect_assigned_vars(fs.body, modified_vars);
     collect_assigned_vars_expr(fs.increment, modified_vars);
-    if (m_current_func && m_current_func->is_coroutine) collect_live_locals(modified_vars);
+    if (m_current_func && m_current_func->is_coroutine && stmt_contains_yield(fs.body)) {
+        collect_live_locals(modified_vars);
+    }
 
     // 3. Create blocks
     IRBlock* header_block = create_block("for");
@@ -1339,6 +1343,65 @@ void IRBuilder::gen_var_decl(Decl* decl) {
 
 // Variable management
 
+// Whether a `yield` appears anywhere in `stmt`'s statement subtree.
+//
+// Nested loops count: a yield in an *inner* loop still makes the resume edge
+// re-enter the outer loop's header, so the outer header needs the same widening
+// as the inner one.
+//
+// Expressions are deliberately not walked. `yield` is a statement, so the only
+// way one can sit inside an expression is in a lambda body — a different
+// function, whose yields say nothing about this loop.
+bool IRBuilder::stmt_contains_yield(Stmt* stmt) {
+    if (!stmt) return false;
+
+    // Blocks and `when` arms hold Decls; only the statement-kind ones can yield.
+    auto decl_yields = [](Decl* decl) {
+        return decl && decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtYield &&
+               stmt_contains_yield(&decl->stmt);
+    };
+
+    switch (stmt->kind) {
+        case AstKind::StmtYield:
+            return true;
+        case AstKind::StmtBlock:
+            for (auto* decl : stmt->block.declarations) {
+                if (decl_yields(decl)) return true;
+            }
+            return false;
+        case AstKind::StmtIf:
+            return stmt_contains_yield(stmt->if_stmt.then_branch) ||
+                   stmt_contains_yield(stmt->if_stmt.else_branch);
+        case AstKind::StmtWhile:
+            return stmt_contains_yield(stmt->while_stmt.body);
+        case AstKind::StmtFor:
+            return stmt_contains_yield(stmt->for_stmt.body);
+        case AstKind::StmtWhen: {
+            WhenStmt& when_stmt = stmt->when_stmt;
+            for (auto& when_case : when_stmt.cases) {
+                for (auto* decl : when_case.body) {
+                    if (decl_yields(decl)) return true;
+                }
+            }
+            for (auto* decl : when_stmt.else_body) {
+                if (decl_yields(decl)) return true;
+            }
+            return false;
+        }
+        case AstKind::StmtTry: {
+            TryStmt& try_stmt = stmt->try_stmt;
+            if (stmt_contains_yield(try_stmt.try_body)) return true;
+            for (u32 i = 0; i < try_stmt.catches.size(); i++) {
+                if (stmt_contains_yield(try_stmt.catches[i].body)) return true;
+            }
+            // `yield` in `finally` is rejected by sema; checked for completeness.
+            return try_stmt.finally_body && stmt_contains_yield(try_stmt.finally_body);
+        }
+        default:
+            return false;
+    }
+}
+
 // A loop in a coroutine must thread *every* live local through its header, not
 // just the ones its body assigns.
 //
@@ -1353,11 +1416,13 @@ void IRBuilder::gen_var_decl(Decl* decl) {
 // it *is* a block param wherever its value can change hands. That is why the
 // pass can keep collecting a variable's values from params alone.
 //
-// A local the loop never touches costs nothing in the end — its header param
-// then receives the same value on both edges, which Phase 3's trivial
-// block-argument elimination removes after lowering. The state struct is
-// unaffected either way: promoted variables come from the *yield's* live set,
-// not from loop headers.
+// Only loops that can actually suspend pay for this: a loop with no `yield` in
+// its subtree gets no resume edge, so it keeps threading just what it assigns
+// (`stmt_contains_yield`). Within a suspending loop, a local it never touches is
+// still cheap — its header param receives the same value on both edges, so the
+// write-back stores what the block already loaded and 5e skips it. The state
+// struct is unaffected either way: promoted variables come from the *yield's*
+// live set, not from loop headers.
 void IRBuilder::collect_live_locals(Vector<StringView>& out) {
     for (auto& scope : m_local_scopes) {
         for (auto& [name, local] : scope) {
