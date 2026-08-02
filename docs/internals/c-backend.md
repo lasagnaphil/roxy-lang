@@ -42,6 +42,12 @@ SSA IR is the chosen translation source: every op is typed, structs are laid out
 | `ref T` | `T*` (borrowing, ref-counted) |
 | `weak T` | `roxy_weak` (`{void* ptr; uint64_t generation;}`) |
 
+`uniq`/`ref` add that `*` only over a **value-shaped** pointee — a struct, enum or
+primitive. Over a pointee that already emits as a C pointer (`List`, `Map`,
+`string`, a closure, a coroutine, or a nested `uniq`/`ref`) the borrow *is* the
+same pointer, so no star is added: `ref List<i32>` is `void*`, not `void**`
+(`emits_as_c_pointer` in `c_emitter.cpp`).
+
 All reference types point to data preceded by a `roxy_object_header` (`{uint64_t weak_generation; uint32_t ref_count; uint32_t type_id;}`), matching the VM's layout. `weak_generation == 0` means dead/tombstoned.
 
 ## IR to C Mapping

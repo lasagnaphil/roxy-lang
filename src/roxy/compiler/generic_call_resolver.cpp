@@ -353,11 +353,30 @@ bool GenericCallResolver::unify_type_expr(TypeExpr* pattern, Type* concrete,
             return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type,
                                    type_params, bindings);
         }
-        if (pattern->ref_kind == RefKind::Ref && concrete->kind == TypeKind::Ref) {
+        if (pattern->ref_kind == RefKind::Ref) {
             TypeExpr inner_pattern = *pattern;
             inner_pattern.ref_kind = RefKind::None;
-            return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type,
-                                   type_params, bindings);
+            if (concrete->kind == TypeKind::Ref) {
+                return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type,
+                                       type_params, bindings);
+            }
+            // A `ref T` parameter also accepts what implicitly *borrows* into
+            // one, and inference has to see through that or an argument that
+            // binds perfectly well reports "cannot infer type arguments"
+            // instead. Two shapes reach here:
+            //   - `uniq T` — unwrap to the pointee, so `count<T>(p: ref T)`
+            //     called with a `uniq Point` binds T=Point, not T=uniq Point.
+            //   - a container / closure value — already the pointee's pointer,
+            //     so unify against it directly (`count<T>(xs: ref List<T>)`
+            //     called with a `List<i32>` binds T=i32).
+            // Anything else that can't actually convert still binds here and is
+            // then rejected by the assignability check, which is the accurate
+            // diagnostic — same trade the Coro<T> arm below makes.
+            if (concrete->kind == TypeKind::Uniq) {
+                return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type,
+                                       type_params, bindings);
+            }
+            return unify_type_expr(&inner_pattern, concrete, type_params, bindings);
         }
         if (pattern->ref_kind == RefKind::Weak && concrete->kind == TypeKind::Weak) {
             TypeExpr inner_pattern = *pattern;

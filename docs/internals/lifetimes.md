@@ -341,6 +341,49 @@ for noncopyable containers, so a value param is a true move, not a move-then-cop
 (This also removed an old leak: copyable containers used to be deep-copied on
 value-pass but never destroyed.)
 
+### Containers are borrowable
+
+A container value *is* the pointer to its slab-allocated header, so borrowing one
+is `uniq → ref` with a different pointee: same thin pointer, same
+`ObjectHeader.ref_count`, same free-trap, and — because a container is *always*
+heap — no [promotion](#promotion) gate. `ref List<T>` / `ref Map<K,V>` is therefore
+an ordinary first-class counted borrow, and `List<T> → ref List<T>` is an implicit
+conversion at any typed site (`can_convert_ref`), exactly like `uniq T → ref T`. It
+needs no call-site marker.
+
+```roxy
+fun total(xs: ref List<i32>): i32 { ... }   // borrows; caller keeps its list
+fun consume(xs: List<i32>): i32 { ... }     // moves; caller's list is gone
+```
+
+This is what a **read-only** container parameter should be. Before it existed the
+only non-owning option was `inout`, which forced a function that merely reads its
+argument to advertise mutation, and — being second-class and exclusive — forbade
+passing the same container twice (`compare(xs, xs)`).
+
+`ref` is a borrow, **not an immutable borrow**: it names the object, so mutating
+through it (`xs.push(1)`) is legitimate, consistent with `ref` on a struct. What it
+cannot do is reassign the caller's *slot* — that is what `inout` is for, and it is
+why `ref → inout` is rejected. Conversely a borrow cannot be moved out of the
+borrowing frame (`return xs;` from a `ref List<i32>` parameter is an error);
+`.copy()` is the way to leave with an independent owner.
+
+Counting is the generic `ref`-parameter machinery — `RefInc` at entry, `RefDec` on
+every exit path including exception unwind — so nothing container-specific tracks
+it. An `inout` container may also be narrowed to a `ref` on the way down, which is
+sound for the same reason the whole feature is: the pointee is heap either way.
+
+Two consequences worth naming, both inherited from `ref` rather than new:
+
+- A `ref` element borrow and a container borrow are **separate counters**: the
+  borrow takes `ref_count` (blocking free), while `inout xs[i]` takes the
+  container's `borrow_count` (blocking realloc). See
+  [Container element lvalues](#container-element-lvalues).
+- Rebinding a `ref` binding to a fresh owner (`fun f(r: ref List<i32>) { r = List<i32>(); }`)
+  type-checks and then fails at runtime. That is a pre-existing hole in `ref`
+  rebinding generally — `uniq` behaves identically — not something containers
+  introduced; see `TODO.md`.
+
 ### Containers of borrows hold counted borrows
 
 `List<ref T>` and `Map<_, ref V>` count their borrowed elements: acquiring a borrow

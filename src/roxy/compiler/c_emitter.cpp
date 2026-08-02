@@ -12,6 +12,30 @@ CEmitter::CEmitter(BumpAllocator& alloc, const CEmitterConfig& config)
 
 // --- Type emission ---
 
+// True when emit_type already renders `type` as a C pointer, so wrapping it in
+// `uniq`/`ref` must NOT add another `*`. A container, string, closure or
+// coroutine value *is* the pointer to its heap object; borrowing one is the
+// same thin pointer with a count on the same header, exactly as for a `uniq`
+// (which is why `uniq`/`ref` of one another collapse too). Only the value-shaped
+// pointees — structs, enums, primitives — gain a star when borrowed.
+static bool emits_as_c_pointer(Type* type) {
+    if (!type) return false;
+    switch (type->kind) {
+        case TypeKind::List:
+        case TypeKind::Map:
+        case TypeKind::String:
+        case TypeKind::Function:
+        case TypeKind::Coroutine:
+        case TypeKind::ExceptionRef:
+        case TypeKind::Nil:
+        case TypeKind::Uniq:
+        case TypeKind::Ref:
+            return true;
+        default:
+            return false;
+    }
+}
+
 void CEmitter::emit_type(Type* type, String& out) {
     if (!type) {
         out.append("void");
@@ -39,7 +63,7 @@ void CEmitter::emit_type(Type* type, String& out) {
         case TypeKind::Ref:
         case TypeKind::Uniq:
             emit_type(type->ref_info.inner_type, out);
-            out.append("*");
+            if (!emits_as_c_pointer(type->ref_info.inner_type)) out.append("*");
             break;
         case TypeKind::String:
             out.append("void*");

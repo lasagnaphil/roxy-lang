@@ -69,6 +69,8 @@ Method/ctor/dtor templates are registered during `resolve_type_members` and clon
 
 When type arguments are omitted, the compiler unifies the template's parameter `TypeExpr` tree against the concrete argument types and binds each type parameter. Unification descends through reference wrappers (`uniq`/`ref`/`weak`), the builtin containers (`List<T>`, `Map<K, V>`, `Coro<T>`), nested generic-struct patterns (`Box<T>` against a `Box$i32` instance), and function types (`fun(T) -> T`).
 
+A **`ref` pattern also unifies against what implicitly borrows into one**, or an argument that binds perfectly well would report "cannot infer type arguments" instead. A `uniq T` argument unwraps to the pointee (so `f<T>(p: ref T)` given a `uniq Point` binds `T = Point`, not `T = uniq Point`); a container / closure value is already the pointee's pointer and unifies directly (so `count<T>(xs: ref List<T>)` given a `List<i32>` binds `T = i32`). Anything that can't actually convert still binds here and is then rejected by the assignability check — which is the accurate diagnostic, the same trade the `Coro<T>` arm makes.
+
 ```roxy
 identity(42);                      // T = i32 (function arg)
 first(42, 3.14);                   // T = i32, U = f64

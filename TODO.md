@@ -10,7 +10,21 @@ Last updated: 2026-08-02
 
 ## High Priority
 
-(none currently)
+- [ ] **`return owner;` from a `ref`-returning function escapes a dangling
+  borrow instead of trapping**: `fun f(): ref P { var p: uniq P = uniq P(); return p; }`
+  hands back a reference to the destroyed local. `gen_return_stmt` tests the
+  *returned expression's* type first — `uniq P` is noncopyable, so it takes the
+  move branch (`mark_moved_from`) and never reaches the `ref`-handoff branch
+  below it, so no count is incremented. The caller adopts a count that was never
+  taken, its scope-exit `RefDec` underflows ("ref_dec: reference count already
+  zero"), and the dangling pointee is then read anyway. Routing through an
+  intermediate `ref` local (`var b: ref P = p; return b;`) is the path
+  `tests/e2e/test_lifetimes.cpp` covers and it traps correctly ("Cannot delete:
+  object has active borrows") — only the direct form is broken. The fix is to
+  test the *return type* (`ref`) before the expression type in `gen_return_stmt`.
+  Pre-existing for `uniq`, verified 2026-08-02 on an unmodified tree; the
+  container-borrow work made the same shape reachable for `List`/`Map`
+  (`fun f(): ref List<i32> { var xs = ...; return xs; }`).
 
 *Nine bugs were found and fixed here on 2026-08-02, all traced back to compiling
 `CLAUDE.md`'s example program — which had never been run. Kept as a record of
@@ -46,13 +60,23 @@ did.*
 
 ## Medium Priority
 
-- [ ] **No immutable borrow for containers**: a container parameter is either
-  owning (`List<T>`, which *moves* the caller's value — `quicksort.roxy`'s
-  `is_sorted(arr)` hit exactly this) or `inout`. `ref List<i32>` parses but
-  won't bind ("cannot assign 'List<i32>' to 'ref List<i32>'"), and the grammar
-  has no call-site `ref` (`argument -> ( "out" | "inout" )? expression`). So a
-  function that only reads its argument must advertise mutation and take
-  `inout`, and needlessly forbids aliasing it.
+- [ ] **Rebinding a `ref` binding to a fresh owner compiles and then traps at
+  runtime**: `fun f(r: ref List<i32>) { r = List<i32>(); }` (and the identical
+  `fun f(p: ref P) { p = uniq P(); }`) type-checks — the source converts to the
+  target `ref` type — but the rebind neither releases the old borrow's count nor
+  takes one on the new object, so the program dies with "ref_dec: reference
+  count already zero". Pre-existing for `uniq`, verified 2026-08-02 on an
+  unmodified tree; the container-borrow work made the same shape reachable for
+  `List`/`Map`. The model has no stated rule for rebinding a live borrow: either
+  reject assignment to a `ref`-typed binding whose source is an owning value, or
+  make the rebind emit `RefDec(old)` + `RefInc(new)`. Rejecting is the smaller
+  change and matches "a `ref` names one object for its lifetime".
+  Binding a `ref` *local* to an unowned temporary (`var r: ref P = uniq P();`,
+  `var r: ref List<i32> = List<i32>();`) fails the same way and is the same
+  family — nobody owns the temporary, so the local's scope-exit `RefDec` has no
+  matching increment. Also verified pre-existing for `uniq`. Passing a temporary
+  as a borrow *argument* (`take(List<i32>())`) is fine: the caller frame keeps
+  and drops it.
 
 ---
 

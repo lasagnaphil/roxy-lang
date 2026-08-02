@@ -80,6 +80,18 @@ print(f"point = {p}");  // "point = (1, 2)"
 print(p);               // same — print's Printable fallback (overloading.md)
 ```
 
+A **`uniq` or `ref` prints as its pointee**: both are statically-live heap
+pointers with the same representation as the value they name, so
+`type_implements_printable` looks through them and `emit_to_string_value`
+hands the pointer straight to the pointee's `to_string` — no conversion. This
+is what lets a borrowing function keep `f"{items}"` when it takes
+`ref List<i32>` rather than `inout List<i32>` (whose parameter type is the bare
+container).
+
+**`weak` is deliberately excluded** and still errors: it can dangle, so
+`to_string` would read freed memory. Printing one needs an explicit liveness
+check first.
+
 Per-type conversion is centralized in the IR builder's `emit_to_string_value`
 (String pass-through, primitives/enums via their registered `$$to_string`
 natives, structs via `Struct$$to_string`, containers via the synthesized

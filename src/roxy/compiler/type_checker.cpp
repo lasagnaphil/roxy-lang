@@ -185,6 +185,21 @@ bool TypeChecker::can_convert_ref(Type* from, Type* to) const {
         return from == to->ref_info.inner_type;
     }
 
+    // List<T> -> ref List<T> / Map<K,V> -> ref Map<K,V>: a container value is a
+    // pointer to a slab-allocated header, so borrowing one mirrors uniq -> ref
+    // exactly — same thin pointer, same ObjectHeader.ref_count, same free-trap.
+    // This is what lets a read-only function take `ref List<i32>` instead of
+    // advertising mutation with `inout` (which also forbids aliasing), and it
+    // does not consume the owner: `noncopyable()` is false for a Ref, so the
+    // caller keeps its value and destroys it at scope exit.
+    //
+    // Container types are interned, so identity compares element types. No
+    // covariance: `ref List<Child>` is not a `ref List<Parent>` (a borrow is
+    // mutable — `push`ing a Parent through it would corrupt the element layout).
+    if (from->is_container() && to->kind == TypeKind::Ref) {
+        return from == to->ref_info.inner_type;
+    }
+
     return false;
 }
 

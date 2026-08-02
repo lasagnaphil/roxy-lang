@@ -82,5 +82,29 @@ inline i32 self_pass_param_offset(CallExpr& call_expr) {
     return 0;  // any other object shape: the callee carries a plain fn type
 }
 
+// The declared parameter type that explicit argument `arg_index` binds to, or
+// null when the callee's shape can't be classified (callers then fall back to
+// the argument's own type). Wraps self_pass_param_offset's index shift so the
+// three call-lowering sites that need a parameter type don't each re-derive it.
+//
+// The shift is the whole point: a method callee — user-struct methods and
+// List/Map/Coro builtin methods alike — carries `self` at param_types[0], so
+// explicit argument `i` is param_types[i + 1]. Indexing with a bare `i`
+// compared each argument against the *previous* parameter, which is how a
+// `uniq`/`ref` passed to a `weak` method parameter (including
+// `List<weak T>.push`) once escaped being snapshotted into a {pointer,
+// generation} pair and read back as a dangling reference.
+inline Type* callee_param_type(CallExpr& call_expr, u32 arg_index) {
+    Expr* callee = call_expr.callee;
+    Type* fn_type = callee && callee->resolved_type
+        ? callee->resolved_type->base_type() : nullptr;
+    if (!fn_type || !fn_type->is_function()) return nullptr;
+    i32 self_offset = self_pass_param_offset(call_expr);
+    if (self_offset < 0) return nullptr;
+    Span<Type*> param_types = fn_type->func_info.param_types;
+    u32 param_index = arg_index + static_cast<u32>(self_offset);
+    return param_index < param_types.size() ? param_types[param_index] : nullptr;
+}
+
 }  // namespace ir_builder_detail
 }  // namespace rx

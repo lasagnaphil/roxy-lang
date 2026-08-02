@@ -104,14 +104,16 @@ Include `roxy/vm/binding/roxy_map.hpp`. `RoxyMap<K, V>` is an alias of `roxy::Ma
 
 ## Copy and Move Semantics
 
-A `Map<K, V>` is **noncopyable** when either `K` or `V` is noncopyable. Noncopyable maps follow the same move-semantic rules as noncopyable lists and `uniq` variables:
+A `Map<K, V>` is **always noncopyable**, whatever `K` and `V` are: it owns a heap bucket array, so — like `List` and `uniq` — it is move-only. Maps follow the same move-semantic rules as lists and `uniq` variables:
 
-- **Passing to a function** moves ownership.
+- **Passing to a function by value** moves ownership.
 - **Initializing a new variable** moves the source.
 - **Use-after-move** is a compile-time error.
-- **Struct fields** of noncopyable map type trigger a synthetic destructor on the containing struct.
+- **Struct fields** of map type trigger a synthetic destructor on the containing struct.
 
-When both `K` and `V` are copyable, the map is freely copyable via `map_copy` in the function prologue.
+`.copy()` produces an independent duplicate when one is wanted (rejected when `K` or `V` isn't copyable).
+
+A parameter typed `ref Map<K, V>` **borrows** instead of moving — the caller keeps its map, no call-site marker needed, and the same map may be passed twice in one call. This is `uniq → ref` with a different pointee (a map value *is* the pointer to its slab-allocated header), so the count and free-trap are the ordinary ones. Mutating through the borrow (`m.insert(k, v)`) is allowed; reassigning the caller's slot is not (that is `inout`). See [lifetimes.md → Containers are borrowable](lifetimes.md#containers-are-borrowable).
 
 ### Scope-Exit Cleanup (RAII)
 

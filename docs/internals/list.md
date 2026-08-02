@@ -73,14 +73,28 @@ access.
 
 ## Copy and Move Semantics
 
-A `List<T>` is **noncopyable** when `T` is noncopyable (i.e., `T` is `uniq`, a struct with a default destructor, or another noncopyable container). Noncopyable lists use move semantics — the same rules as `uniq` variables and value structs with destructors:
+A `List<T>` is **always noncopyable**, whatever `T` is: it owns a heap element buffer, so — like `uniq` — it is move-only. Lists use move semantics, the same rules as `uniq` variables and value structs with destructors:
 
-- **Passing to a function** moves ownership; the caller's variable is consumed
+- **Passing to a function by value** moves ownership; the caller's variable is consumed
 - **Initializing a new variable** (`var copy = items`) moves the source
 - **Use-after-move** is a compile-time error
-- **Struct fields** of noncopyable list type trigger a synthetic destructor on the containing struct
+- **Struct fields** of list type trigger a synthetic destructor on the containing struct
 
-When `T` is copyable (e.g., `i32`, `string`), the list is freely copyable via a shallow `list_copy` in the function prologue.
+`.copy()` produces an independent duplicate when one is genuinely wanted (element-wise; rejected when `T` isn't copyable).
+
+### Borrowing a list
+
+A parameter typed `ref List<T>` **borrows** rather than moves — the caller keeps its list and can pass it again, or pass it twice in one call:
+
+```roxy
+fun total(xs: ref List<i32>): i32 { ... }   // borrows
+fun consume(xs: List<i32>): i32 { ... }     // moves
+
+var xs: List<i32> = List<i32>();
+print(f"{total(xs)} {total(xs)}");          // fine — no call-site marker needed
+```
+
+A list value *is* the pointer to its slab-allocated header, so this is `uniq → ref` with a different pointee: the conversion is implicit, the count lives in the same `ObjectHeader.ref_count`, and the free-trap is the same one. `ref` is a borrow, not an *immutable* borrow — `xs.push(1)` through it is legitimate; what it cannot do is reassign the caller's slot (that is `inout`) or be moved out of the borrowing frame. See [lifetimes.md → Containers are borrowable](lifetimes.md#containers-are-borrowable).
 
 ### Scope-Exit Cleanup (RAII)
 

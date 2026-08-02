@@ -2723,6 +2723,18 @@ bool SemanticAnalyzer::type_implements_printable(Type* type) {
     if (type->is_type_param() && m_generic_calls.has_active_bounds()) {
         return m_generic_calls.bound_includes_trait(type, m_type_env.printable_type());
     }
+    // A `uniq`/`ref` prints as its pointee: both are statically-live heap
+    // pointers with the same representation as the value they name, so
+    // emit_to_string_value can hand the pointer straight to the pointee's
+    // to_string. This is what keeps `f"{items}"` working when a read-only
+    // function switches from `inout List<i32>` (whose param type is the bare
+    // container) to a `ref List<i32>` borrow.
+    //
+    // `weak` is deliberately excluded: it can dangle, and to_string would read
+    // freed memory. Printing one needs an explicit liveness check first.
+    if (type->kind == TypeKind::Uniq || type->kind == TypeKind::Ref) {
+        return type_implements_printable(type->ref_info.inner_type);
+    }
     // Containers recurse here (in addition to implements_trait's concrete
     // container arm) so element/key/value TypeParams consult bounds too —
     // f"{xs}" for xs: List<T> inside a <T: Printable> template body.

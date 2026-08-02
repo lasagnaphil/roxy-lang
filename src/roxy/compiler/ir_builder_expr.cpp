@@ -1605,16 +1605,28 @@ IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
             // branch can't strand the value-Nullify before the insert (step 4).
             bool defer_map_insert_value =
                 i == 1 && is_map_insert_noncopyable_value(call_expr);
-            if (!defer_map_insert_value &&
-                arg.expr->resolved_type && arg.expr->resolved_type->noncopyable()) {
+
+            // Whether this argument is *moved* is a property of the PARAMETER,
+            // not of the argument: sema marks the move from
+            // `param_types[i]->noncopyable()` (check_call_args), so the IR must
+            // read the same side or the two disagree. They did, for every
+            // parameter that borrows a noncopyable argument — `ref List<T>`
+            // being the case that made it visible: `total(bag.items)` nulled
+            // the struct's field as if the container had been moved out, and
+            // the next read of `bag.items` got a null list.
+            //
+            // A null parameter type means the callee's shape wasn't
+            // classifiable; fall back to the argument's own type, which is what
+            // this site did unconditionally before.
+            Type* param_type = callee_param_type(call_expr, i);
+            Type* move_decider = param_type ? param_type : arg.expr->resolved_type;
+            if (!defer_map_insert_value && move_decider && move_decider->noncopyable()
+                && arg.expr->resolved_type && arg.expr->resolved_type->noncopyable()) {
                 consume_temp_noncopyable(args[i]);
                 // `f(o.field)`: null the moved-out field in the root (args[i]
                 // already read its value above) so the root's destructor no-ops it.
                 nullify_moved_field_source(arg.expr);
             }
-
-            Type* callee_func_type = call_expr.callee->resolved_type;
-            if (callee_func_type) callee_func_type = callee_func_type->base_type();
 
             // Passing a bare `self` to a `ref` OR `weak` parameter is a promotion:
             // a `ref` param RefIncs at entry and a `weak` param snapshots the
@@ -1622,40 +1634,16 @@ IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
             // the RAW self pointer here (before the call, and crucially before the
             // maybe_wrap_weak below turns it into a WeakCreate value). A stack
             // receiver traps rather than reading a bogus header (lifetimes.md
-            // "Promotion"). The param index accounts for an implicit `self` on
-            // method callees; uncertain callee shapes return -1 and are skipped.
-            if (is_bare_self(arg.expr) && callee_func_type && callee_func_type->is_function()) {
-                i32 off = self_pass_param_offset(call_expr);
-                Span<Type*> ptypes = callee_func_type->func_info.param_types;
-                if (off >= 0) {
-                    u32 pidx = i + static_cast<u32>(off);
-                    if (pidx < ptypes.size() && ptypes[pidx] &&
-                        (ptypes[pidx]->kind == TypeKind::Ref ||
-                         ptypes[pidx]->kind == TypeKind::Weak)) {
-                        emit_assert_heap(args[i]);
-                    }
-                }
+            // "Promotion").
+            if (is_bare_self(arg.expr) && param_type &&
+                (param_type->kind == TypeKind::Ref || param_type->kind == TypeKind::Weak)) {
+                emit_assert_heap(args[i]);
             }
 
             // Wrap uniq/ref → weak conversion for call arguments (after the gate
             // above, so the gate sees the raw pointer, not the wrapped weak).
-            // The param index needs the same implicit-self offset the gate uses:
-            // a method callee — user-struct methods and List/Map/Coro builtin
-            // methods alike — carries `self` at param_types[0], so explicit
-            // argument `i` is param_types[i + off]. Indexing with a bare `i`
-            // compared each argument against the *previous* parameter, so a
-            // `uniq`/`ref` passed to a `weak` method parameter (including
-            // `List<weak T>.push`) was never snapshotted into a {pointer,
-            // generation} pair and read back as a dangling reference.
-            if (callee_func_type && callee_func_type->is_function()) {
-                i32 off = self_pass_param_offset(call_expr);
-                if (off >= 0) {
-                    Span<Type*> ptypes = callee_func_type->func_info.param_types;
-                    u32 pidx = i + static_cast<u32>(off);
-                    if (pidx < ptypes.size()) {
-                        args[i] = maybe_wrap_weak(args[i], arg.expr->resolved_type, ptypes[pidx]);
-                    }
-                }
+            if (param_type) {
+                args[i] = maybe_wrap_weak(args[i], arg.expr->resolved_type, param_type);
             }
         }
     }
@@ -3207,6 +3195,16 @@ ValueId IRBuilder::gen_static_get_expr(Expr* expr) {
 ValueId IRBuilder::emit_to_string_value(ValueId val, Type* type, bool* out_owned) {
     Type* string_type = m_types.string_type();
     *out_owned = true;
+
+    // A `uniq`/`ref` prints as its pointee (sema's type_implements_printable
+    // admits exactly these two). Both are already the pointee's pointer at
+    // runtime — the same representation the struct and container arms below
+    // expect — so unwrapping the type needs no IR conversion. `weak` never
+    // reaches here; it isn't Printable.
+    while (type && (type->kind == TypeKind::Uniq || type->kind == TypeKind::Ref)) {
+        type = type->ref_info.inner_type;
+    }
+    if (!type) return ValueId::invalid();
 
     if (type->kind == TypeKind::String) {
         // String value — use directly, no conversion needed (borrowed).
