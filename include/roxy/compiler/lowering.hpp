@@ -185,10 +185,14 @@ private:
     // the block-derived start would wrongly cover earlier-in-block argument
     // evaluation, so a throw there would RefDec a not-yet-initialized register.
     tsl::robin_map<u32, u32> m_ref_inc_pcs;
-    // ValueId.id -> the PC just past the instruction that produces it, i.e. the
-    // first PC at which its register actually holds the value. Cleanup records
+    // ValueId-indexed: the PC just past the instruction that produces each value,
+    // i.e. the first PC at which its register actually holds it. Cleanup records
     // start no earlier than this; see the narrowing in build_cleanup_records.
-    tsl::robin_map<u32, u32> m_value_ready_pcs;
+    // A dense side table, not a hash map, because it is written for *every*
+    // result-producing instruction and read only a handful of times per function
+    // — the same reason m_value_to_reg is one (see profiling.md).
+    static constexpr u32 NO_READY_PC = UINT32_MAX;
+    Vector<u32> m_value_ready_pcs;
 
     // Patch jump offsets after all blocks are emitted
     void patch_jumps();

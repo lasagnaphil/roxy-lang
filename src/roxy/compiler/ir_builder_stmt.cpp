@@ -1022,7 +1022,6 @@ void IRBuilder::gen_throw_stmt(Stmt* stmt) {
     ThrowStmt& ts = stmt->throw_stmt;
 
     ValueId exception_val = gen_expr(ts.expr);
-    ValueId exception_val_source = exception_val;
     Type* expr_type = ts.expr->resolved_type;
 
     // If the expression is a value type (struct on stack), heap-allocate it
@@ -1045,7 +1044,7 @@ void IRBuilder::gen_throw_stmt(Stmt* stmt) {
         // was a tracked temporary — a constructor call, say — its counts have
         // just moved into that object, so its own cleanup must stop: leaving it
         // tracked releases the members the in-flight exception still points at.
-        consume_temp_noncopyable(exception_val_source);
+        consume_temp_noncopyable(exception_val);
         exception_val = heap_ptr;
     }
 
@@ -1350,9 +1349,7 @@ void IRBuilder::gen_var_decl(Decl* decl) {
         // hidden output slot for large structs or materializes a small-struct
         // return through the return-unpack path). No copy needed — aliasing is
         // impossible.
-        bool init_produces_fresh = var_decl.initializer &&
-            (var_decl.initializer->kind == AstKind::ExprStructLiteral ||
-             var_decl.initializer->kind == AstKind::ExprCall);
+        bool init_produces_fresh = produces_fresh_struct_storage(var_decl.initializer);
         if (init_produces_fresh) {
             value = gen_expr(var_decl.initializer);
         } else if (var_decl.initializer) {

@@ -31,24 +31,30 @@ inline bool holds_owning_pointer(Type* type) {
 // has to run.
 //
 // Deliberately NOT `noncopyable()`, which answers a different question: whether
-// binding the value *moves* its source. The two coincide for every type that
-// reaches these sites today, so this is currently the same set — but they are
-// different questions, and the whole point of separating Drop from Copy
-// (lifetimes.md → "Separating Drop from Copy") is that a copyable struct will
-// carry drop glue: it must still be destroyed at scope exit while its source
-// stays live. Gating tracking on move-only-ness is what would silently drop that
-// destruction on the floor.
+// binding the value *moves* its source. The two once coincided, and separating
+// them is the point of lifetimes.md → "Separating Drop from Copy": a copyable
+// struct holding a `string` carries drop glue, so it must be destroyed at scope
+// exit while its source stays live. Gating tracking on move-only-ness is what
+// silently dropped that destruction on the floor.
 //
 // `ref` and `string` are excluded because they have their own OwnedKind tracking
 // (RefBorrow / StrOwn) at the same sites; this predicate covers the `Owned` kind.
-//
-// The equivalence was verified, not assumed: a temporary
-// `assert(member_needs_drop(t) == t->noncopyable())` here survived the whole
-// suite on both backends (2460 cases) plus every example including Lox.
 inline bool tracked_for_cleanup(Type* t) {
     if (!t) return false;
     if (t->kind == TypeKind::Ref || t->kind == TypeKind::String) return false;
     return member_needs_drop(t);
+}
+
+// Whether this type's counts are acquired somewhere OTHER than the generic
+// value-lifecycle glue, so emitting that glue for it would count it twice.
+//
+// Only `ref` today. A `ref` element or field is incremented by the runtime (a
+// map's value_is_ref path) or by an explicit heap-gated inc at the site that
+// creates the borrow, both of which predate the glue. Naming it keeps that
+// carve-out — and its justification — in one place rather than restated as a
+// bare `kind != Ref` at every acquire site.
+inline bool counted_by_runtime(Type* t) {
+    return t && t->kind == TypeKind::Ref;
 }
 
 // Whether a struct rvalue's storage was created by the expression that produced

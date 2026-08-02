@@ -455,10 +455,6 @@ void IRBuilder::emit_str_release(ValueId ptr) {
     if (inst) inst->unary = ptr;
 }
 
-void IRBuilder::maybe_str_retain(ValueId val, Type* type) {
-    if (type && type->kind == TypeKind::String) emit_str_retain(val);
-}
-
 // Whether the compiler is responsible for a map value's counts.
 //
 // A `ref` value is counted by the *runtime* — the map header's `value_is_ref`
@@ -466,14 +462,13 @@ void IRBuilder::maybe_str_retain(ValueId val, Type* type) {
 // one too would count it twice. Everything else is the compiler's, because only
 // the compiler knows the type well enough to walk it.
 static bool map_value_is_compiler_counted(Type* value_type) {
-    return value_type && value_type->kind != TypeKind::Ref;
+    return value_type && !counted_by_runtime(value_type);
 }
 
 void IRBuilder::emit_map_value_ownership(ValueId map_obj, Type* map_type,
                                          ValueId key_val, ValueId value_val) {
     if (!map_type || !map_type->is_map()) return;
     Type* value_type = map_type->map_info.value_type;
-    if (!map_value_is_compiler_counted(value_type)) return;
 
     // Storing into a map slot makes the map an owner, so the value must acquire
     // a count — unconditionally, because the slot ends up holding it whether the
@@ -483,7 +478,9 @@ void IRBuilder::emit_map_value_ownership(ValueId map_obj, Type* map_type,
     //
     // A move-only value has no count to acquire — it is moved into the slot, and
     // the call-argument path consumes the temporary instead.
-    if (member_needs_retain(value_type)) emit_value_retain(value_val, value_type);
+    if (map_value_is_compiler_counted(value_type) && member_needs_retain(value_type)) {
+        emit_value_retain(value_val, value_type);
+    }
 
     // The replaced value, if any, has to be released or every overwrite leaks it.
     emit_map_value_delete_if_present(map_obj, map_type, key_val);
@@ -520,31 +517,28 @@ void IRBuilder::emit_map_value_delete_if_present(ValueId map_obj, Type* map_type
     set_current_block(merge_block);
 }
 
-void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
-    if (!map_type || !map_type->is_map()) return;
-    Type* value_type = map_type->map_info.value_type;
-    // The same gate as teardown and as `remove` (member_needs_drop), so clearing
-    // releases exactly what destroying the map would have. Gating on
-    // move-only-ness instead leaked every counted value a `clear()` discarded.
-    // `ref` values are released by the runtime's value_is_ref path.
-    if (!map_value_is_compiler_counted(value_type) || !member_needs_drop(value_type)) return;
-
-    // Look up the internal iteration natives (pre-provided for exactly this:
-    // cleanup of noncopyable map values). If any is missing, skip (the values then
-    // leak on clear, as before — no worse than the prior behavior).
+// One counted walk over a map's occupied buckets, applying `on_value` to each
+// stored value. Shared by the clear-time destroy and the copy-time retain, which
+// are the same traversal with one statement swapped — including the accessor
+// choice, which is a fact about bucket representation and belongs here rather
+// than at each caller.
+//
+// Returns false (emitting nothing) when the iteration natives are unavailable.
+template <typename OnValue>
+bool IRBuilder::emit_map_value_walk(ValueId map_obj, Type* value_type,
+                                    StringView tag, OnValue&& on_value) {
     StringView cap_name("__map_iter_capacity", 19);
     StringView next_name("__map_iter_next_occupied", 24);
     // A value struct lives INLINE in the bucket, so its "value" is the address of
     // its slots — `__map_iter_value_at` packs the leading two slots as a u64,
     // which is right for a pointer-shaped value and garbage for a struct (it
     // hands back the struct's first eight bytes as if they were an address).
-    // Latent until now: this walk only ever ran for move-only values.
     StringView val_name = value_type->is_struct() ? StringView("__map_iter_value_ptr_at", 23)
                                                   : StringView("__map_iter_value_at", 19);
     i32 cap_idx = m_registry.get_index(cap_name);
     i32 next_idx = m_registry.get_index(next_name);
     i32 val_idx = m_registry.get_index(val_name);
-    if (cap_idx < 0 || next_idx < 0 || val_idx < 0) return;
+    if (cap_idx < 0 || next_idx < 0 || val_idx < 0) return false;
 
     Type* i32_type = m_types.i32_type();
 
@@ -554,16 +548,16 @@ void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
 
     // Counted loop over occupied buckets:
     //   for (idx = 0; (next = next_occupied(map, idx)) < cap; idx = next + 1)
-    //       delete value_at(map, next);
+    //       on_value(value_at(map, next));
     // `idx` is the only loop-carried value, so it is the header's one block param;
     // `cap`/`next` are used by dominance (no extra args), matching gen_for_stmt.
-    IRBlock* header = create_block("mapclr");
-    IRBlock* body = create_block("mapclrbody");
-    IRBlock* exit_block = create_block("mapclrend");
+    IRBlock* header = create_block(tag);
+    IRBlock* body = create_block(tag);
+    IRBlock* exit_block = create_block(tag);
 
     ValueId zero = emit_const_int(0, i32_type);
     ValueId idx_param = m_current_func->new_value();
-    header->params.push_back({idx_param, i32_type, "__mapclr_idx"_sv});
+    header->params.push_back({idx_param, i32_type, tag});
 
     Vector<BlockArgPair> init_args; init_args.push_back({zero});
     finish_block_goto(header->id, alloc_span(init_args));
@@ -579,13 +573,14 @@ void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
     // pointer correctly (the C backend casts the u64 to the value's C type).
     ValueId vp = emit_call_native(val_name, alloc_span({map_obj, next}), value_type,
                                   static_cast<u32>(val_idx));
-    emit_delete(vp, value_type);
+    on_value(vp);
     ValueId one = emit_const_int(1, i32_type);
     ValueId idx_next = emit_binary(IROp::AddI, next, one, i32_type);
     Vector<BlockArgPair> back_args; back_args.push_back({idx_next});
     finish_block_goto(header->id, alloc_span(back_args));
 
     set_current_block(exit_block);
+    return true;
 }
 
 // A container the program has just been handed a *second* owner of — the
@@ -594,14 +589,12 @@ void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
 // to acquire: without it the second release spends a count nobody took, and the
 // element dies while the surviving container still points at it.
 //
-// `ref` elements are excluded: those are counted by the runtime (`roxy_map_values`
-// RefIncs them), and move-only elements by `member_needs_retain`, since a
-// container of those is deep-copied rather than shared.
+// `ref` elements are excluded (counted by the runtime), and move-only elements
+// by `member_needs_retain`, since a container of those is deep-copied.
 void IRBuilder::emit_list_elements_retain(ValueId list_val, Type* list_type) {
     if (!list_type || !list_type->is_list() || !m_current_block) return;
     Type* elem_type = list_type->list_info.element_type;
-    if (!elem_type || elem_type->kind == TypeKind::Ref) return;
-    if (!member_needs_retain(elem_type)) return;
+    if (counted_by_runtime(elem_type) || !member_needs_retain(elem_type)) return;
 
     StringView len_name = "List$$len"_sv;
     i32 len_idx = m_registry.get_index(len_name);
@@ -642,60 +635,27 @@ void IRBuilder::emit_list_elements_retain(ValueId list_val, Type* list_type) {
     set_current_block(exit_block);
 }
 
-// The map form of the above, for `m.copy()`. Keys need no loop here — they are
-// counted by the runtime, which duplicates them inside roxy_map_copy.
+void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
+    if (!map_type || !map_type->is_map()) return;
+    Type* value_type = map_type->map_info.value_type;
+    // The same gate as teardown and as `remove` (member_needs_drop), so clearing
+    // releases exactly what destroying the map would have. Gating on
+    // move-only-ness instead leaked every counted value a `clear()` discarded.
+    // `ref` values are released by the runtime's value_is_ref path.
+    if (!map_value_is_compiler_counted(value_type) || !member_needs_drop(value_type)) return;
+    emit_map_value_walk(map_obj, value_type, "mapclr"_sv,
+                        [&](ValueId vp) { emit_delete(vp, value_type); });
+}
+
+// The map form of emit_list_elements_retain, for `m.copy()`. Keys need no loop
+// here — they are counted by the runtime, which duplicates them inside
+// roxy_map_copy.
 void IRBuilder::emit_map_values_retain(ValueId map_obj, Type* map_type) {
     if (!map_type || !map_type->is_map() || !m_current_block) return;
     Type* value_type = map_type->map_info.value_type;
     if (!map_value_is_compiler_counted(value_type) || !member_needs_retain(value_type)) return;
-
-    StringView cap_name("__map_iter_capacity", 19);
-    StringView next_name("__map_iter_next_occupied", 24);
-    // A value struct lives INLINE in the bucket, so its "value" is the address of
-    // its slots — `__map_iter_value_at` packs the leading two slots as a u64,
-    // which is right for a pointer-shaped value and garbage for a struct (it
-    // hands back the struct's first eight bytes as if they were an address).
-    // Latent until now: this walk only ever ran for move-only values.
-    StringView val_name = value_type->is_struct() ? StringView("__map_iter_value_ptr_at", 23)
-                                                  : StringView("__map_iter_value_at", 19);
-    i32 cap_idx = m_registry.get_index(cap_name);
-    i32 next_idx = m_registry.get_index(next_name);
-    i32 val_idx = m_registry.get_index(val_name);
-    if (cap_idx < 0 || next_idx < 0 || val_idx < 0) return;
-
-    Type* i32_type = m_types.i32_type();
-    ValueId cap = emit_call_native(cap_name, alloc_span({map_obj}), i32_type,
-                                   static_cast<u32>(cap_idx));
-
-    // Same counted bucket walk as emit_map_clear_value_cleanup, retaining
-    // instead of destroying.
-    IRBlock* header = create_block("mapretain");
-    IRBlock* body = create_block("mapretainbody");
-    IRBlock* exit_block = create_block("mapretainend");
-
-    ValueId zero = emit_const_int(0, i32_type);
-    ValueId idx_param = m_current_func->new_value();
-    header->params.push_back({idx_param, i32_type, "__mapretain_idx"_sv});
-
-    Vector<BlockArgPair> init_args; init_args.push_back({zero});
-    finish_block_goto(header->id, alloc_span(init_args));
-
-    set_current_block(header);
-    ValueId next = emit_call_native(next_name, alloc_span({map_obj, idx_param}), i32_type,
-                                    static_cast<u32>(next_idx));
-    ValueId cond = emit_binary(IROp::LtI, next, cap, m_types.bool_type());
-    finish_block_branch(cond, body->id, exit_block->id);
-
-    set_current_block(body);
-    ValueId vp = emit_call_native(val_name, alloc_span({map_obj, next}), value_type,
-                                  static_cast<u32>(val_idx));
-    emit_value_retain(vp, value_type);
-    ValueId one = emit_const_int(1, i32_type);
-    ValueId idx_next = emit_binary(IROp::AddI, next, one, i32_type);
-    Vector<BlockArgPair> back_args; back_args.push_back({idx_next});
-    finish_block_goto(header->id, alloc_span(back_args));
-
-    set_current_block(exit_block);
+    emit_map_value_walk(map_obj, value_type, "mapretain"_sv,
+                        [&](ValueId vp) { emit_value_retain(vp, value_type); });
 }
 
 bool IRBuilder::is_map_insert_noncopyable_value(CallExpr& call_expr) const {
@@ -935,8 +895,8 @@ ValueId IRBuilder::gen_lambda_expr(Expr* expr) {
         // `ref` is excluded because its inc is emitted above, heap-gated. Every
         // other counted capture goes through the same member_needs_drop gate the
         // env's cleanup uses, so acquisition and release stay inverses.
-        if (cap.mode == CaptureMode::Copy && cap.type &&
-            cap.type->kind != TypeKind::Ref && member_needs_drop(cap.type) &&
+        if (cap.mode == CaptureMode::Copy && !counted_by_runtime(cap.type) &&
+            member_needs_retain(cap.type) &&
             struct_copy_kind_for(cap.source_expr) == StructCopyKind::Clone) {
             emit_value_retain(v, cap.type);
         }
@@ -2037,16 +1997,12 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         // leaves exactly the list's count (finding 9b).
         //
         // Generalized from `string` to every counted element type, via
-        // `emit_value_retain`. `string` is named explicitly alongside
-        // `member_needs_retain` only because that predicate still excludes it
-        // while the StrRelease gate in `member_needs_drop` is closed; the two
-        // arms merge into one when it opens. `ref` is excluded because its inc is
-        // emitted just above, and move-only elements because they are moved into
-        // the list rather than duplicated.
+        // `member_needs_retain`. `ref` is excluded because its inc is emitted
+        // just above; move-only elements are excluded by the predicate itself,
+        // being moved into the list rather than duplicated.
         Type* push_elem = struct_type->is_list() ? struct_type->list_info.element_type : nullptr;
-        if (get_expr.name == "push"_sv && push_elem && push_elem->kind != TypeKind::Ref
-            && (push_elem->kind == TypeKind::String || member_needs_retain(push_elem))
-            && args.size() >= 1) {
+        if (get_expr.name == "push"_sv && !counted_by_runtime(push_elem)
+            && member_needs_retain(push_elem) && args.size() >= 1) {
             emit_value_retain(args[0], push_elem);
         }
         // Map insert/remove/clear must destroy noncopyable values that are
@@ -2866,8 +2822,7 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
     // in its own dead slot, and the next release double-frees it. Same
     // retain-before-release rule the `string` self-assignment above spells out,
     // one level up. (Found by reducing a generated program to `a = a;`.)
-    bool value_is_fresh = assign_expr.value->kind == AstKind::ExprStructLiteral ||
-                          assign_expr.value->kind == AstKind::ExprCall;
+    bool value_is_fresh = produces_fresh_struct_storage(assign_expr.value);
     if (assign_expr.op == AssignOp::Assign && target_type && target_type->is_struct()
         && target_type->is_copy() && !value_is_fresh) {
         u32 slot_count = target_type->struct_info.slot_count;

@@ -676,9 +676,8 @@ DropPlan compute_drop_plan(Type* type);
 // probe inside the struct arm still recurses through `noncopyable()`, exactly as
 // the drop side does.)
 //
-// NOT YET CONSUMED by codegen — see lifetimes.md "Separating Drop from Copy"
-// for why the glue cannot be wired without the other two steps of that plan
-// landing in the same change.
+// Consumed by `emit_value_retain` / `emit_struct_clone_glue` at every
+// duplication site, and by the `member_needs_retain` gate below.
 enum class RetainKind {
     None,        // trivial: duplication is a plain memcpy
     StrRetain,   // string: owner++ (no-op on an immortal literal)
@@ -744,6 +743,24 @@ inline bool member_needs_drop(Type* t) {
 // pushes and its teardown exact inverses.
 inline bool member_needs_retain(Type* t) {
     return member_needs_drop(t) && compute_retain_plan(t).kind != RetainKind::None;
+}
+
+// Whether a map KEY of this type carries a drop the container must run on
+// teardown. Two kinds do, and they get there differently: a MOVE-ONLY key (a
+// struct with a destructor) is moved into the map, so nothing was acquired and
+// teardown simply destroys it; a `string` key is COUNTED, acquired by the
+// runtime on insert and released on remove/clear, so teardown releases.
+//
+// A *copyable struct* key holding a counted member is deliberately neither. The
+// runtime cannot walk it to acquire, and such a key could never match on lookup
+// anyway — `map_keys_equal` compares key bytes, so two equal strings at
+// different addresses miss. See `map_key_is_counted` in roxy_rt.cpp.
+//
+// Named rather than spelled out at each backend: the element gate is the shared
+// `member_needs_drop`, and the key gate had drifted into a raw disjunction
+// restated in both lowerings — the dual derivation this file exists to prevent.
+inline bool map_key_needs_drop(Type* key_type) {
+    return key_type && (key_type->noncopyable() || key_type->kind == TypeKind::String);
 }
 
 // True if `type` has a *default* (unnamed) destructor — user-written or

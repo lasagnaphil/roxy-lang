@@ -108,7 +108,7 @@ IRBuilder::LocalVar* IRBuilder::find_local(StringView name) {
 void IRBuilder::track_noncopyable_call_temp(ValueId val, Type* type) {
     // Keyed on drop glue rather than move-only-ness (`tracked_for_cleanup`): a
     // temporary is tracked because someone has to destroy it, which has nothing
-    // to do with whether binding it would move its source. Same set today.
+    // to do with whether binding it would move its source.
     if (!tracked_for_cleanup(type) || !m_current_block || !val.is_valid()) return;
     // Skip if already tracked as a temporary (constructor/struct-literal paths
     // self-track their heap temps at creation).
@@ -543,7 +543,10 @@ void IRBuilder::emit_struct_clone_glue(ValueId struct_ptr, Type* struct_type) {
 }
 
 void IRBuilder::emit_value_retain(ValueId value, Type* type) {
-    RetainPlan plan = compute_retain_plan(type);
+    emit_value_retain(value, type, compute_retain_plan(type));
+}
+
+void IRBuilder::emit_value_retain(ValueId value, Type* type, const RetainPlan& plan) {
     switch (plan.kind) {
     case RetainKind::StrRetain:
         emit_str_retain(value);
@@ -573,12 +576,15 @@ void IRBuilder::emit_value_retain(ValueId value, Type* type) {
 void IRBuilder::emit_member_retain(ValueId struct_ptr, StringView field_name,
                                    u32 slot_offset, u32 slot_count, Type* field_type) {
     // A nested value struct lives inline in the enclosing layout, so its "value"
-    // is its address; everything else is loaded out of the slot.
-    bool is_inline_struct = compute_retain_plan(field_type).kind == RetainKind::WalkFields;
-    ValueId member = is_inline_struct
+    // is its address; everything else is loaded out of the slot. The plan is
+    // computed once and passed down — `compute_retain_plan` recurses through a
+    // struct's fields, so recomputing it inside emit_value_retain would walk the
+    // whole field subtree a second time, per field, at every clone site.
+    RetainPlan plan = compute_retain_plan(field_type);
+    ValueId member = plan.kind == RetainKind::WalkFields
         ? emit_get_field_addr(struct_ptr, field_name, slot_offset, field_type)
         : emit_get_field(struct_ptr, field_name, slot_offset, slot_count, field_type);
-    emit_value_retain(member, field_type);
+    emit_value_retain(member, field_type, plan);
 }
 
 void IRBuilder::emit_discriminant_reassign_cleanup(ValueId obj,

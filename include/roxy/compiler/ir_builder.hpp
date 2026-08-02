@@ -227,6 +227,7 @@ private:
     // it. `value` follows the IR-wide convention: a struct is its address, a
     // string / `ref` is the loaded slot.
     void emit_value_retain(ValueId value, Type* type);
+    void emit_value_retain(ValueId value, Type* type, const RetainPlan& plan);
 
     // emit_value_retain for a value read out of a struct member. The per-field
     // half of emit_struct_clone_glue; shared by its regular-field and
@@ -255,30 +256,33 @@ private:
     void emit_ref_dec(ValueId ptr);
     void emit_str_retain(ValueId ptr);
     void emit_str_release(ValueId ptr);
-    // Retain `val` if its type is a reference-counted string (finding 9b). The
-    // no-op-for-non-string form lets copy sites call it unconditionally.
-    void maybe_str_retain(ValueId val, Type* type);
-
-    // Emit `if (map.contains(key)) delete map[key];` — the contains-guarded destroy
-    // of a noncopyable map value, so an overwritten (`m[k]=v`, `m.insert`) or
-    // removed (`m.remove`) value isn't leaked (lifetimes.md "Value lifecycle"). No-op
-    // unless the map's value type is noncopyable (a `ref` value is released by the
-    // runtime value_is_ref path; a trivial value needs nothing).
     // Acquire a count for every element of a container the program has just been
     // handed a second owner of (`m.values()`, `.copy()`). Both containers release
     // on destroy, so the new one must acquire or it spends a count nobody took.
     void emit_list_elements_retain(ValueId list_val, Type* list_type);
     void emit_map_values_retain(ValueId map_obj, Type* map_type);
 
+    // One counted walk over a map's occupied buckets, applying `on_value` to
+    // each stored value. Shared by the clear-time destroy and the copy-time
+    // retain — the same traversal with one statement swapped. Returns false
+    // (emitting nothing) if the iteration natives are unavailable.
+    template <typename OnValue>
+    bool emit_map_value_walk(ValueId map_obj, Type* value_type, StringView tag,
+                             OnValue&& on_value);
+
     // Balance a map value's counts around a store: acquire for the map's slot,
     // release whatever that slot held before. Shared by `m.insert(k, v)` and
     // `m[k] = v`, which are the same operation.
     void emit_map_value_ownership(ValueId map_obj, Type* map_type,
                                   ValueId key_val, ValueId value_val);
+    // Emit `if (map.contains(key)) delete map[key];` — the contains-guarded
+    // destroy of a map value, so an overwritten (`m[k]=v`, `m.insert`) or removed
+    // (`m.remove`) value isn't leaked (lifetimes.md "Value lifecycle"). No-op
+    // unless the value type carries drop glue (a `ref` value is released by the
+    // runtime value_is_ref path; a trivial value needs nothing).
     void emit_map_value_delete_if_present(ValueId map_obj, Type* map_type, ValueId key_val);
-    // Emit a bucket-iteration loop that deletes every live noncopyable value of a
-    // map (uses the __map_iter_* natives), for `m.clear()` cleanup. No-op unless
-    // the value type is noncopyable.
+    // The same drop, for every live value at once (`m.clear()`), via a
+    // bucket-iteration loop over the __map_iter_* natives. Same gate.
     void emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type);
     // True for `<map>.insert(k, v)` whose value type is noncopyable — the
     // replace-cleanup case. Its value-arg consume is deferred past the insert (the

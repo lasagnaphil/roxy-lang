@@ -140,9 +140,12 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_value_to_reg.reserve(num_values);
     m_value_types.clear_keep_capacity();
     m_value_types.reserve(num_values);
+    m_value_ready_pcs.clear_keep_capacity();
+    m_value_ready_pcs.reserve(num_values);
     for (u32 i = 0; i < num_values; i++) {
         m_value_to_reg.push_back(NO_REG);
         m_value_types.push_back(nullptr);
+        m_value_ready_pcs.push_back(NO_READY_PC);
     }
     for (u32 i = 0; i < 256; i++) m_reg_to_value[i] = NO_VALUE;
 
@@ -155,7 +158,6 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_unfusable_cmp_pcs.clear();
     m_nullify_pcs.clear();
     m_ref_inc_pcs.clear();
-    m_value_ready_pcs.clear();
     // m_requires_register is rebuilt fresh by compute_const_use_modes().
     m_jump_patches.clear_keep_capacity();
     free_regs_reset();
@@ -550,7 +552,9 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                 // frame-pushing op is ready one PC later than it looks.
                 u32 ready = static_cast<u32>(m_current_func->code.size());
                 if (op_may_push_frame(inst->op)) ready += 1;
-                m_value_ready_pcs[inst->result.id] = ready;
+                if (inst->result.id < m_value_ready_pcs.size()) {
+                    m_value_ready_pcs[inst->result.id] = ready;
+                }
             }
         }
 
@@ -725,9 +729,9 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
         // Narrow the start to just past the defining instruction, the same
         // correction `call_borrow` already makes for a receiver borrow.
         record.live_start_pc = record.scope_start_pc;
-        auto ready_it = m_value_ready_pcs.find(ir_cleanup.value.id);
-        if (ready_it != m_value_ready_pcs.end() && ready_it->second > record.live_start_pc) {
-            u32 ready_pc = ready_it->second;
+        u32 ready_pc = ir_cleanup.value.id < m_value_ready_pcs.size()
+            ? m_value_ready_pcs[ir_cleanup.value.id] : NO_READY_PC;
+        if (ready_pc != NO_READY_PC && ready_pc > record.live_start_pc) {
             // Past the end means the value is never live anywhere in the
             // block-derived range, so the record describes nothing. That happens
             // when the register is only *made* to hold the value late in the
@@ -3411,21 +3415,7 @@ u16 BytecodeBuilder::build_delete_desc(Type* type) {
             // A `ref V` value is count-bearing (shared condition); keys can't be ref.
             desc.container.elem_desc_idx =
                 member_needs_drop(plan.elem_type) ? build_delete_desc(plan.elem_type) : 0xFFFF;
-            // Two kinds of key carry a drop, and they get there differently.
-            // A MOVE-ONLY key (a struct with a destructor) is moved into the map,
-            // so nothing had to be acquired and teardown simply destroys it —
-            // the original rule. A `string` key is COUNTED: the runtime acquires
-            // it on insert and releases it on remove/clear, so teardown has to
-            // release it too.
-            //
-            // A *copyable* struct key holding a counted member is deliberately
-            // neither. The runtime cannot walk it to acquire, and such a key
-            // could never match on lookup anyway — `map_keys_equal` compares key
-            // bytes, so two equal strings at different addresses miss. See
-            // `map_key_is_counted` in roxy_rt.cpp.
-            desc.container.key_desc_idx =
-                (plan.key_type && (plan.key_type->noncopyable() ||
-                                   plan.key_type->kind == TypeKind::String))
+            desc.container.key_desc_idx = map_key_needs_drop(plan.key_type)
                     ? build_delete_desc(plan.key_type) : 0xFFFF;
             break;
         case DropKind::Closure:

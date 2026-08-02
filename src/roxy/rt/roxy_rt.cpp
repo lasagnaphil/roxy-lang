@@ -1147,30 +1147,33 @@ bool roxy_map_contains(void* self, const void* key_src) {
 // `m.insert(f"k{i}", v)` in a loop was unusable.
 //
 // Keys live in the runtime rather than in emitted IR (which is where map
-// *values* are handled) because only the runtime can see which key is actually
-// stored: `insert` replaces in place and keeps the key it already has, and
-// `remove` has to release that stored key, not the caller's equal-valued one.
-// `key_kind` tells the runtime everything it needs, exactly as `value_is_ref`
-// does for borrowed values.
+// *values* are handled) because `key_kind` already tells the runtime which keys
+// are counted — exactly as `value_is_ref` does for borrowed values — so this is
+// a flag test rather than an emitted probe, and the located bucket is in hand
+// for the two cases that need it: `insert` replaces in place and keeps the key
+// it already has, and `remove` must release that stored key rather than the
+// caller's equal-valued one.
+//
+// The compiler *could* do it — it solves the same problem for values in
+// `emit_map_value_ownership`, with a `contains`-guarded branch — at the cost of
+// an extra probe and two basic blocks per insert.
 //
 // Scope: `ROXY_MAP_KEY_STRUCT` is deliberately excluded. A struct key holding a
 // counted field cannot work regardless — `map_keys_equal` compares key bytes, so
 // two equal strings at different addresses would never match — and the drop
-// descriptor's key gate leaves such keys alone to match.
+// descriptor's key gate (`map_key_needs_drop`) leaves such keys alone to match.
+// If counted struct keys are ever wanted, the fix extends the compiler-side
+// *value* path, which is where arbitrary types already live — not this one.
 static inline bool map_key_is_counted(const roxy_map_header* hdr) {
     return hdr->key_kind == ROXY_MAP_KEY_STRING;
 }
 
-static inline void* map_key_object(const uint32_t* key_slot) {
-    return reinterpret_cast<void*>(read_packed_u64(key_slot));
-}
-
 static inline void map_key_retain(const roxy_map_header* hdr, const uint32_t* key_src) {
-    if (map_key_is_counted(hdr)) roxy_string_retain(map_key_object(key_src));
+    if (map_key_is_counted(hdr)) roxy_string_retain(map_ref_value(key_src));
 }
 
 static inline void map_key_release(const roxy_map_header* hdr, const uint32_t* key_slot) {
-    if (map_key_is_counted(hdr)) roxy_string_release(map_key_object(key_slot));
+    if (map_key_is_counted(hdr)) roxy_string_release(map_ref_value(key_slot));
 }
 
 // Non-asserting Robin Hood probe shared by roxy_map_get / roxy_map_get_or.
@@ -1317,11 +1320,13 @@ bool roxy_map_remove(void* self, const void* key_src) {
 void roxy_map_clear(void* self) {
     auto* hdr = map_hdr(self);
     if (map_mutation_blocked(hdr)) return;
-    if ((hdr->value_is_ref || map_key_is_counted(hdr)) && hdr->capacity > 0) {
+    bool release_keys = map_key_is_counted(hdr);
+    bool release_values = hdr->value_is_ref != 0;
+    if ((release_keys || release_values) && hdr->capacity > 0) {
         for (uint32_t i = 0; i < hdr->capacity; i++) {
             if (hdr->distances[i] == 0) continue;
-            if (hdr->value_is_ref) roxy_ref_dec(map_ref_value(map_value_ptr(hdr, i)));
-            map_key_release(hdr, map_key_ptr(hdr, i));
+            if (release_values) roxy_ref_dec(map_ref_value(map_value_ptr(hdr, i)));
+            if (release_keys) map_key_release(hdr, map_key_ptr(hdr, i));
         }
     }
     hdr->length = 0;
@@ -1342,14 +1347,14 @@ void* roxy_map_keys(void* self) {
     if (!lst) return nullptr;
     roxy_list_init(lst, static_cast<int32_t>(hdr->length));
 
+    // The produced List<K> is a second owner of each counted key, and releases
+    // them when destroyed — so acquire here, or the map's own count is what the
+    // list would be spending.
+    bool retain_keys = map_key_is_counted(hdr);
     for (uint32_t i = 0; i < hdr->capacity; i++) {
-        if (hdr->distances[i] != 0) {
-            roxy_list_push(lst, map_key_ptr(hdr, i));
-            // The produced List<K> is a second owner of each counted key, and
-            // releases them when it is destroyed — so acquire here, or the map's
-            // own count is what the list would be spending.
-            map_key_retain(hdr, map_key_ptr(hdr, i));
-        }
+        if (hdr->distances[i] == 0) continue;
+        roxy_list_push(lst, map_key_ptr(hdr, i));
+        if (retain_keys) map_key_retain(hdr, map_key_ptr(hdr, i));
     }
     return lst;
 }
@@ -1398,19 +1403,18 @@ void* roxy_map_copy(void* src) {
         memcpy(dst_hdr->values, src_hdr->values,
                sizeof(uint32_t) * static_cast<size_t>(src_hdr->capacity) * src_hdr->value_slot_count);
 
-        // The copy is a second owner of every counted key, and releases them when
-        // it is destroyed — so acquire here. Values are the compiler's to
-        // acquire (it emits a retain loop over the result); only keys are a
-        // closed set of kinds the runtime can walk.
-        if (map_key_is_counted(dst_hdr)) {
+        // The copy is a second owner of every counted key and of every borrowed
+        // value, and releases both when destroyed — so acquire here. Values of
+        // any other counted type are the compiler's to acquire (it emits a
+        // retain loop over the result); only keys and `ref` values are closed
+        // sets of kinds the runtime can walk.
+        bool retain_keys = map_key_is_counted(dst_hdr);
+        bool retain_values = dst_hdr->value_is_ref != 0;   // the copy holds its own borrow
+        if (retain_keys || retain_values) {
             for (uint32_t i = 0; i < dst_hdr->capacity; i++) {
-                if (dst_hdr->distances[i] != 0) map_key_retain(dst_hdr, map_key_ptr(dst_hdr, i));
-            }
-        }
-        // The copy now holds its own borrow on each value pointee.
-        if (dst_hdr->value_is_ref) {
-            for (uint32_t i = 0; i < dst_hdr->capacity; i++) {
-                if (dst_hdr->distances[i] != 0) roxy_ref_inc(map_ref_value(map_value_ptr(dst_hdr, i)));
+                if (dst_hdr->distances[i] == 0) continue;
+                if (retain_keys) map_key_retain(dst_hdr, map_key_ptr(dst_hdr, i));
+                if (retain_values) roxy_ref_inc(map_ref_value(map_value_ptr(dst_hdr, i)));
             }
         }
     }
