@@ -732,6 +732,35 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.value == 123);
     }
 
+    TEST_CASE_TEMPLATE("Coroutine promoted local read across a for-loop back-edge",
+                       Backend, RX_E2E_BACKENDS) {
+        // Same as above through `for`, whose header threads its own params.
+        const char* source = R"(
+        struct Res { id: i32 = 0; }
+
+        fun gen(n: i32): Coro<i32> {
+            var r: uniq Res = uniq Res { id = 60 };
+            for (var i: i32 = 0; i < n; i = i + 1) {
+                yield r.id + i;
+            }
+        }
+
+        fun main(): i32 {
+            var c = gen(3);
+            var total: i32 = 0;
+            while (!c.done()) {
+                total = total + c.resume();
+            }
+            return total;
+        }
+    )";
+
+        // Yields 60, 61, 62; the done-path resume contributes 0.
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 183);
+    }
+
     TEST_CASE_TEMPLATE("Coroutine value-struct local across a loop, run to completion",
                        Backend, RX_E2E_BACKENDS) {
         // The same shape with an inline value struct, driven to completion. Two

@@ -419,9 +419,11 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
 void IRBuilder::gen_while_stmt(Stmt* stmt) {
     WhileStmt& ws = stmt->while_stmt;
 
-    // 1. Collect variables assigned in the loop body
+    // 1. Collect variables assigned in the loop body (plus, in a coroutine,
+    //    every live local — see collect_live_locals)
     Vector<StringView> modified_vars;
     collect_assigned_vars(ws.body, modified_vars);
+    if (m_current_func && m_current_func->is_coroutine) collect_live_locals(modified_vars);
 
     // 2. Create blocks
     IRBlock* header_block = create_block("while");
@@ -489,10 +491,12 @@ void IRBuilder::gen_for_stmt(Stmt* stmt) {
         gen_decl(fs.initializer);
     }
 
-    // 2. Collect variables assigned in the loop body AND increment
+    // 2. Collect variables assigned in the loop body AND increment (plus, in a
+    //    coroutine, every live local — see collect_live_locals)
     Vector<StringView> modified_vars;
     collect_assigned_vars(fs.body, modified_vars);
     collect_assigned_vars_expr(fs.increment, modified_vars);
+    if (m_current_func && m_current_func->is_coroutine) collect_live_locals(modified_vars);
 
     // 3. Create blocks
     IRBlock* header_block = create_block("for");
@@ -1334,6 +1338,37 @@ void IRBuilder::gen_var_decl(Decl* decl) {
 }
 
 // Variable management
+
+// A loop in a coroutine must thread *every* live local through its header, not
+// just the ones its body assigns.
+//
+// Coroutine lowering adds a dispatch edge that re-enters the loop on resume, so
+// a local defined before the loop stops dominating the body. Without a header
+// param, a use of it there still names the definition from before the loop — a
+// value that was never computed on the resume path, which reads as a null
+// dereference at runtime rather than as a miscompile.
+//
+// Threading it restores dominance the ordinary way, and it re-establishes the
+// precondition the promotion pass already assumes of a promoted variable: that
+// it *is* a block param wherever its value can change hands. That is why the
+// pass can keep collecting a variable's values from params alone.
+//
+// A local the loop never touches costs nothing in the end — its header param
+// then receives the same value on both edges, which Phase 3's trivial
+// block-argument elimination removes after lowering. The state struct is
+// unaffected either way: promoted variables come from the *yield's* live set,
+// not from loop headers.
+void IRBuilder::collect_live_locals(Vector<StringView>& out) {
+    for (auto& scope : m_local_scopes) {
+        for (auto& [name, local] : scope) {
+            bool already_present = false;
+            for (const auto& existing : out) {
+                if (existing == name) { already_present = true; break; }
+            }
+            if (!already_present) out.push_back(name);
+        }
+    }
+}
 
 // `out` doubles as the membership set — the recursion dedupes by scanning it
 // directly (add_once below). Call sites accumulate across several collect calls

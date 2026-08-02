@@ -591,159 +591,6 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
         }
     }
 
-    // 5c-bis. Also collect the values *flowing into* each promoted block param.
-    //
-    // 5b sees a variable only where it is a param. A variable that is assigned
-    // once and never reassigned never becomes a param at its defining site: its
-    // uses simply name the dominating definition (`v1 = new Res()` in the entry
-    // block). That is legal SSA, but lowering is about to graft dispatch edges
-    // that re-enter later blocks *without* passing through the definition, so
-    // such a use would read a value that was never defined on that path — a
-    // null deref at runtime (`uniq` local + a loop, TODO.md). Collecting the
-    // jump arguments feeding a promoted param names those definitions, so 5d
-    // remaps their uses onto each block's state accessor like any other.
-    //
-    // Restricted, deliberately, to a variable with a SINGLE definition — every
-    // edge feeding its param carries the same instruction result. That is
-    // exactly the "assigned once, never reassigned" shape that has no param at
-    // its definition, and its value is immutable for the coroutine's lifetime,
-    // so publishing it into the field cannot race any other read.
-    //
-    // A reassigned variable is left entirely alone. Its field is deliberately
-    // written late — only on the out-edges 5e handles — and other reads lean on
-    // that timing: `var cur: i32 = i;` compiles to *no* instruction, so `cur`
-    // and `i` share one ValueId and `cur`'s reads are served by `i`'s accessor,
-    // which is correct only while the field still holds the pre-increment value.
-    // Publishing `i` early made the loop yield i+1 instead of cur.
-    tsl::robin_map<u32, u32> promoted_value_var;  // ValueId -> promoted_vars index
-    {
-        tsl::robin_map<u32, bool> claimed_by_param;
-        for (const auto& entry : all_promoted_value_ids) {
-            for (u32 vid : entry.second) claimed_by_param[vid] = true;
-        }
-        // The one incoming value seen per promoted var, and whether a second
-        // (or a param-claimed) one has disqualified it.
-        Vector<u32> single_def;
-        Vector<bool> disqualified;
-        single_def.resize(static_cast<u32>(promoted_vars.size()));
-        disqualified.resize(static_cast<u32>(promoted_vars.size()));
-        for (u32 i = 0; i < promoted_vars.size(); i++) {
-            single_def[i] = ValueId::invalid().id;
-            disqualified[i] = false;
-        }
-        for (IRBlock* block : func->blocks) {
-            auto collect_target = [&](const JumpTarget& target) {
-                if (!target.block.is_valid() || target.block.id >= block_analyses.size()) return;
-                const BlockParamAnalysis& target_analysis = block_analyses[target.block.id];
-                for (u32 pi : target_analysis.promoted_indices) {
-                    if (pi >= target.args.size()) continue;
-                    u32 var_idx =
-                        promoted_var_index.at(target_analysis.original_params[pi].name);
-                    u32 vid = target.args[pi].value.id;
-                    // A value that is a param somewhere is 5b's business, and a
-                    // second distinct definition means the var is reassigned.
-                    if (claimed_by_param.count(vid)) { disqualified[var_idx] = true; continue; }
-                    if (single_def[var_idx] == ValueId::invalid().id) {
-                        single_def[var_idx] = vid;
-                    } else if (single_def[var_idx] != vid) {
-                        disqualified[var_idx] = true;
-                    }
-                }
-            };
-            if (block->terminator.kind == TerminatorKind::Goto) {
-                collect_target(block->terminator.goto_target);
-            } else if (block->terminator.kind == TerminatorKind::Branch) {
-                collect_target(block->terminator.branch.then_target);
-                collect_target(block->terminator.branch.else_target);
-            }
-        }
-        for (u32 var_idx = 0; var_idx < promoted_vars.size(); var_idx++) {
-            if (disqualified[var_idx]) continue;
-            u32 vid = single_def[var_idx];
-            if (vid == ValueId::invalid().id) continue;
-            promoted_value_var[vid] = var_idx;
-            all_promoted_value_ids[promoted_vars[var_idx].name].push_back(vid);
-        }
-    }
-
-    // Where each instruction result is defined. A definition collected above is
-    // still the live value *inside its own block* — the state field does not yet
-    // hold it when the block's accessor is loaded — so 5d must not redirect it
-    // there. Remapping it in its own block would rewrite the store that
-    // publishes it into a self-store and lose the object entirely. Block params
-    // are deliberately absent: 5e strips a promoted param outright, so it must
-    // be remapped in its own block.
-    tsl::robin_map<u32, u32> inst_def_block;
-    for (u32 block_idx = 0; block_idx < func->blocks.size(); block_idx++) {
-        for (IRInst* inst : func->blocks[block_idx]->instructions) {
-            if (inst->result.is_valid()) inst_def_block[inst->result.id] = block_idx;
-        }
-    }
-
-    // 5c-ter. Publish each such definition into its state field at the point of
-    // definition.
-    //
-    // 5e only writes a var back on edges into a block where it is a *promoted
-    // param*, so a var that is never reassigned was published solely at the
-    // yield edge — with the dominating definition, which is live on the first
-    // pass and undefined on every resume. Storing at the definition makes the
-    // field the single source of truth from that point on, which is what lets
-    // 5d redirect every later read to it. Skipped where 5e already stores the
-    // value on *every* out-edge of the block (the reassigned case, e.g. a loop
-    // counter), so the common path gains no redundant store.
-    for (u32 block_idx = 0; block_idx < func->blocks.size(); block_idx++) {
-        IRBlock* block = func->blocks[block_idx];
-
-        u32 succ_count = 0;
-        tsl::robin_map<u32, u32> stored_on_edges;  // promoted var index -> edge count
-        auto count_target = [&](const JumpTarget& target) {
-            succ_count++;
-            if (!target.block.is_valid() || target.block.id >= block_analyses.size()) return;
-            const BlockParamAnalysis& target_analysis = block_analyses[target.block.id];
-            for (u32 pi : target_analysis.promoted_indices) {
-                stored_on_edges[promoted_var_index.at(target_analysis.original_params[pi].name)]++;
-            }
-        };
-        if (block->terminator.kind == TerminatorKind::Goto) {
-            count_target(block->terminator.goto_target);
-        } else if (block->terminator.kind == TerminatorKind::Branch) {
-            count_target(block->terminator.branch.then_target);
-            count_target(block->terminator.branch.else_target);
-        }
-
-        Vector<IRInst*> with_stores;
-        with_stores.reserve(block->instructions.size());
-        for (IRInst* inst : block->instructions) {
-            with_stores.push_back(inst);
-            if (!inst->result.is_valid()) continue;
-            auto var_it = promoted_value_var.find(inst->result.id);
-            if (var_it == promoted_value_var.end()) continue;
-            const PromotedVar& pv = promoted_vars[var_it->second];
-            // An inline value struct needs no publish: the state field *is* its
-            // storage, so 5d redirects the definition itself (and with it every
-            // initializing write) onto the field's address.
-            if (is_inline_struct_var(pv.type)) continue;
-            auto stored_it = stored_on_edges.find(var_it->second);
-            if (succ_count > 0 && stored_it != stored_on_edges.end() &&
-                stored_it->second == succ_count) {
-                continue;  // 5e publishes it on every out-edge already
-            }
-            // Built directly rather than through emit_set_field: the store must
-            // land right after the definition, not at the end of the block.
-            IRInst* store = allocator.emplace<IRInst>();
-            store->op = IROp::SetField;
-            store->type = pv.type;
-            store->result = func->new_value_for(store);
-            store->field.object = self_val;
-            store->field.field_name = pv.name;
-            store->field.slot_offset = pv.field_slot_offset;
-            store->field.slot_count = pv.field_slot_count;
-            store->store_value = inst->result;
-            with_stores.push_back(store);
-        }
-        block->instructions = std::move(with_stores);
-    }
-
     // 5d. For EVERY block: prepend GetField loads for ALL promoted vars,
     //     remap all instructions and terminator using per-block remap.
     //     For catch blocks with exception params that match promoted vars,
@@ -805,22 +652,10 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
             prepend_insts.push_back(inst);
             block_accessors[block_idx][pv_idx] = inst->result;
 
-            // Map ALL original ValueIds for this promoted var to this block's
-            // load — except a definition made by this very block, which is still
-            // the live value here (see inst_def_block above).
+            // Map ALL original ValueIds for this promoted var to this block's load
             auto it = all_promoted_value_ids.find(pv.name);
             if (it != all_promoted_value_ids.end()) {
                 for (u32 vid : it->second) {
-                    // A pointer-shaped definition stays live in its own block —
-                    // the field only holds it from the publishing store onward.
-                    // An inline value struct is the opposite: the field is the
-                    // storage, so even the definition is redirected onto it and
-                    // the original stack slot falls dead.
-                    auto def_it = inst_def_block.find(vid);
-                    if (!is_inline_struct_var(pv.type) && def_it != inst_def_block.end() &&
-                        def_it->second == block_idx) {
-                        continue;
-                    }
                     local_remap[vid] = inst->result;
                 }
             }
@@ -862,24 +697,27 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
                 const PromotedVar& pv = promoted_vars[pv_it->second];
                 ValueId arg_value = target.args[pi].value;
 
+                // Nothing to write back when the value leaving this block is the
+                // one it loaded on entry: only 5e writes state fields, so the
+                // field still holds it. This is the common case for a variable
+                // threaded through a loop header but never modified by the loop
+                // — without the check, every iteration re-stored the field onto
+                // itself.
+                ValueId block_accessor = block_idx < block_accessors.size()
+                                             ? block_accessors[block_idx][pv_it->second]
+                                             : ValueId::invalid();
+                if (arg_value == block_accessor) continue;
+
                 // An inline value struct is addressed, not held in a register,
                 // so the write-back is a struct copy rather than a SetField
                 // (which would store the *address* into a field sized for the
-                // struct's slots). Only the entry block needs it: there the
-                // argument is still the variable's original stack storage, so
-                // the copy is what populates the state. Everywhere else the
-                // argument has been remapped to this block's own accessor —
-                // the field's address — and the copy would be a per-resume
-                // memcpy of the field onto itself.
+                // struct's slots). The entry block is where it matters: there
+                // the argument is still the variable's original stack storage,
+                // so the copy is what populates the state.
                 if (is_inline_struct_var(pv.type)) {
-                    ValueId accessor = block_idx < block_accessors.size()
-                                           ? block_accessors[block_idx][pv_it->second]
-                                           : ValueId::invalid();
-                    if (arg_value != accessor) {
-                        emit_set_struct_field(allocator, func, block, self_val,
-                                              pv.name, pv.field_slot_offset, pv.field_slot_count,
-                                              arg_value, pv.type);
-                    }
+                    emit_set_struct_field(allocator, func, block, self_val,
+                                          pv.name, pv.field_slot_offset, pv.field_slot_count,
+                                          arg_value, pv.type);
                     continue;
                 }
 

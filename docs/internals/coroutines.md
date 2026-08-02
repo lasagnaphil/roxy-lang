@@ -171,34 +171,42 @@ remove (`StructCopy` has side effects; `GetFieldAddr` is not CSE-eligible).
 ### Which values a promoted variable owns
 
 Promotion finds a variable by *name*, from the resume block's parameters, and
-then has to redirect every SSA value that variable is spelled as onto the state
-field. Those values are the variable's block parameters — and, for a variable
-assigned once and never reassigned, its **defining instruction**, which never
-becomes a parameter at all. Missing that case is a null dereference rather than
-a mis-optimization: a use in a later block still names the dominating definition,
-which is legal SSA, but lowering grafts dispatch edges that re-enter that block
-*without* passing through the definition, so on the second `resume()` the value
-was never defined on that path.
+then redirects every SSA value that variable is spelled as onto the state field.
+It collects those values from block parameters — and it is right to, because
+**being a block parameter is a precondition the IR builder establishes**, not
+something the pass infers.
 
-Such a definition is published into its state field at the point of definition —
-the field only starts holding it there, so 5d must *not* redirect reads inside
-the defining block itself, only in the blocks that can be re-entered.
+That precondition is not free. Lowering adds a dispatch edge that re-enters a
+loop on resume, so a local defined *before* the loop stops dominating the body.
+The IR builder normally threads only the variables a loop body assigns through
+the header; a local that is merely read keeps naming its definition from before
+the loop. That is legal SSA right up until the resume edge exists, after which
+the value was never computed on that path — a null dereference on the second
+`resume()`, not a miscompile. So in a coroutine, a loop header threads *every*
+live local (`collect_live_locals`), which restores dominance the ordinary way
+and leaves promotion with the simple rule it already had.
 
-This applies to single-definition variables only, and deliberately so:
+Fixing it at the loop header rather than inside promotion matters, because
+variable identity still exists there and does not survive into the pass:
 
-- **A reassigned variable is left alone.** Its field is written late, on the
-  out-edges 5e handles, and other reads depend on that timing. `var cur = i;`
-  compiles to no instruction at all, so `cur` and `i` are one ValueId and
-  `cur`'s reads are served by `i`'s accessor — correct only while the field
-  still holds the pre-increment value. Publishing `i` early makes the loop
-  yield `i + 1`.
-- **A value already claimed as some variable's parameter is left alone**, since
-  one ValueId can feed two promoted parameters at once and redirecting it to
-  one variable's accessor would corrupt the other.
+- SSA erases it. `var cur: i32 = i;` emits no instruction at all, so `cur` and
+  `i` are the same ValueId, and no value→variable map can separate them.
+- A never-reassigned local has no parameter anywhere near its definition, so
+  there is nothing for the pass to key on.
 
-An inline value struct inverts the rule: the field *is* the storage, so the
-definition itself is redirected onto the field's address (the original stack
-slot falls dead) and nothing is published.
+Reconstructing identity from jump arguments runs into both, and the repairs
+(publish the definition into the field, exempt the defining block from the
+redirect, restrict to single-definition variables to avoid corrupting an
+aliased one) are all workarounds for information the builder still had. The
+threading is ~15 lines and needs none of them.
+
+A local the loop never touches costs nothing: its header parameter receives the
+same value on both edges, so the write-back on that edge stores what the block
+already loaded, and 5e skips it. The state struct is unaffected either way —
+promoted variables come from the *yield's* live set, not from loop headers.
+
+An inline value struct needs no special handling here either; the field is its
+storage, and 5d hands out its address.
 
 ### Cleanup, and who owns it on which path
 

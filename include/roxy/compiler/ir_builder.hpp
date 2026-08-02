@@ -830,6 +830,11 @@ private:
     // body + increment — and loop-header param creation relies on `out` being
     // duplicate-free), then delegate to the _impl recursion, which dedupes
     // through the set instead of rescanning `out` per assignment (O(n²)).
+    // Append every live local's name to `out` (deduped, like the collectors
+    // below). Used to widen a coroutine loop header's block params — see the
+    // definition for why a coroutine cannot thread only the assigned ones.
+    void collect_live_locals(Vector<StringView>& out);
+
     void collect_assigned_vars(Stmt* stmt, Vector<StringView>& out);
     void collect_assigned_vars_expr(Expr* expr, Vector<StringView>& out);
     void collect_assigned_vars_impl(Stmt* stmt, Vector<StringView>& out);
