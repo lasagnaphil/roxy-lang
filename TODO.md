@@ -10,28 +10,13 @@ Last updated: 2026-08-02
 
 ## High Priority
 
-- [ ] **A discarded `ref`-returning call result leaks its handed-off count**:
-  `box.borrow_item().v` (result used and dropped, never bound to a `ref` local)
-  leaves the owner permanently undeletable — "Cannot delete: object has active
-  borrows" at its drop. By the counting convention every `ref`-returning call
-  hands the caller exactly one count to *adopt*; `gen_var_decl`'s `RefBorrow`
-  path adopts it, but a call result consumed as a temporary has no tracked
-  binding to release it. The fix is to track an unbound `ref`-typed call result
-  as a temporary `RefBorrow` (mirroring `track_string_temp` for owned string
-  temps) so scope cleanup decrements it. Verified 2026-08-02 as pre-existing and
-  independent: it reproduces identically on an unmodified tree using the
-  already-supported `var b: ref Item = self.item; return b;` form. The two
-  existing handoff tests in `tests/e2e/test_lifetimes.cpp` both *bind* the
-  result, which is why this never showed.
-- [ ] **Returning a `ref` as a `weak` segfaults**: `fun f(r: ref P): weak P { return r; }`
-  exits with SIGSEGV (139), no output. `gen_return_stmt` has no `weak` arm, so
-  the raw borrow pointer is returned where the caller expects a 4-slot
-  `{pointer, generation}` pair — the conversion `maybe_wrap_weak` performs at
-  call-argument and assignment sites is simply missing on the return path.
-  (`check_assignable` allows `ref → weak`, so it compiles.) Verified 2026-08-02
-  as pre-existing on an unmodified tree. Fix: apply `maybe_wrap_weak` to the
-  returned value against the declared return type, the same way the return path
-  now consults that type for the borrow-vs-move decision.
+(none currently)
+
+*Two `ref`-counting holes were fixed here on 2026-08-02 (both pre-existing,
+both verified against an unmodified tree before the fix): a discarded
+`ref`-returning call result leaked its handed-off count, and returning a `weak`
+from any function segfaulted. Records in git history; the residual narrowing
+question from the first is below.*
 
 *Nine bugs were found and fixed here on 2026-08-02, all traced back to compiling
 `CLAUDE.md`'s example program — which had never been run. Kept as a record of
@@ -67,6 +52,22 @@ did.*
 
 ## Medium Priority
 
+- [ ] **A discarded borrow is held to the end of its enclosing scope, not its
+  statement**: `print(f"{box.borrow_item().v}"); delete box;` trips the
+  free-trap, because the temporary borrow that the first statement created is
+  only released when the scope closes. The count is no longer *leaked* (that was
+  the High Priority item fixed 2026-08-02 — it is released, and per-iteration
+  inside a loop body), so this is a lifetime-narrowing question rather than a
+  leak, and it is the same rule every temporary follows: wrapping the use in an
+  inner block, or binding the borrow to a `ref` local, both work today. Pinned by
+  "deleting an owner in the same scope as a discarded borrow still traps" in
+  `tests/e2e/test_lifetimes.cpp`. Narrowing a temporary to its statement needs a
+  statement-scoped temp mechanism the IR builder doesn't have; note that the
+  obvious version (release at the end of the enclosing statement) is **wrong for
+  a borrow created in a loop *condition***, which re-acquires every iteration but
+  would be released once. Owned and string temporaries have the same
+  loop-condition shape; theirs is invisible because a delayed free only costs
+  memory, whereas a delayed borrow blocks a `delete`.
 - [ ] **Rebinding a `ref` binding to a fresh owner compiles and then traps at
   runtime**: `fun f(r: ref List<i32>) { r = List<i32>(); }` (and the identical
   `fun f(p: ref P) { p = uniq P(); }`) type-checks — the source converts to the

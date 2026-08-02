@@ -805,14 +805,21 @@ IRFunction* IRBuilder::build_method(MethodDecl* decl, Type* struct_type) {
     // Set up parameters with 'self' as first parameter
     setup_parameters(decl->params, struct_type);
 
-    // Resolve return type. Methods have no function symbol, and `Coro` is not a
-    // registered named type, so resolve_return_type(..., "") returns `void` for a
-    // Coro-returning method. Take it from the struct's MethodInfo instead (the
-    // per-function coro type set by register_method_signature) — the SAME pointer
-    // the call site sees, so coroutine_lower stamps generated_struct_type onto the
-    // type observers actually use. Covers both coroutine and forwarding methods.
+    // Resolve return type from the struct's MethodInfo — sema's resolved type,
+    // and the SAME pointer the call site sees (so coroutine_lower stamps
+    // generated_struct_type onto the type observers actually use).
+    //
+    // Methods have no function symbol, so resolve_return_type(..., "") has to
+    // fall back to looking the annotation up BY NAME, and a generic name has no
+    // entry: `Coro`, but equally `List` and `Map`, resolved to nothing and were
+    // silently defaulted to `void`. That left every method declared
+    // `: List<T>` / `: Map<K, V>` carrying a void IR return type. It stayed
+    // invisible while nothing consulted the field for such a method; it stops
+    // being invisible the moment anything does — gen_return_stmt now reads it to
+    // decide whether a return moves or borrows, and read `void` for
+    // `Parser.parse_program(): List<uniq Stmt>`.
     const MethodInfo* method_info = m_types.lookup_method(struct_type, decl->name);
-    if (method_info && method_info->return_type && method_info->return_type->is_coroutine()) {
+    if (method_info && method_info->return_type) {
         m_current_func->return_type = method_info->return_type;
     } else {
         m_current_func->return_type = resolve_return_type(decl->return_type, StringView());

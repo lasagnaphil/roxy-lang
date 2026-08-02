@@ -173,6 +173,12 @@ enum class Opcode : u8 {
     STRUCT_COPY_3     = 0xBC, // dst[0..3] = src[0..3]
     STRUCT_COPY_4     = 0xBD, // dst[0..4] = src[0..4]
     GLOBAL_ADDR       = 0xBE, // dst = &global_slots[imm16] (ABI format)
+    // Return a `weak T` held INLINE in regs a and a+1 ({pointer, generation}).
+    // Distinct from RET_STRUCT_SMALL, which takes a *pointer* to the value in
+    // reg a: a weak is never in memory at a return, so reusing that opcode
+    // dereferenced the pointer half and returned the pointee's first 4 slots as
+    // the {pointer, generation} pair — garbage the caller then dereferenced.
+    RET_WEAK          = 0xBF, // return {regs[a], regs[a+1]}
 
     // 0xC0-0xDA: RK (register-or-constant) variants. Same ABC encoding as the
     // base opcode, but `c` is a constant pool index (u8) instead of a register.

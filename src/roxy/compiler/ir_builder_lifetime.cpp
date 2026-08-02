@@ -127,6 +127,35 @@ void IRBuilder::track_string_temp(ValueId val, Type* type) {
                        m_current_block->id, val, OwnedKind::StrOwn});
 }
 
+void IRBuilder::track_ref_call_temp(ValueId val, Type* type) {
+    if (!type || type->kind != TypeKind::Ref || !m_current_block || !val.is_valid()) return;
+    // Skip if already tracked as a temporary (avoid double-tracking).
+    if (m_ownership.has_temp_for(val)) return;
+    StringView temp_name = intern_synthetic_name("__ref", m_next_temp_id++);
+    define_local(temp_name, val, type);
+    u32 scope_depth = static_cast<u32>(m_local_scopes.size());
+    m_ownership.track({temp_name, type, scope_depth, false, /*is_temporary=*/true,
+                       m_current_block->id, val, OwnedKind::RefBorrow});
+    // The scope-exit RefDec names this ValueId; copy propagation folding it back
+    // into the producing call would move the decrement onto the wrong value.
+    // Same pin a `ref` local takes (see gen_var_decl).
+    pin_tracked_value(val);
+}
+
+void IRBuilder::acquire_ref_borrow(ValueId val, Expr* source) {
+    if (is_ref_handoff_source(source)) {
+        // A ref-returning call already carries exactly one count for us to
+        // adopt. End the temporary's tracking so the binding — not the temp —
+        // is what releases it; otherwise both decrement and the count underflows.
+        OwnedLocalInfo* temp = m_ownership.find_live_temp(val);
+        if (temp && temp->kind == OwnedKind::RefBorrow) temp->is_moved = true;
+        return;
+    }
+    // Any other source is a fresh borrow alongside a still-live owner.
+    // `ref x = self` is a promotion: the inc is heap-gated.
+    emit_ref_borrow_inc(val, source);
+}
+
 void IRBuilder::consume_or_retain_string(ValueId val, Type* type, bool adopted_by_variable) {
     if (!type || type->kind != TypeKind::String || !val.is_valid()) return;
     // A tracked owned string temp: adopt its count-1 ownership (consume the temp)

@@ -589,11 +589,19 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
         Type* declared_return = m_current_func->return_type;
         Type* value_type = rs.value->resolved_type;
         bool returns_borrow = declared_return && declared_return->kind == TypeKind::Ref;
+        // Ownership moves out only when the caller receives an owning type. A
+        // `ref` return hands out a borrow; a `weak` return hands out a
+        // non-owning handle that holds no count at all, so in both cases this
+        // frame keeps what it had and its scope-exit cleanup still runs. (For
+        // `weak` that leaves the returned handle dangling the moment the frame
+        // exits — correct, and exactly what `weak` detects; the alternative,
+        // suppressing the drop, silently leaked the object instead.)
+        bool returns_ownership = !declared_return || declared_return->noncopyable();
 
         // Consume noncopyable temporaries — only when ownership really moves to
         // the caller. Returning a borrow of a temporary leaves the temporary
         // owned by this frame, so its scope-exit drop must still run.
-        if (!returns_borrow && value_type && value_type->noncopyable()) {
+        if (returns_ownership && value_type && value_type->noncopyable()) {
             consume_temp_noncopyable(val);
         }
 
@@ -611,22 +619,24 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
                 // drop below now sees the live borrow and traps (Finding 2).
                 mark_moved_from(rs.value->identifier.name, /*null_ssa=*/false,
                                 /*nullify_record=*/false);
-            } else if (!is_ref_handoff_source(rs.value)) {
+            } else {
                 // Everything else that carries no net count for the caller yet:
                 // a ref *param* identifier, a fresh ref (field / subscript /
                 // `ref x`), and — the case the branch order above now reaches —
                 // an *owner* borrowed on the way out (a `uniq` or container
-                // local). Increment to produce the one handed-off count. The
-                // owner stays owned, so its scope-exit drop sees the live borrow
-                // and traps, exactly as when the borrow goes through a `ref`
-                // local. (A ref param's entry-inc is offset by its return-time
-                // RefDec, so this inc is what survives. A call result already
-                // carries one — untouched. `return self` is a promotion: the
-                // inc is heap-gated.)
-                emit_ref_borrow_inc(val, rs.value);
+                // local). acquire_ref_borrow increments to produce the one
+                // handed-off count, and the owner stays owned, so its scope-exit
+                // drop sees the live borrow and traps, exactly as when the
+                // borrow goes through a `ref` local. (A ref param's entry-inc is
+                // offset by its return-time RefDec, so this inc is what
+                // survives.) A ref-returning *call* result already carries one:
+                // acquire_ref_borrow adopts it, which also ends the temporary's
+                // tracking so this frame doesn't decrement the count it is
+                // handing onward.
+                acquire_ref_borrow(val, rs.value);
             }
-        } else if (rs.value->kind == AstKind::ExprIdentifier && value_type
-                   && value_type->noncopyable()) {
+        } else if (returns_ownership && rs.value->kind == AstKind::ExprIdentifier
+                   && value_type && value_type->noncopyable()) {
             // Returning an owned identifier by value: mark it moved so scope
             // cleanup doesn't destroy what we're handing to the caller. Pass
             // null_ssa/nullify_record = false — the return value register may be
@@ -646,7 +656,16 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
         // `return o.field`: null the moved-out field before scope cleanup destroys
         // the root (val already read its value above). Only when the field was
         // actually moved out — borrowing it leaves the root owning it.
-        if (!returns_borrow) nullify_moved_field_source(rs.value);
+        if (returns_ownership) nullify_moved_field_source(rs.value);
+
+        // uniq/ref/fun -> weak on the way out. `check_assignable` permits the
+        // conversion, but the return path never performed it, so a bare pointer
+        // was returned where the caller reads a 4-slot {pointer, generation}
+        // pair — `fun f(r: ref P): weak P { return r; }` segfaulted. This is the
+        // same maybe_wrap_weak the call-argument and assignment sites apply, and
+        // it must run BEFORE the scope cleanup below: WeakCreate snapshots the
+        // generation out of the object header, which a drop would tombstone.
+        val = maybe_wrap_weak(val, value_type, declared_return, rs.value);
 
         // Emit cleanup for all scopes (return exits entire function)
         emit_scope_cleanup(1);
@@ -1334,10 +1353,7 @@ void IRBuilder::gen_var_decl(Decl* decl) {
         // result *adopts* that count rather than incrementing again. Binding any
         // other source (a uniq / ref identifier, a borrowed subscript, `ref x`)
         // is a fresh borrow alongside the still-live source, so it increments.
-        if (!is_ref_handoff_source(var_decl.initializer)) {
-            // `var r: ref T = self` is a promotion: the inc is heap-gated.
-            emit_ref_borrow_inc(value, var_decl.initializer);
-        }
+        acquire_ref_borrow(value, var_decl.initializer);
         u32 scope_depth = static_cast<u32>(m_local_scopes.size());
         BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
         // `ref x` lowers to a Copy of the borrowed pointer, and this local's

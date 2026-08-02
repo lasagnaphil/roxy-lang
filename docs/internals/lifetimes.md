@@ -165,6 +165,19 @@ get right:
   **adopts** a call result (no inc) and **increments** any other still-live
   source. Otherwise a returned ref local bound by the caller would double-count —
   a safe over-count, but a spurious trap.
+- **Skipping the inc and adopting the temporary are the same decision.** The one
+  count a `ref`-returning call hands over needs an owner in the caller. When the
+  result is bound (`var r: ref T = f();`, `r = f();`, `return f();`) the binding
+  adopts it and no inc is emitted. When it is *not* bound
+  (`box.borrow_item().v`), nothing would — so the result is tracked as a
+  temporary `RefBorrow` and released by ordinary scope cleanup. Leaving that out
+  leaked the count outright and made the owner permanently undeletable, which is
+  why `acquire_ref_borrow` performs both halves in one place rather than letting
+  each bind site re-derive them. Consequence to know: a discarded borrow lives to
+  the end of its *enclosing scope*, the same rule every temporary follows — so
+  `delete`ing the owner in that same scope still trips the free-trap (see
+  `TODO.md`). A loop *body* is its own scope, so borrows there release
+  per-iteration and don't accumulate.
 - **Move-vs-borrow on the return path is decided by the function's *declared
   return type*, never by the returned expression's type.** They answer different
   questions: the declared type says whether the frame hands over ownership or

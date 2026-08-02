@@ -2827,9 +2827,11 @@ void BytecodeBuilder::lower_terminator(IRBlock* block) {
             if (term.return_value.is_valid()) {
                 u8 ret = ensure_in_register(term.return_value, 0);
 
-                // Check if we're returning a weak ref (4 slots = 2 registers)
+                // A weak ref is {pointer, generation} held INLINE in `ret` and
+                // `ret + 1`. RET_STRUCT_SMALL is the wrong shape for it — that
+                // opcode dereferences its source register — so it gets its own.
                 if (ret_type && ret_type->kind == TypeKind::Weak) {
-                    emit_abc(Opcode::RET_STRUCT_SMALL, ret, 4, 0);
+                    emit_abc(Opcode::RET_WEAK, ret, 0, 0);
                 } else {
                     // Check if we're returning a struct
                     u32 slot_count = get_struct_slot_count(ret_type);

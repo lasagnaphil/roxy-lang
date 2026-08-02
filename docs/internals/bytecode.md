@@ -41,13 +41,35 @@ Each function call allocates a new register window from the shared register file
 | 0x80-0x8F | Type Conversions | `I_TO_F64`, `F64_TO_I`, `I_TO_B`, `B_TO_I`, `TRUNC_S`, `TRUNC_U`, `F32_TO_F64`, `F64_TO_F32`, `I_TO_F32`, `F32_TO_I` |
 | 0x90-0x9A | Control Flow + Fused int cmp-branch | `JMP`, `JMP_IF`, `JMP_IF_NOT`, `RET`, `RET_VOID`, `JMP_IF_LT_I` … `JMP_IF_NE_I` |
 | 0xA0-0xAF | Calls, Container Indexing, Fused f64 cmp-branch | `CALL`, `CALL_NATIVE`, `INDEX_GET_LIST`, `INDEX_SET_LIST`, `INDEX_GET_MAP`, `INDEX_SET_MAP`, `JMP_IF_LT_D` … `JMP_IF_GE_D_RK` |
-| 0xB0-0xBE | Struct/Stack/Global Access | `GET_FIELD`, `SET_FIELD`, `STACK_ADDR`, `GET_FIELD_ADDR`, `STRUCT_LOAD_REGS`, `STRUCT_STORE_REGS`, `STRUCT_COPY`, `RET_STRUCT_SMALL`, `SPILL_REG`, `RELOAD_REG`, `STRUCT_COPY_1`–`STRUCT_COPY_4`, `GLOBAL_ADDR` |
+| 0xB0-0xBF | Struct/Stack/Global Access | `GET_FIELD`, `SET_FIELD`, `STACK_ADDR`, `GET_FIELD_ADDR`, `STRUCT_LOAD_REGS`, `STRUCT_STORE_REGS`, `STRUCT_COPY`, `RET_STRUCT_SMALL`, `SPILL_REG`, `RELOAD_REG`, `STRUCT_COPY_1`–`STRUCT_COPY_4`, `GLOBAL_ADDR`, `RET_WEAK` |
 | 0xC0-0xCF | RK Variants (arith + int cmp) | `ADD_I_RK`, `SUB_I_RK`, `ADD_D_RK`, `MUL_D_RK`, `LT_I_RK`, ... |
 | 0xD0-0xDF | Object Lifecycle, Exceptions, Closures + f64 cmp RK | `NEW_OBJ`, `DEL_OBJ`, `DELETE`, `THROW`, `CALL_EXC_MSG`, `CALL_INDIRECT`, `ASSERT_HEAP`, `LT_D_RK` … `JMP_IF_NE_D_RK` |
 | 0xE0-0xEA | Ref Counting, Element Lvalues, Strings | `REF_INC`, `REF_DEC`, `WEAK_CHECK`, `WEAK_CREATE`, `INDEX_ADDR_LIST`, `INDEX_ADDR_MAP`, `CONTAINER_PIN`, `CONTAINER_UNPIN`, `STR_RETAIN`, `STR_RELEASE`, `INDEX_TRYADDR_MAP` |
 | 0xF0, 0xFE-0xFF | Debug/Special | `TRAP`, `NOP`, `HALT` |
 
-`bytecode.hpp` is the authoritative table (151 opcodes); the ranges above are a map, not a listing.
+`bytecode.hpp` is the authoritative table (152 opcodes); the ranges above are a map, not a listing.
+
+### Returning multi-register values
+
+Three return opcodes, distinguished by *where the value is*:
+
+| Opcode | Value location | Used for |
+|---|---|---|
+| `RET` | `regs[a]` | everything that fits one register |
+| `RET_STRUCT_SMALL` | `*regs[a]` — a **pointer** to ≤4 slots | small structs (a struct value lives in memory) |
+| `RET_WEAK` | `regs[a]`, `regs[a+1]` — **inline** | `weak T` = `{pointer, generation}` |
+
+`RET_WEAK` exists because a `weak` is the one multi-register value that is *not*
+a pointer to memory: `WEAK_CREATE` writes the pair straight into two registers.
+Returning it through `RET_STRUCT_SMALL` dereferenced the pointer half and handed
+the caller the pointee's first four slots as the `{pointer, generation}` pair —
+garbage the caller then dereferenced, so *every* `weak`-returning function
+segfaulted.
+
+The caller side already sized this correctly: `BCFunction::ret_reg_count` is 2
+for a `weak` return, and a call's argument window starts at `dst +
+ret_reg_count` (not `dst + 1`), so the second return register is never an
+argument slot.
 
 ## RK (Register-or-Constant) Encoding
 

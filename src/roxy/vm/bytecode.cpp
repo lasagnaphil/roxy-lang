@@ -120,6 +120,7 @@ const char* opcode_to_string(Opcode op) {
         case Opcode::STRUCT_STORE_REGS: return "STRUCT_STORE_REGS";
         case Opcode::STRUCT_COPY:       return "STRUCT_COPY";
         case Opcode::RET_STRUCT_SMALL:  return "RET_STRUCT_SMALL";
+        case Opcode::RET_WEAK:          return "RET_WEAK";
         case Opcode::SPILL_REG:         return "SPILL_REG";
         case Opcode::RELOAD_REG:        return "RELOAD_REG";
         case Opcode::STRUCT_COPY_1:     return "STRUCT_COPY_1";
@@ -376,16 +377,21 @@ u32 disassemble_instruction(u32 instr, u32 next_word, u32 offset, String& out) {
             buf.format("R{}", a);
             break;
 
-        // Format: dst, arg_count (word 1) + func_idx (word 2) — two-word
+        // Format: dst, arg_count (word 1) + func_idx (word 2) — two-word.
+        // The argument window starts at dst + the callee's ret_reg_count (2 for
+        // a `weak` return, else 1..2 by return slots), which this function has
+        // no callee to look up — so it prints the count, not a register. It
+        // used to print "args from R{a+1}", wrong for every multi-register
+        // return and a real time sink when reading a weak-returning call.
         case Opcode::CALL:
         case Opcode::CALL_NATIVE:
-            buf.format("R{}, func[{}], {} args from R{}", a, next_word, c, (u32)(a + 1));
+            buf.format("R{}, func[{}], {} args", a, next_word, c);
             words_consumed = 2;
             break;
 
         // Format: dst, closure_reg, arg_count (word 1) + reserved (word 2)
         case Opcode::CALL_INDIRECT:
-            buf.format("R{}, closure=R{}, {} args from R{}", a, b, c, (u32)(a + 1));
+            buf.format("R{}, closure=R{}, {} args", a, b, c);
             words_consumed = 2;
             break;
 
@@ -455,6 +461,11 @@ u32 disassemble_instruction(u32 instr, u32 next_word, u32 offset, String& out) {
 
         case Opcode::RET_STRUCT_SMALL:
             buf.format("R{}, slots={}", a, b);
+            break;
+
+        // {pointer, generation} held inline in R{a}, R{a+1}
+        case Opcode::RET_WEAK:
+            buf.format("R{}, R{}", a, (u32)(a + 1));
             break;
 
         // Format: reg, slot_offset (spill/reload)

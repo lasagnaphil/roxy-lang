@@ -739,6 +739,19 @@ private:
     void track_string_temp(ValueId val, Type* type);
     void consume_or_retain_string(ValueId val, Type* type, bool adopted_by_variable);
 
+    // Borrow counting for `ref`-returning calls, the mirror of the string pair
+    // above. By the counting convention (gen_return_stmt) such a call hands the
+    // caller exactly one count; track_ref_call_temp makes an *unbound* result
+    // own that count so scope cleanup releases it (`box.borrow_item().v` used to
+    // leak it, leaving the owner permanently undeletable). acquire_ref_borrow is
+    // the single place that decides how a `ref` binding gets its count: adopt the
+    // call's handed-off one (and end the temp's tracking so only the binding
+    // releases it), or increment for any other still-live source. The two are
+    // one invariant — skip the inc exactly when adopting the temp — so both
+    // halves live in one function rather than being re-derived per bind site.
+    void track_ref_call_temp(ValueId val, Type* type);
+    void acquire_ref_borrow(ValueId val, Expr* source);
+
     // Mark the owned local `name` as moved so scope-exit / exception cleanup skip
     // it. No-op if `name` is not a live (un-moved) owned local. For `uniq` locals
     // (when null_ssa) it re-points the SSA name at null so a later scope-exit

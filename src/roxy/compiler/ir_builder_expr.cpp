@@ -648,6 +648,10 @@ ValueId IRBuilder::gen_expr(Expr* expr) {
             // hands off an owned count-1 via gen_return) yields an owned string
             // temp — track it for release (finding 9b).
             track_string_temp(result, expr->resolved_type);
+            // A ref-returning call hands off exactly one borrow count. Track it
+            // so an *unbound* result still releases at scope exit; a binding
+            // adopts it instead (acquire_ref_borrow).
+            track_ref_call_temp(result, expr->resolved_type);
             return result;
         }
         case AstKind::ExprIndex:
@@ -2586,10 +2590,7 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
     // source is a fresh borrow (inc) — mirrors gen_var_decl.
     if (target_type && target_type->kind == TypeKind::Ref) {
         emit_ref_dec(lookup_local(name));
-        if (!is_ref_handoff_source(assign_expr.value)) {
-            // `r = self` is a promotion: the inc is heap-gated.
-            emit_ref_borrow_inc(value, assign_expr.value);
-        }
+        acquire_ref_borrow(value, assign_expr.value);
     }
 
     // String reassignment (`s = other`): adopt a fresh producer temp or retain

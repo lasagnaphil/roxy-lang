@@ -747,7 +747,7 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         [0xBB] = &&op_STRUCT_COPY_2,
         [0xBC] = &&op_STRUCT_COPY_3,
         [0xBD] = &&op_STRUCT_COPY_4,
-        [0xBE] = &&op_GLOBAL_ADDR, [0xBF] = &&op_DEFAULT,
+        [0xBE] = &&op_GLOBAL_ADDR, [0xBF] = &&op_RET_WEAK,
 
         // 0xC0-0xCF: RK (register-or-constant) variants — arithmetic + int cmp
         [0xC0] = &&op_ADD_I_RK,
@@ -2118,6 +2118,40 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         for (u8 r = 0; r < reg_count; r++) {
             regs[return_reg + r] = ret_vals[r];
         }
+        DISPATCH();
+    }
+
+    OP(RET_WEAK) {
+        // A `weak T` lives inline across two registers, so — unlike
+        // RET_STRUCT_SMALL — the source register holds the value, not its
+        // address. Read both halves before the frame is popped.
+        u8 src_reg = decode_a(instr);
+        u64 ret_vals[2] = {regs[src_reg], regs[src_reg + 1]};
+
+        u8 return_reg = frame->return_reg;
+        u32 local_stack_base = frame->local_stack_base;
+
+        --vm->call_stack_size;
+        vm->register_top -= func->register_count;
+        vm->local_stack_top = local_stack_base;
+
+        if (vm->call_stack_empty()) {
+            vm->register_file[0] = ret_vals[0];
+            vm->register_file[1] = ret_vals[1];
+            return true;
+        }
+
+        if (stop_depth > 0 && vm->call_stack_size <= stop_depth) {
+            return true;
+        }
+
+        frame = &vm->call_stack_back();
+        func = frame->func;
+        pc = frame->pc;
+        regs = frame->registers;
+
+        regs[return_reg] = ret_vals[0];
+        regs[return_reg + 1] = ret_vals[1];
         DISPATCH();
     }
 

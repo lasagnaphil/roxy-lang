@@ -185,6 +185,176 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.stdout_output == "5\ndeleted\n");
     }
 
+    // A `ref`-returning call hands the caller one count to adopt. When the
+    // result is *not* bound to a `ref` local there is no binding to adopt it, so
+    // the result is tracked as a temporary borrow and released at scope exit —
+    // like every other temporary. Before that, the count leaked outright and the
+    // owner became permanently undeletable; the two handoff tests above both
+    // bind the result, which is why this went unnoticed.
+    //
+    // The `delete` is the assertion: it can only succeed if both discarded
+    // borrows were released when their scope closed.
+    TEST_CASE_TEMPLATE("a discarded ref-returning call result releases its count", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Item { v: i32; }
+        struct Box { item: uniq Item; }
+
+        fun Box.borrow_item(): ref Item {
+            var b: ref Item = self.item;
+            return b;
+        }
+
+        fun main(): i32 {
+            var box: uniq Box = uniq Box { item = uniq Item { v = 42 } };
+            { print(f"{box.borrow_item().v}"); }   // used inline, never bound
+            { print(f"{box.borrow_item().v}"); }   // again — must not accumulate
+            delete box;
+            print("deleted");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "42\n42\ndeleted\n");
+    }
+
+    // The same for a container owner (reachable since containers became
+    // borrowable). Passing a discarded borrow onward as an argument must not
+    // double-release it either.
+    TEST_CASE_TEMPLATE("discarded borrows of a container release their counts", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Bag { items: List<i32>; }
+
+        fun Bag.borrow_items(): ref List<i32> { return self.items; }
+        fun count(xs: ref List<i32>): i32 { return xs.len(); }
+
+        fun main(): i32 {
+            var b: uniq Bag = uniq Bag { items = List<i32>() };
+            b.items.push(1);
+            b.items.push(2);
+            { print(f"{b.borrow_items().len()}"); }    // discarded
+            { print(f"{count(b.borrow_items())}"); }   // passed onward, discarded
+            delete b;
+            print("deleted");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "2\n2\ndeleted\n");
+    }
+
+    // Per-iteration release: a discarded borrow inside a loop *body* is scoped to
+    // that body, so 500 iterations acquire and release 500 times rather than
+    // accumulating 500 counts. (This is what makes the scope-exit release usable
+    // at all — a leak here would be proportional to trip count.)
+    TEST_CASE_TEMPLATE("discarded borrows in a loop body release per iteration", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Item { v: i32; }
+        struct Box { item: uniq Item; }
+
+        fun Box.borrow_item(): ref Item { var b: ref Item = self.item; return b; }
+
+        fun main(): i32 {
+            var box: uniq Box = uniq Box { item = uniq Item { v = 1 } };
+            var t: i32 = 0;
+            for (var i: i32 = 0; i < 500; i = i + 1) { t = t + box.borrow_item().v; }
+            print(f"{t}");
+            delete box;
+            print("deleted");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "500\ndeleted\n");
+    }
+
+    // Pins the remaining sharp edge, so a change in it is a deliberate decision
+    // rather than a surprise: a discarded borrow lives to the end of its
+    // enclosing scope (the same rule every temporary follows), so deleting the
+    // owner *in that same scope* still trips the free-trap. Narrowing a
+    // temporary's lifetime to its statement would fix it, but the compiler has
+    // no statement-scoped temp mechanism, and a naive one would under-release
+    // borrows created in a loop *condition*. See TODO.md.
+    TEST_CASE("deleting an owner in the same scope as a discarded borrow still traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+        const char* source = R"(
+        struct Item { v: i32; }
+        struct Box { item: uniq Item; }
+
+        fun Box.borrow_item(): ref Item { var b: ref Item = self.item; return b; }
+
+        fun main(): i32 {
+            var box: uniq Box = uniq Box { item = uniq Item { v = 42 } };
+            print(f"{box.borrow_item().v}");   // temp borrow lives to scope exit
+            delete box;                         // ...so this still sees it live
+            return 0;
+        }
+    )";
+
+        auto result = VMBackend::run(source);
+        CHECK(result.success == false);
+    }
+
+    // Returning a `weak`. `check_assignable` has always allowed uniq/ref -> weak,
+    // but the return path performed neither half of it: no `maybe_wrap_weak`, so
+    // a bare pointer was returned where the caller reads a {pointer, generation}
+    // pair; and the pair was returned with RET_STRUCT_SMALL, which *dereferences*
+    // its source register — right for a struct (which lives in memory), wrong for
+    // a weak (which lives inline in two registers). Either alone segfaults.
+    TEST_CASE_TEMPLATE("a weak can be returned from a function", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct P { hp: i32; }
+
+        fun from_ref(r: ref P): weak P { return r; }      // ref  -> weak
+        fun from_uniq(u: uniq P): weak P { return u; }    // uniq -> weak (u dies here)
+
+        fun main(): i32 {
+            var a: uniq P = uniq P { hp = 5 };
+            var w: weak P = from_ref(a);
+            print(f"{w.hp}");
+
+            var b: uniq P = uniq P { hp = 9 };
+            var dead: weak P = from_uniq(b);   // b is moved in and dropped by the callee
+            print("survived");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "5\nsurvived\n");
+    }
+
+    // A weak return threaded through a `weak` local in the callee — the shape
+    // that proves the value travels as a pair, not as a pointer to one.
+    TEST_CASE_TEMPLATE("a weak return round-trips through a weak local", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct P { hp: i32; }
+
+        fun via_local(r: ref P): weak P {
+            var w: weak P = r;
+            return w;
+        }
+
+        fun main(): i32 {
+            var a: uniq P = uniq P { hp = 17 };
+            var w: weak P = via_local(a);
+            print(f"{w.hp}");
+            delete a;          // the weak holds no count, so this succeeds
+            print("deleted");
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "17\ndeleted\n");
+    }
+
     // Balance: ref locals created and dropped across block scopes, a loop with
     // continue/break, and straight-line code all decrement on their exit paths,
     // so the owner's count returns to zero and it stays deletable. This is the
