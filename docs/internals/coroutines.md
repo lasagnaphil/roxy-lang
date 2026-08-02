@@ -145,7 +145,33 @@ fun Counter.up_to(limit: i32): Coro<i32> {
 - A method is a coroutine iff its body yields (`MethodDecl::is_coroutine`, classified in `register_method_signature` — the method analogue of `register_fun_signature`). A non-yielding `Coro<T>`-returning method is an ordinary method that returns a first-class coroutine value.
 - The state struct / functions are named from the mangled method name: `__coro_S$$count`, `__coro_S$$count$$resume`, `__coro_S$$count$$delete` (the per-function coro type's `func_name` is set to `mangle_method`'s output so these agree).
 - `self` is always `ref self` — the coroutine borrows the receiver for its whole lifetime, so the receiver must outlive the coroutine (deleting it earlier traps, like any borrowed owner). Value/weak `self` capture is not supported.
+- **The receiver must be heap-allocated.** The state struct outlives the call, so borrowing a *stack* value-struct receiver would leave a pointer into a dead frame (and its counted borrow would write through `data - 8` into a neighbouring local). The init function emits `IROp::AssertHeap` on the receiver, which traps with the same message closures use for stack-allocated `self` captures. Call such methods on a `uniq` receiver.
 - **Not yet supported:** coroutine methods on generic structs (`fun Box<T>.gen()`) or trait methods — both are rejected with a clear "not yet supported on generic structs or in traits" error. Tracked in TODO.md.
+
+## Parameters and promoted locals in the state struct
+
+Every parameter, and every local live across a yield, gets a field in the
+coroutine state struct. How a variable is stored depends on its shape:
+
+| Shape | Storage | Access |
+|---|---|---|
+| Scalars, `uniq`/`ref`/`weak`, containers, `Coro<T>` | Field holds the value (a single register's worth) | `GetField` at block entry, `SetField` write-back at each jump |
+| **Value structs** | Field holds the struct **inline**, sized by `get_type_slot_count` | `GetFieldAddr` at block entry; the body mutates the field in place, and the jump write-back is a `StructCopy` |
+| `out` / `inout` params | — | **Rejected at compile time** |
+
+A value struct's SSA value is an *address*, so the by-value path would store
+that pointer into a field sized for the struct's slots and the reader would
+decode an address as contents. Reading its address instead makes the state the
+variable's storage; the `StructCopy` write-back is what populates the field from
+the variable's original stack storage on the way in (later blocks copy the field
+onto itself, harmlessly).
+
+`out`/`inout` parameters are second-class ([lifetimes.md](lifetimes.md), "The
+second-class family"): they flow downward and may never be stored. Since a
+coroutine stores every parameter in state that outlives the call, capturing one
+would leave a pointer into a dead frame — so it is a compile error
+("cannot use an 'inout' parameter in a coroutine"), not a representation
+question. Pass by value, or pass a `uniq`/`ref`.
 
 ## Restrictions
 

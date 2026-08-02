@@ -420,6 +420,13 @@ private:
     void populate_list_methods(Type* list_type);
     void populate_map_methods(Type* map_type);
     void populate_coro_methods(Type* coro_type);
+
+    // Reject `out`/`inout` parameters on a coroutine. They are second-class
+    // (lifetimes.md, "The second-class family"): they flow downward and may
+    // never be stored. A coroutine captures every parameter into a heap state
+    // struct that outlives the call, so such a capture would leave a pointer
+    // into a dead frame.
+    void reject_second_class_coroutine_params(Span<Param> params);
     void populate_enum_methods(Type* enum_type);
     // Shared by populate_list_methods/populate_map_methods: instantiate the
     // container's native method table + alloc/copy native names from the

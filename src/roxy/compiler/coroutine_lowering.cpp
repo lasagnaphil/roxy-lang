@@ -105,6 +105,26 @@ static ValueId emit_set_field(BumpAllocator& allocator, IRFunction* func, IRBloc
     return inst->result;
 }
 
+// Copy a value struct into a field of `object`, rather than storing a register
+// into it. `source_ptr` is the struct's address (how the IR represents a value
+// struct); a plain SetField would store that pointer into a field sized for the
+// struct's slots, so the reader would decode an address as struct contents.
+static void emit_set_struct_field(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
+                                  ValueId object, StringView field_name,
+                                  u32 slot_offset, u32 slot_count,
+                                  ValueId source_ptr, Type* field_type) {
+    IRInst* addr = make_inst(allocator, func, block, IROp::GetFieldAddr, field_type);
+    addr->field.object = object;
+    addr->field.field_name = field_name;
+    addr->field.slot_offset = slot_offset;
+    addr->field.slot_count = slot_count;
+
+    IRInst* copy = make_inst(allocator, func, block, IROp::StructCopy, field_type);
+    copy->struct_copy.dest_ptr = addr->result;
+    copy->struct_copy.source_ptr = source_ptr;
+    copy->struct_copy.slot_count = slot_count;
+}
+
 static ValueId emit_eq_i(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
                            ValueId left, ValueId right, Type* bool_type) {
     IRInst* inst = make_inst(allocator, func, block, IROp::EqI, bool_type);
@@ -181,6 +201,20 @@ static void emit_delete(BumpAllocator& allocator, IRFunction* func, IRBlock* blo
 static void emit_ref_op(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
                         IROp op, ValueId value, Type* void_type) {
     IRInst* inst = make_inst(allocator, func, block, op, void_type);
+    inst->unary = value;
+}
+
+// Trap if `value` is not a slab-owned pointer. A coroutine method's `self` is
+// the one `ref` param that may not be heap: `ref` proper can only borrow a heap
+// object, but the receiver is second-class (lifetimes.md, "The second-class
+// family") and binds to stack value-structs too. Counting a borrow of a stack
+// struct would write through `data - 8` into a neighbouring local, and the
+// state struct outlives the frame anyway, so the capture is unsound rather than
+// merely uncounted. Closures guard the identical hazard the same way — see
+// `IRBuilder::emit_assert_heap` and closures.md, "self capture".
+static void emit_assert_heap(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
+                             ValueId value, Type* void_type) {
+    IRInst* inst = make_inst(allocator, func, block, IROp::AssertHeap, void_type);
     inst->unary = value;
 }
 
@@ -446,6 +480,18 @@ static void remap_all_block_ids(IRFunction* func, const tsl::robin_map<u32, u32>
     }
 }
 
+// A promoted variable whose storage lives *inline* in the coroutine state
+// struct rather than round-tripping through a register.
+//
+// True for plain value structs. Their SSA value is an address, and the state
+// field is sized to hold the whole struct (`get_type_slot_count`), so the state
+// *is* the variable's storage: the body reads the field's address and mutates
+// it in place. Reference-shaped types (`uniq`/`ref`/`weak`, containers, `Coro`)
+// are single pointer values and keep the by-value GetField/SetField path.
+static bool is_inline_struct_var(Type* type) {
+    return type && type->kind == TypeKind::Struct;
+}
+
 // ===== Phase 1: Promote variables to struct fields =====
 
 struct BlockParamAnalysis {
@@ -561,11 +607,20 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
             }
         }
 
-        // Create GetField loads for all promoted vars
+        // Create per-block accessors for all promoted vars.
+        //
+        // A scalar var round-trips through the state field by value: GetField
+        // here, SetField at each jump (5e). A **value struct** cannot — its SSA
+        // value is the *address* of its storage, and loading a struct's slots
+        // into a register would truncate it to the first slot. Such a var lives
+        // inline in the state field instead, and the block reads its address
+        // once with GetFieldAddr: field accesses and struct copies then operate
+        // on the field itself, so mutations are already in the state and need
+        // no write-back (5e skips them).
         for (u32 pv_idx = 0; pv_idx < promoted_vars.size(); pv_idx++) {
             const PromotedVar& pv = promoted_vars[pv_idx];
             IRInst* inst = allocator.emplace<IRInst>();
-            inst->op = IROp::GetField;
+            inst->op = is_inline_struct_var(pv.type) ? IROp::GetFieldAddr : IROp::GetField;
             inst->type = pv.type;
             inst->result = func->new_value_for(inst);
             inst->field.object = self_val;
@@ -618,6 +673,20 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
                 assert(pv_it != promoted_var_index.end());
                 const PromotedVar& pv = promoted_vars[pv_it->second];
                 ValueId arg_value = target.args[pi].value;
+
+                // An inline value struct is addressed, not held in a register,
+                // so the write-back is a struct copy rather than a SetField
+                // (which would store the *address* into a field sized for the
+                // struct's slots). In the entry block the argument is still the
+                // variable's original stack storage, so this copy is what
+                // populates the state; in later blocks it is the field's own
+                // address and the copy is a harmless self-copy.
+                if (is_inline_struct_var(pv.type)) {
+                    emit_set_struct_field(allocator, func, block, self_val,
+                                          pv.name, pv.field_slot_offset, pv.field_slot_count,
+                                          arg_value, pv.type);
+                    continue;
+                }
 
                 IRInst* inst = allocator.emplace<IRInst>();
                 inst->op = IROp::SetField;
@@ -1085,14 +1154,29 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
                    zero, types.i32_type());
     for (u32 i = 0; i < num_params; i++) {
         const FieldInfo* param_field = find_field(original->params[i].name);
-        emit_set_field(allocator, init_func, init_entry, obj,
-                       param_field->name, param_field->slot_offset, param_field->slot_count,
-                       init_func->params[i].value, param_field->type);
         // A `ref` param stored into the state is a counted borrow held for the
         // coroutine's lifetime: acquire it here (released in $$delete). This keeps
         // the owner alive while the coro can still observe the borrow — deleting
         // the owner before the coro is destroyed traps.
-        if (param_field->type && param_field->type->kind == TypeKind::Ref) {
+        bool is_counted_borrow = param_field->type && param_field->type->kind == TypeKind::Ref;
+        // The receiver is the one `ref` that may point at stack memory; check it
+        // before anything writes through it.
+        if (is_counted_borrow && original->params[i].name == "self"_sv) {
+            emit_assert_heap(allocator, init_func, init_entry,
+                             init_func->params[i].value, types.void_type());
+        }
+        if (is_inline_struct_var(param_field->type)) {
+            // By-value struct param: copy it into the inline state field.
+            emit_set_struct_field(allocator, init_func, init_entry, obj,
+                                  param_field->name, param_field->slot_offset,
+                                  param_field->slot_count,
+                                  init_func->params[i].value, param_field->type);
+        } else {
+            emit_set_field(allocator, init_func, init_entry, obj,
+                           param_field->name, param_field->slot_offset, param_field->slot_count,
+                           init_func->params[i].value, param_field->type);
+        }
+        if (is_counted_borrow) {
             emit_ref_op(allocator, init_func, init_entry, IROp::RefInc,
                         init_func->params[i].value, types.void_type());
         }

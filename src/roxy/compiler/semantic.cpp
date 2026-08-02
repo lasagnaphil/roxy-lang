@@ -734,6 +734,7 @@ void SemanticAnalyzer::register_fun_signature(Decl* decl) {
     if (return_type && return_type->is_coroutine()) {
         fun_decl.is_coroutine = stmt_contains_yield(fun_decl.body);
         if (fun_decl.is_coroutine) {
+            reject_second_class_coroutine_params(fun_decl.params);
             return_type = m_types.coroutine_type_for_func(
                 return_type->coro_info.yield_type, fun_decl.name);
             populate_coro_methods(return_type);
@@ -1805,6 +1806,7 @@ void SemanticAnalyzer::register_method_signature(Decl* decl) {
     if (method_info.return_type && method_info.return_type->is_coroutine()) {
         method_decl.is_coroutine = stmt_contains_yield(method_decl.body);
         if (method_decl.is_coroutine) {
+            reject_second_class_coroutine_params(method_decl.params);
             StringView mangled = mangle_method(m_allocator,
                                                method_decl.struct_name, method_decl.name);
             method_info.return_type = m_types.coroutine_type_for_func(
@@ -3851,6 +3853,19 @@ NativeRegistry* SemanticAnalyzer::get_builtin_registry() {
     NativeRegistry* registry = builtin ? builtin->natives : nullptr;
     if (!registry) registry = m_registry;
     return registry;
+}
+
+void SemanticAnalyzer::reject_second_class_coroutine_params(Span<Param> params) {
+    for (u32 i = 0; i < params.size(); i++) {
+        const Param& param = params[i];
+        if (param.modifier == ParamModifier::None) continue;
+        const char* modifier = param.modifier == ParamModifier::Out ? "out" : "inout";
+        error_fmt(param.loc,
+                  "cannot use an '{}' parameter in a coroutine: '{}' is a second-class "
+                  "reference that cannot outlive the call, but a coroutine stores every "
+                  "parameter in state that outlives it. Pass by value, or pass a 'uniq'/'ref'.",
+                  modifier, param.name);
+    }
 }
 
 void SemanticAnalyzer::populate_coro_methods(Type* type) {

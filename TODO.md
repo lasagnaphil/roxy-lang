@@ -15,48 +15,25 @@ through the `roxy` CLI. Each reproduces on the CLI (i.e. through
 `Compiler::compile()`) and none is caught by the parametric test suites — see
 the **optimizer is untested end-to-end** entry under Testing Gaps for why.
 
-*(Fixed and removed from this list: the DCE null-deref that made compiling any
-coroutine segfault. Coroutine lowering minted result ValueIds with bare
-`new_value()`, leaving `values_by_id` null for every instruction it created;
-`IRFunction::new_value_for(inst)` now registers the definition, `IRValidator`
-enforces the invariant, and `E2E CLI` covers it through the optimizing
-pipeline.)*
-
-- [ ] **A coroutine taking an `out`/`inout` param, or a struct by value,
-  crashes at runtime.**
-  ```roxy
-  fun gen(acc: inout i32): Coro<i32> {        // SIGSEGV
-      var i: i32 = 0;
-      while (i < 3) { acc = acc + i; yield i; i = i + 1; }
-  }
-
-  struct P { x: i32; }
-  fun gen2(p: P): Coro<i32> { yield p.x; }    // SIGSEGV
-  ```
-  Both die in `GET_FIELD` (`interpreter.cpp:1952`) reading the param back out
-  of the coroutine state struct. `lower_coroutine` gives each param a state
-  field typed from `BlockParam::type` and round-trips it through
-  `SetField`/`GetField`, which only works for params whose runtime
-  representation is a plain one-register value. An `out`/`inout` param is a
-  *pointer* (its field is sized for the pointee — an `inout i32` field holds 1
-  slot but the value is a 2-slot pointer), and a small struct passed by value
-  arrives splatted across registers rather than as an address. Fixing this
-  means deciding how each parameter convention is represented in the state
-  struct, not a local patch. Neither shape appears anywhere in
-  `tests/e2e/test_coroutines.cpp` — its coroutine params are primitives, enums,
-  and `Coro<T>`. Found 2026-08-02 alongside the receiver-convention fix below;
-  all three were unreachable before, since compiling any coroutine crashed
-  first.
-
-  *(Fixed on 2026-08-02: the closely related **coroutine method on a stack
-  receiver** crash. `lower_coroutine` built the init function with
-  `param_is_ptr` hardcoded to `false`, but that flag is the caller's calling
-  convention — lowering reads the callee's flags to choose pointer-passing vs.
-  `STRUCT_LOAD_REGS`. A method receiver is always `is_ptr`, so a stack struct
-  was passed by value and the state-struct `RefInc` read its first field as an
-  `ObjectHeader`. A `uniq` receiver survived by coincidence. The init function
-  now inherits the coroutine's `param_is_ptr` verbatim; covered by "Coroutine
-  method on a stack receiver" in `E2E Coroutines`.)*
+*(Fixed and removed from this list — all coroutine-related, all found on
+2026-08-02 and each unreachable until the one before it was fixed:*
+- *the DCE null-deref that made compiling any coroutine segfault — lowering
+  minted result ValueIds with bare `new_value()`, so `values_by_id` was null for
+  every instruction it created; `IRFunction::new_value_for(inst)` now registers
+  the definition and `IRValidator` enforces the invariant;*
+- *a calling-convention mismatch — the init function hardcoded `param_is_ptr` to
+  `false`, so a method receiver was passed by value while the callee read it as
+  a pointer; it now inherits the coroutine's flags;*
+- *a stack-allocated receiver reaching the state struct as a counted borrow,
+  whose `RefInc` wrote through `data - 8` into a neighbouring local — the init
+  function now emits `IROp::AssertHeap` on the receiver, matching how closures
+  guard stack `self` captures;*
+- *value structs in coroutine state (a by-value struct param, or a struct local
+  live across a yield) storing an address into a field sized for the struct —
+  they now live inline in the state struct, read by address with a `StructCopy`
+  write-back;*
+- *`out`/`inout` coroutine parameters, now a compile error rather than a
+  pointer into a dead frame.)*
 
 - [ ] **A destructor on a child struct fails to link when the parent has none.**
   ```roxy

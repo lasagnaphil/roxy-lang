@@ -1235,15 +1235,108 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.value == 3);
     }
 
-    TEST_CASE_TEMPLATE("Coroutine method on a stack receiver", Backend, RX_E2E_BACKENDS) {
-        // Every other coroutine-method case uses a `uniq` receiver, which hid a
-        // calling-convention bug: the init function is a *new* IRFunction, and
-        // lowering reads the callee's `param_is_ptr` to decide whether an
-        // argument is passed as a pointer or splatted into registers. Coroutine
-        // lowering used to push `false` for every param, so a method receiver
-        // (always is_ptr) was passed by value. A `uniq` receiver is a pointer
-        // either way, so it survived; a stack struct arrived as its own field
-        // contents and the state-struct RefInc read them as an ObjectHeader.
+    TEST_CASE_TEMPLATE("Coroutine value-struct parameter", Backend, RX_E2E_BACKENDS) {
+        // A by-value struct param is copied into the coroutine state struct.
+        // Its SSA value is an *address*, so the state field (sized for the
+        // struct's slots) must be filled with a struct copy; a plain SetField
+        // stored the address itself and the reader decoded it as contents.
+        const char* source = R"(
+        struct P { x: i32; }
+        fun gen(p: P): Coro<i32> {
+            yield p.x;
+            yield p.x + 1;
+        }
+        fun main(): i32 {
+            var p: P = P { x = 5 };
+            var c = gen(p);
+            print(f"{c.resume()}");
+            print(f"{c.resume()}");
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "5\n6\n");
+    }
+
+    TEST_CASE_TEMPLATE("Coroutine value-struct local across a yield", Backend, RX_E2E_BACKENDS) {
+        // Same storage question for a local: the struct lives inline in the
+        // state struct, each block reads its address, and the jump write-back
+        // is a struct copy — which is also what populates the field from the
+        // variable's original stack storage on the way in.
+        const char* source = R"(
+        struct P { x: i32; }
+        fun gen(): Coro<i32> {
+            var p: P = P { x = 5 };
+            yield p.x;
+            p.x = p.x + 10;
+            yield p.x;
+        }
+        fun main(): i32 {
+            var c = gen();
+            print(f"{c.resume()}");
+            print(f"{c.resume()}");
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "5\n15\n");
+    }
+
+    TEST_CASE("Coroutine rejects out/inout parameters") {
+        // `out`/`inout` are second-class: they flow downward and cannot be
+        // stored. A coroutine puts every parameter in state that outlives the
+        // call, so capturing one would leave a pointer into a dead frame.
+        // Rejected at compile time rather than crashing in the state struct.
+        BumpAllocator allocator(65536);
+
+        const char* inout_param = R"(
+        fun gen(acc: inout i32): Coro<i32> {
+            var i: i32 = 0;
+            while (i < 3) { acc = acc + i; yield i; i = i + 1; }
+        }
+        fun main(): i32 { return 0; }
+    )";
+        CHECK(compile(allocator, inout_param) == nullptr);
+
+        const char* out_param = R"(
+        fun gen(slot: out i32): Coro<i32> {
+            slot = 1;
+            yield 1;
+        }
+        fun main(): i32 { return 0; }
+    )";
+        CHECK(compile(allocator, out_param) == nullptr);
+
+        // A non-yielding Coro<T>-returning function is not a coroutine, so it
+        // keeps its ordinary second-class parameters.
+        const char* forwarder = R"(
+        fun inner(): Coro<i32> { yield 1; }
+        fun outer(n: out i32): Coro<i32> {
+            n = 7;
+            return inner();
+        }
+        fun main(): i32 {
+            var got: i32 = 0;
+            var c = outer(out got);
+            return got;
+        }
+    )";
+        CHECK(compile(allocator, forwarder) != nullptr);
+    }
+
+    TEST_CASE("Coroutine method on a stack receiver traps") {
+        // A coroutine captures `self` into a heap state struct that outlives the
+        // call, so a stack receiver is an escaping borrow of a dead frame — the
+        // same hazard closures guard with AssertHeap. It must trap, not corrupt.
+        //
+        // Before this was guarded, the receiver reached the state struct as a
+        // *counted* borrow and the RefInc wrote through `data - 8`, silently
+        // incrementing a neighbouring local (a `Guard { a = 111 }` declared just
+        // before the receiver read back as 112). Every other coroutine-method
+        // case uses a `uniq` receiver, which is heap and so never tripped it.
+        // (VM-only: asserts a runtime trap.)
         const char* source = R"(
         struct Counter { start: i32; }
         fun Counter.upto(n: i32): Coro<i32> {
@@ -1255,6 +1348,26 @@ TEST_SUITE("E2E Coroutines") {
         }
         fun main(): i32 {
             var counter: Counter = Counter { start = 2 };
+            var c = counter.upto(5);
+            return 0;
+        }
+    )";
+        CHECK(VMBackend::run(source).success == false);
+    }
+
+    TEST_CASE_TEMPLATE("Coroutine method on a uniq receiver drains correctly", Backend, RX_E2E_BACKENDS) {
+        // The heap counterpart of the case above: same shape, sound receiver.
+        const char* source = R"(
+        struct Counter { start: i32; }
+        fun Counter.upto(n: i32): Coro<i32> {
+            var i: i32 = self.start;
+            while (i <= n) {
+                yield i;
+                i = i + 1;
+            }
+        }
+        fun main(): i32 {
+            var counter: uniq Counter = uniq Counter { start = 2 };
             var c = counter.upto(5);
             var sum: i32 = 0;
             while (!c.done()) {
