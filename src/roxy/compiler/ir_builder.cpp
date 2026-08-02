@@ -1460,13 +1460,17 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
         // gen_identifier_expr reads it off the binding it already found (§3.7).
         define_local(bp.name, bp.value, bp.type, m_param_is_ptr.count(bp.name) != 0);
 
-        // Track owned parameters — callee now owns them (uniq refs and value
-        // structs with destructors). inout/out params are borrows through a
-        // pointer: the caller still owns the slot and the callee must not
-        // destroy it at scope exit — that would double-free the caller's
-        // value. `m_param_is_ptr` is exactly the set of inout/out params, so
-        // skip tracking when it contains `bp.name`.
-        if (bp.type && bp.type->noncopyable() && !m_param_is_ptr.count(bp.name)) {
+        // Track parameters the callee must destroy. Keyed on whether the type
+        // carries drop glue (`tracked_for_cleanup`), not on whether it is
+        // move-only — a by-value parameter of a copyable type that still has
+        // drop glue is the callee's to destroy just the same. The two sets
+        // coincide today; see the note on `tracked_for_cleanup`.
+        //
+        // inout/out params are borrows through a pointer: the caller still owns
+        // the slot and the callee must not destroy it at scope exit — that would
+        // double-free the caller's value. `m_param_is_ptr` is exactly the set of
+        // inout/out params, so skip tracking when it contains `bp.name`.
+        if (tracked_for_cleanup(bp.type) && !m_param_is_ptr.count(bp.name)) {
             u32 scope_depth = static_cast<u32>(m_local_scopes.size());
             BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
             m_ownership.track({bp.name, bp.type, scope_depth, false, false, current_block_id, bp.value});

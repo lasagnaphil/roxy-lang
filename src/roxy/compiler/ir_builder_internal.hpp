@@ -26,6 +26,31 @@ inline bool holds_owning_pointer(Type* type) {
                     || type->is_list() || type->is_map() || type->is_coroutine());
 }
 
+// Whether a local, parameter, or temporary of this type must be **tracked for
+// cleanup** — it carries drop glue that scope exit (and every other exit path)
+// has to run.
+//
+// Deliberately NOT `noncopyable()`, which answers a different question: whether
+// binding the value *moves* its source. The two coincide for every type that
+// reaches these sites today, so this is currently the same set — but they are
+// different questions, and the whole point of separating Drop from Copy
+// (lifetimes.md → "Separating Drop from Copy") is that a copyable struct will
+// carry drop glue: it must still be destroyed at scope exit while its source
+// stays live. Gating tracking on move-only-ness is what would silently drop that
+// destruction on the floor.
+//
+// `ref` and `string` are excluded because they have their own OwnedKind tracking
+// (RefBorrow / StrOwn) at the same sites; this predicate covers the `Owned` kind.
+//
+// The equivalence was verified, not assumed: a temporary
+// `assert(member_needs_drop(t) == t->noncopyable())` here survived the whole
+// suite on both backends (2460 cases) plus every example including Lox.
+inline bool tracked_for_cleanup(Type* t) {
+    if (!t) return false;
+    if (t->kind == TypeKind::Ref || t->kind == TypeKind::String) return false;
+    return member_needs_drop(t);
+}
+
 // A `ref`-typed expression "hands off" a borrow count when it is the result of
 // a call: by the counting convention (gen_return_stmt) every ref-returning
 // function returns with exactly one count handed to the caller. All other ref

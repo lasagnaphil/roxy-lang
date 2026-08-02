@@ -1021,7 +1021,7 @@ move-only to be an acceptable answer; the largest real Roxy program is the proof
 
 So the clone glue is not optional, and this shortcut should not be revisited.
 
-### A fourth requirement: copyable values need drop sites
+### A fourth requirement: copyable values need drop sites ✅ *(landed)*
 
 Found while measuring the above. Flipping the gate *does* fix the leak today —
 but only as a side effect of the welded bit: the struct becomes move-only, and
@@ -1035,6 +1035,21 @@ drop glue", across locals, parameters, and temporaries, or steps 2–3 fix nothi
 
 This is the same conflation one level down: *tracked for cleanup* and *move-only*
 are also currently one decision.
+
+**Landed 2026-08-02.** The three tracking sites — `gen_var_decl`, the parameter
+setup in `begin_function_body`, and `track_noncopyable_call_temp` — now key on
+`tracked_for_cleanup(Type*)` ("carries drop glue", derived from
+`member_needs_drop`) instead of `noncopyable()`. `gen_var_decl` additionally
+splits the two questions it was answering with one condition: the local is
+*tracked* because its type has drop glue, and its initializer's source is
+*consumed* because the type is move-only.
+
+Behaviour-neutral, and verified rather than assumed: a temporary
+`assert(member_needs_drop(t) == t->noncopyable())` inside the predicate survived
+the entire suite on both backends (2460 cases) plus every example including Lox.
+That is the property that makes the remaining steps safe to build on — the
+tracking side is now already in terms of drop glue, so when a copyable struct
+starts carrying some, it is destroyed rather than silently skipped.
 
 ### Duplication sites the glue must cover
 

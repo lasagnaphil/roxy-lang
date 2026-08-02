@@ -1326,23 +1326,36 @@ void IRBuilder::gen_var_decl(Decl* decl) {
 
     define_local(var_decl.name, value, type);
 
-    // Track owned locals for implicit destruction (uniq refs and value structs with destructors)
-    if (type && type->noncopyable()) {
+    // Two separate questions, and this is the site where conflating them bites:
+    // the local is TRACKED FOR CLEANUP because its type carries drop glue, and
+    // its initializer's source is CONSUMED because the type is move-only. Every
+    // type reaching here is currently both, so splitting the conditions changes
+    // nothing today — but a copyable struct carrying drop glue (a `string`
+    // field, once "Separating Drop from Copy" lands) must still be destroyed at
+    // scope exit while its source stays live.
+    bool needs_cleanup = tracked_for_cleanup(type);
+    bool moves_its_source = type && type->noncopyable();
+
+    if (needs_cleanup) {
         // If the initializer was a temporary, consume it (variable takes over tracking).
         // Pass adopted_by_variable=true: the variable's cleanup record handles cleanup,
-        // so no Nullify annotation is needed for the temp.
+        // so no Nullify annotation is needed for the temp. Keyed on cleanup, not
+        // on move-ness: whoever is responsible for destroying the value is the
+        // one that must adopt the temporary, or both would destroy it.
         consume_temp_noncopyable(value, true);
 
         u32 scope_depth = static_cast<u32>(m_local_scopes.size());
         BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
         m_ownership.track({var_decl.name, type, scope_depth, false, false, current_block_id, value});
 
-        // Mark the source variable as moved when initializing from an identifier
-        if (var_decl.initializer && var_decl.initializer->kind == AstKind::ExprIdentifier) {
-            mark_moved_from(var_decl.initializer->identifier.name);
+        if (moves_its_source) {
+            // Mark the source variable as moved when initializing from an identifier
+            if (var_decl.initializer && var_decl.initializer->kind == AstKind::ExprIdentifier) {
+                mark_moved_from(var_decl.initializer->identifier.name);
+            }
+            // `var x = o.field`: null the moved-out field in the root.
+            nullify_moved_field_source(var_decl.initializer);
         }
-        // `var x = o.field`: null the moved-out field in the root.
-        nullify_moved_field_source(var_decl.initializer);
     } else if (type && type->kind == TypeKind::Ref) {
         // Ref local: a counted borrow (constraint-reference model), tracked as a
         // RefBorrow so it is decremented on every exit path (scope exit, return,

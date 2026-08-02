@@ -105,7 +105,10 @@ IRBuilder::LocalVar* IRBuilder::find_local(StringView name) {
 }
 
 void IRBuilder::track_noncopyable_call_temp(ValueId val, Type* type) {
-    if (!type || type->is_copy() || !m_current_block || !val.is_valid()) return;
+    // Keyed on drop glue rather than move-only-ness (`tracked_for_cleanup`): a
+    // temporary is tracked because someone has to destroy it, which has nothing
+    // to do with whether binding it would move its source. Same set today.
+    if (!tracked_for_cleanup(type) || !m_current_block || !val.is_valid()) return;
     // Skip if already tracked as a temporary (constructor/struct-literal paths
     // self-track their heap temps at creation).
     if (m_ownership.has_temp_for(val)) return;
