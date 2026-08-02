@@ -819,6 +819,24 @@ kinds are `ref` (a counted borrow) and **`string`** (reference-counted since fin
 pooled literals immortal); see [strings.md](strings.md). A struct's retain/drop is
 then composed automatically from *containing* one of these.
 
+### Drop and Copy are currently welded together
+
+The model above treats Drop, Clone, and Copy as independent properties. The
+implementation does not: `noncopyable()` on a struct means literally *"has a
+default destructor"*, so anything that earns drop glue also becomes move-only.
+
+That holds today only because the two sets coincide — the members that earn a
+synthetic destructor (`uniq`, `List`, `Map`, `Coro`, closures, `ref`) are
+exactly the ones that make a struct move-only. `string` is the member type that
+breaks the coincidence: it is reference-counted and therefore needs a release,
+but it is perfectly copyable given a matching retain. Because the two decisions
+are one bit, a `string` field can have neither — which is why it is excluded
+from `member_needs_drop` and why a struct holding one leaks it.
+
+Separating them is a two-part change (a structural `is_move_only` flag, and
+clone glue at the `StructCopy` sites); `TODO.md` carries the design. Until then,
+`string` is the one member type whose drop is knowingly skipped.
+
 ### Predicates
 
 `Type` carries the structural decisions the lowering consumes:

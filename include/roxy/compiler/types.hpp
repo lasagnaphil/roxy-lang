@@ -641,16 +641,43 @@ DropPlan compute_drop_plan(Type* type);
 
 // Whether a value stored in an *opaque member slot* — a container element/value
 // or a struct field — needs a cleanup action on the container/struct's teardown.
-// This is the deliberately NON-RECURSIVE form of needs_drop(): a member needs
-// cleanup iff it is itself noncopyable (a nested value-struct that owns something
-// already carries its own synthesized destructor, propagated by the synthetic-
-// destructor fixpoint) or a bare `ref` (a counted borrow → ref_dec). Used by the
-// synthetic-destructor pass, the struct field-walk, and both backends' container
-// drops — one shared decision. NON-recursive on purpose: needs_drop() recurses
-// into value-struct fields and would not terminate on a direct value cycle (which
-// is rejected elsewhere), whereas this only inspects the member type directly.
+// Used by the synthetic-destructor pass, the struct field-walk, and both
+// backends' container drops.
+//
+// DERIVED from compute_drop_plan rather than restated, so the "does this need
+// dropping?" gate and the "what drop does it get?" lowering can never disagree.
+// They did: this was hand-written as `noncopyable() || Ref`, which omits
+// `string` — reference-counted but *copyable*, so noncopyable() is false —
+// while compute_drop_plan has always returned StrRelease for it and both
+// backends have always lowered that correctly. The gate was the only thing
+// saying no, so every struct holding a `string` field leaked it.
+//
+// `free_obj` is part of the test: a `uniq` of a destructor-less value plans
+// DropKind::None but still has a heap object to free.
+//
+// Still NON-recursive, on purpose: compute_drop_plan is a single-level
+// decision, and a nested value-struct that owns something already carries its
+// own synthesized destructor (propagated by the synthetic-destructor fixpoint).
+// A recursive form would not terminate on a direct value cycle.
+//
+// ONE EXCEPTION, and it is a known gap rather than a design choice:
+// DropKind::StrRelease is excluded. Including it is what a `string` field needs
+// — and both backends already lower it — but it cannot land until struct COPY
+// grows matching retain glue, because the two decisions are currently welded
+// together: `noncopyable()` on a struct means literally "has a default
+// destructor", so the moment a string-bearing struct gains a synthetic
+// destructor it also becomes move-only. Measured 2026-08-02: flipping this on
+// turned `struct S { s: string; }` into a move-only type and broke four
+// structured-generator cases with "self-assignment of noncopyable variable" /
+// "use of possibly moved value". Making it copyable *without* retain-on-copy is
+// worse — two owners, two releases, use-after-free. See TODO.md for the
+// two-part fix (separate Drop from Copy in `noncopyable()`, then emit clone
+// glue at the StructCopy sites).
 inline bool member_needs_drop(Type* t) {
-    return t && (t->noncopyable() || t->kind == TypeKind::Ref);
+    if (!t) return false;
+    DropPlan plan = compute_drop_plan(t);
+    if (plan.kind == DropKind::StrRelease) return false;  // see note above
+    return plan.kind != DropKind::None || plan.free_obj;
 }
 
 // True if `type` has a *default* (unnamed) destructor — user-written or

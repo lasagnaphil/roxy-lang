@@ -32,25 +32,49 @@ the free-trap only fires on an explicit `delete`, so nothing was looking.*
   inside the catch and an undrained coroutine — yield outside the catch, a fully
   drained coroutine, and a throw/catch in a callee are all clean. Pinned by
   `ExpectedLeak` in the two `E2E Coroutines` cases; remove those when fixed.
-- [ ] **A `string` field in a struct is retained on store but never released**:
-  `struct Box { s: string; }` + `Box { s = some_dynamic_string }` leaks the
-  string. `member_needs_drop` is `noncopyable() || kind == Ref`, and `string` is
-  neither — it is *reference-counted but copyable* — so
-  `struct_needs_synthetic_dtor` says no destructor is needed, and
-  `emit_field_cleanup` has no `String` arm to emit `StrRelease` even when one is
-  generated for another field. Any struct with a `string` field leaks it; this is
-  most of the Lox string leak (`Scanner.source`, `Token.lexeme`, …). Same
-  "decided from the wrong source of truth" shape as the other bugs found
-  2026-08-02: the field needs a drop action because of how it is *stored*, not
-  because its type is noncopyable.
-  **Not a one-line fix, and the obvious one is dangerous.** There is no retain
-  glue on the copy side either: a copyable struct holding a string is copied
-  bitwise today, so adding the release without a matching retain-on-copy turns a
-  leak into a use-after-free. This is the Clone/Copy half of the value-lifecycle
-  model (lifetimes.md "Value lifecycle") applied to `string` fields, and it needs
-  designing: which of struct copy / assignment / container insert retains, and
-  the matching C-backend descriptor work. Minimal repro:
+- [ ] **A `string` field in a struct is retained on store but never released**
+  — blocked on separating Drop from Copy. `struct Box { s: string; }` leaks the
+  string; this is most of the Lox string leak (`Scanner.source`,
+  `Token.lexeme`, …). Minimal repro:
   `struct Box { s: string; } fun main(): i32 { var a: string = "x"; var d: string = a + "y"; var b: Box = Box { s = d }; print(b.s); return 0; }`
+
+  The *gate* is now single-sourced (`member_needs_drop` derives from
+  `compute_drop_plan`, 2026-08-02), and both backends have always lowered
+  `DropKind::StrRelease` correctly — so the release side is one line away.
+  `StrRelease` is explicitly excluded there, because turning it on alone is
+  wrong in two ways, both measured:
+
+  1. **It makes string-bearing structs move-only.** `noncopyable()` on a struct
+     means literally "has a default destructor", so the synthetic destructor a
+     string field would earn also flips the struct to move-only. Enabling it
+     broke four `Structured Gen` cases with "self-assignment of noncopyable
+     variable" / "use of possibly moved value". `struct Point { name: string; }`
+     should stay copyable.
+  2. **Fixing (1) without clone glue is worse than the leak.** A copyable struct
+     is copied bitwise (`IROp::StructCopy`), so two structs would share one
+     string and both release it — use-after-free.
+
+  The two-part fix:
+
+  - **Decouple move-only from drop-glue.** Give `StructTypeInfo` an
+    `is_move_only` flag computed by the existing synthetic-destructor fixpoint:
+    true iff a field is itself move-only (`uniq` / `List` / `Map` / `Coro` /
+    closure / move-only struct) or the struct has a *user-written* default
+    destructor. `noncopyable()`'s struct arm reads that instead of "has any
+    default destructor". Should be a no-op for every type today — the structs
+    that currently earn a synthetic destructor are exactly the move-only ones.
+  - **Add clone glue at the copy sites.** After each `StructCopy` of a type with
+    string fields (recursively, through nested value structs), emit `StrRetain`
+    per field. ~12 `emit_struct_copy` call sites in the IR builder, plus the
+    callee-prologue deep copy for value params in `lowering.cpp`, plus the C
+    backend. Best done as one `emit_struct_clone_glue(dst, type)` helper so the
+    retain set is derived once, mirroring `compute_drop_plan`.
+
+  This is the Clone half of the value-lifecycle model (lifetimes.md "Value
+  lifecycle"), which is described there but only implemented for Drop. The
+  teardown leak check plus the VM's double-delete and release-at-zero asserts
+  make it verifiable; do it as its own change, not bundled.
+
 - [ ] **The Lox interpreter leaks one List per interpreter call**:
   `fun f(n) {...} print f(10);` leaks 177 **lists** alongside 38 strings, and the
   count tracks the interpreter's call count exactly (1 call → 1 list, 3 → 3,

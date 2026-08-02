@@ -341,6 +341,13 @@ void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
         const FieldInfo& field = struct_info.fields[i];
         if (!field.type) continue;
 
+        // One gate, shared with the synthetic-destructor pass and both backends'
+        // container drops (member_needs_drop → compute_drop_plan). Restating it
+        // here as `Uniq || noncopyable()` is what silently skipped `string`
+        // fields; a typed Delete on a string field lowers to StrRelease on both
+        // backends, so routing them through the same path is all it takes.
+        if (!member_needs_drop(field.type)) continue;
+
         if (field.type->kind == TypeKind::Ref) {
             // A `ref` field is a counted borrow — release it. Only synthesized
             // closure envs hold ref fields ([ref self] / captured ref locals);
@@ -348,7 +355,7 @@ void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
             ValueId ref_val = emit_get_field(self_ptr, field.name,
                 field.slot_offset, field.slot_count, field.type);
             emit_ref_dec(ref_val);
-        } else if (field.type->kind == TypeKind::Uniq || field.type->noncopyable()) {
+        } else {
             emit_single_field_destroy(self_ptr, field.name,
                 field.slot_offset, field.slot_count, field.type);
         }
