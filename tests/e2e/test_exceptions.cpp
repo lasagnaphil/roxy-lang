@@ -1747,4 +1747,54 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(r.stdout_output == "dyn!\n");
     }
 
+    // A cleanup record's end block is where its scope ends, and that block is
+    // legitimately *unreachable* when the scope has no normal exit — here the
+    // merge block after an `if` whose every path terminates. The optimizer drops
+    // unreachable blocks and its remap table sent them all to block 0, so the
+    // record shrank to the entry block alone and unwinding out of either path
+    // cleaned up nothing.
+    //
+    // This was the last of the Lox leak: `Interpreter.eval_binary` evaluates
+    // both operands into locals and then reports a Lox runtime error from inside
+    // an exhaustive `when` whose arms all return or throw, so it leaked the
+    // operand it was about to complain about.
+    // VM-only: C backend: the same "cleanup record naming a by-value struct"
+    // gap the previous case hits — `make(a)`'s returned `Box` is a value local,
+    // and the record's pointer-shaped guards do not compile ("value of type
+    // 'Box' is not contextually convertible to 'bool'"). Pre-existing: it fails
+    // identically with this fix reverted. See docs/internals/c-backend.md →
+    // "Known C-backend gaps".
+    TEST_CASE("locals are destroyed when unwinding out of a scope with no normal exit") {
+        using Backend = VMBackend;
+        const char* source = R"(
+        struct Box { s: string; }
+        fun new Box(x: string) { self.s = x; }
+        struct Err { msg: string; }
+        fun new Err(m: string) { self.msg = m; }
+        fun Err.message(): string for Exception { return self.msg; }
+        fun make(x: string): Box { return Box(x + "!"); }
+        fun pick(flag: bool, a: string): Box {
+            var left: Box = make(a);
+            var right: Box = make(a);
+            if (flag) {
+                throw Err("bad");
+            } else {
+                return Box("ok");
+            }
+        }
+        fun main(): i32 {
+            var x: string = "dyn";
+            try {
+                var r: Box = pick(true, x);
+            } catch (e: Err) {
+                print(e.msg);
+            }
+            return 0;
+        }
+        )";
+        auto r = Backend::run(source);
+        CHECK(r.success == true);
+        CHECK(r.stdout_output == "bad\n");
+    }
+
 }  // TEST_SUITE("E2E Exceptions")

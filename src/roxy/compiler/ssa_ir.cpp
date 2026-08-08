@@ -737,10 +737,35 @@ void IRFunction::reorder_blocks_rpo() {
         remap(finally_info.finally_end_block);
     }
 
-    // Remap cleanup info block IDs
+    // Remap cleanup info block IDs.
+    //
+    // The end block needs its own handling, because `remap` sends every
+    // unreachable block to 0 (old_to_new is zero-filled and only reachable
+    // blocks get a real entry). For a terminator target or a handler block that
+    // never matters — anything referencing a removed block was removed with it.
+    // A cleanup record is different: its end block is where the *scope* ends,
+    // and that block is legitimately unreachable whenever the scope has no
+    // normal exit. A `when` whose every arm returns or throws is the common
+    // case — its `endwhen` merge block is created up front, is dead by the time
+    // the optimizer runs, and remapped to 0 it shrank the record's range to the
+    // entry block alone. Unwinding out of any arm then ran no cleanup for the
+    // function's locals at all, which is how `Interpreter.eval_binary` leaked
+    // the operand it was about to report a Lox runtime error for.
+    //
+    // No normal exit means every exit is a return (which cleans up inline
+    // before returning) or a throw (which needs the record), so the record
+    // should cover the rest of the function — the same span a `ref` parameter's
+    // whole-function record already takes for the same reason.
     for (auto& ci : cleanup_info) {
         remap(ci.start_block);
-        remap(ci.end_block);
+        bool end_was_dropped = ci.end_block.is_valid() && ci.end_block.id < num_blocks &&
+                               !visited[ci.end_block.id];
+        if (end_was_dropped) {
+            ci.end_block = BlockId{new_block_count - 1};
+            ci.ends_before_block = false;
+        } else {
+            remap(ci.end_block);
+        }
     }
 }
 
