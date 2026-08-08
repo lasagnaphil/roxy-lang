@@ -1,5 +1,6 @@
 #pragma once
 
+#include "roxy/core/string_view.hpp"
 #include "roxy/core/types.hpp"
 #include "roxy/rt/roxy_rt.h"
 
@@ -69,7 +70,11 @@ void object_free(RoxyVM* vm, void* data);
 struct ObjectTypeInfo {
     u32 type_id;
     u32 size;                   // Size of object data (not including header)
-    const char* name;           // Type name for debugging
+    // Type name for debugging. A StringView, not a `const char*`: the names that
+    // matter — user struct names, from `BCTypeInfo` — point into the module's
+    // source text and are NOT null-terminated, so printing one as `%s` ran off
+    // the end of the name and into the rest of the file. Print with `%.*s`.
+    StringView name;
     void (*destructor)(RoxyVM* vm, void* data);  // Optional destructor
 };
 
@@ -81,7 +86,9 @@ struct ObjectTypeInfo {
 void init_type_registry();
 
 // Register a new object type
-u32 register_object_type(const char* name, u32 size, void (*destructor)(RoxyVM*, void*) = nullptr);
+// `name` is borrowed, not copied — it must outlive the registry (a string
+// literal, or storage owned by the module being loaded).
+u32 register_object_type(StringView name, u32 size, void (*destructor)(RoxyVM*, void*) = nullptr);
 
 // Get type info by ID
 const ObjectTypeInfo* get_object_type(u32 type_id);

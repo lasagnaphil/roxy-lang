@@ -485,8 +485,10 @@ int main(int argc, char** argv) {
                 (unsigned long long)vm.teardown_heap_stats.leaked);
         for (const auto& entry : vm.teardown_leaks_by_type) {
             const ObjectTypeInfo* info = get_object_type(entry.first);
-            fprintf(stderr, "  %8llu  %s\n", (unsigned long long)entry.second,
-                    info && info->name ? info->name : "<unknown type>");
+            StringView name = info && !info->name.empty() ? info->name
+                                                          : StringView("<unknown type>");
+            fprintf(stderr, "  %8llu  %.*s\n", (unsigned long long)entry.second,
+                    (int)name.size(), name.data());
         }
         return 70;  // EX_SOFTWARE — distinct from a program's own exit code
     }

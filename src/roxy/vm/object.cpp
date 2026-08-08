@@ -15,7 +15,7 @@ namespace rx {
 // Global type registry
 static Vector<ObjectTypeInfo> g_type_registry;
 
-u32 register_object_type(const char* name, u32 size, void (*destructor)(RoxyVM*, void*)) {
+u32 register_object_type(StringView name, u32 size, void (*destructor)(RoxyVM*, void*)) {
     u32 type_id = g_type_registry.size();
     ObjectTypeInfo info;
     info.type_id = type_id;

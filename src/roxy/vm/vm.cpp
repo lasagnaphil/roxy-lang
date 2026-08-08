@@ -209,7 +209,7 @@ bool vm_load_module(RoxyVM* vm, BCModule* module) {
     module->type_ids.clear();
     vm->closure_env_dtors.clear();
     for (const BCTypeInfo& type_info : module->types) {
-        u32 type_id = register_object_type(type_info.name.data(), type_info.size_bytes, nullptr);
+        u32 type_id = register_object_type(type_info.name, type_info.size_bytes, nullptr);
         module->type_ids.push_back(type_id);
         // Map env-struct type_ids to their destructor index so deleting a
         // closure can dispatch the right env cleanup (the closure's static type
