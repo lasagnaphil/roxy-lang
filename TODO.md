@@ -18,7 +18,8 @@ nothing was looking.*
 - [ ] **Scope cleanup on the exception-unwind path is wrong in both directions**,
   which is what remains of the Lox leak. Narrowed 2026-08-08 to two minimal
   repros; both are clean the moment the `throw` is removed, so this is the
-  unwind path specifically, not ordinary scope exit:
+  unwind path specifically, not ordinary scope exit.
+  *(in progress — see `HANDOFF.md` for state, traps, and the tracing method)*
 
   *Over-release — a moved-out struct temporary is destroyed anyway.* The
   temporary that a struct literal builds is copied into the heap exception

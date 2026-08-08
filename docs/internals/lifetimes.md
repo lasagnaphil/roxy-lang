@@ -204,6 +204,12 @@ never mix, so no representation or per-deref test straddles them.
 
 ## Counting mechanics
 
+> **Picking up the unwind-path cleanup bug?** `HANDOFF.md` at the repo root has
+> the operational half — both reproductions, the traps that cost a previous
+> session time, and the allocation-tagging / refcount-pairing method that found
+> the causes fixed so far. This section stays the canonical model: cleanup runs
+> on **every** exit path, exception unwinding included, exactly once.
+
 ### Increments
 
 A `ref`'s count goes up when:
