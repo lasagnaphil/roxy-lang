@@ -997,7 +997,7 @@ IRFunction* IRBuilder::build_cleanup_wrapper(Type* noncopyable_type, u32 wrapper
     m_current_func->param_is_ptr.push_back(false);
 
     // Create entry block with the parameter as a block arg
-    m_current_block = create_block("entry"_sv);
+    set_current_block(create_block("entry"_sv));
     m_current_block->params.push_back(param);
 
     ValueId param_val = param.value;
@@ -1090,7 +1090,7 @@ IRFunction* IRBuilder::build_exception_message(Type* exc_type, StringView name) 
     m_current_func->params.push_back(self_param);
     m_current_func->param_is_ptr.push_back(false);
 
-    m_current_block = create_block("entry"_sv);
+    set_current_block(create_block("entry"_sv));
 
     ValueId msg = (exc_type->struct_info.name == "KeyError"_sv)
         ? emit_const_string("Map key not found"_sv)
@@ -1216,7 +1216,7 @@ IRFunction* IRBuilder::build_container_to_string(Type* container_type, StringVie
     // params arrive through the function ABI (C function parameters / the
     // VM call window), and the C emitter only declares blockN_argM variables
     // for blocks that are jumped to with args.
-    m_current_block = create_block("entry"_sv);
+    set_current_block(create_block("entry"_sv));
     ValueId self_val = self_param.value;
 
     // Pin for the duration: an element's user to_string reaching back into

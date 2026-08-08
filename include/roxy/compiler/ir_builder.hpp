@@ -673,6 +673,9 @@ private:
     // Current function being built
     IRFunction* m_current_func;
     IRBlock* m_current_block;
+    // The last block m_current_block held — where emission was, once a
+    // terminator has cleared it. See current_or_last_block_id().
+    IRBlock* m_last_current_block = nullptr;
 
     // 1-indexed source line of the AST node currently being lowered. Stamped
     // onto every `IRInst` by `emit_inst`; consumed by the C backend's `#line`
@@ -774,12 +777,26 @@ private:
     // Builtin exception types already pushed into m_module->struct_types.
     tsl::robin_set<Type*> m_backend_exc_types_added;
 
-    // Consume a temporary noncopyable value (ownership transferred to callee/variable).
-    // Finds the temporary OwnedLocalInfo entry by ValueId and marks it moved.
-    // When adopted_by_variable=true, the caller takes over the same register
-    // (e.g., var decl adopting a temp), so no Nullify annotation is needed —
-    // the variable's own cleanup record handles it.
-    void consume_temp_noncopyable(ValueId val, bool adopted_by_variable = false);
+    // Who takes over a tracked temporary's ownership, which decides how the
+    // temporary stops being cleaned up:
+    //
+    //   Elsewhere     — a field, container, global or callee. The destination is
+    //                   a different location, so the temp's register stops being
+    //                   an owner at a definite point: emit a Nullify, which
+    //                   narrows its cleanup record to end there.
+    //   ByAssignment  — an existing binding, in the temp's own register. No
+    //                   Nullify (it would zero a register the binding now reads),
+    //                   and the record stays: the binding's own record names the
+    //                   value it was *declared* with, which may be a different
+    //                   register than the one just assigned.
+    //   ByDeclaration — a fresh binding tracking this very SSA value. No Nullify
+    //                   and no record either — see OwnedLocalInfo::adopted_in_place.
+    enum class TempAdoption { Elsewhere, ByAssignment, ByDeclaration };
+
+    // Consume a temporary noncopyable value (ownership transferred to
+    // callee/variable). Finds the temporary OwnedLocalInfo entry by ValueId,
+    // marks it moved, and applies the `adoption` policy above.
+    void consume_temp_noncopyable(ValueId val, TempAdoption adoption = TempAdoption::Elsewhere);
 
     // Track a noncopyable call result as an owned temporary (so it's cleaned at
     // scope exit unless bound/consumed). No-op for copyable types or values
@@ -793,7 +810,7 @@ private:
     // owned temp (count transfers, no retain) or retains an existing owner (an
     // identifier, a borrowed field/element read). No-op for non-string types.
     void track_string_temp(ValueId val, Type* type);
-    void consume_or_retain_string(ValueId val, Type* type, bool adopted_by_variable);
+    void consume_or_retain_string(ValueId val, Type* type, TempAdoption adoption);
 
     // Borrow counting for `ref`-returning calls, the mirror of the string pair
     // above. By the counting convention (gen_return_stmt) such a call hands the
@@ -886,6 +903,11 @@ private:
     // the register so an already-cleaned value is safely skipped. Records are
     // pushed in declaration order — the VM's execute_cleanup iterates in
     // reverse for LIFO cleanup. Shared by pop_scope and end_function_body.
+    //
+    // Skips entries flagged `adopted_in_place` — see OwnedLocalInfo. Note it
+    // does *not* skip ordinary moved entries: the unwind path has to clean up a
+    // throw that happens BEFORE the move, and Nullify is what narrows such a
+    // record to end at the move point.
     void record_scope_cleanup_records(u32 depth);
 
     // Variable management (declared after LocalVar struct)

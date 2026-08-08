@@ -2797,7 +2797,7 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
     // still returns the old value.
     if (target_type && target_type->kind == TypeKind::String) {
         ValueId old_value = lookup_local(name);
-        consume_or_retain_string(value, target_type, /*adopted_by_variable=*/true);
+        consume_or_retain_string(value, target_type, TempAdoption::ByAssignment);
         emit_str_release(old_value);
     }
 
@@ -2859,13 +2859,14 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
     // absorbs the double-delete, but catastrophic inside nested scopes
     // (e.g. a catch body) where the temp's scope pops before the
     // variable's value is observed, leaving the variable pointing at
-    // freed memory. Matches the consume_temp_noncopyable(value, true)
-    // call in gen_var_decl.
+    // freed memory. The gen_var_decl counterpart adopts ByDeclaration instead:
+    // there the binding is fresh and tracks this very value, so it also takes
+    // over the temp's cleanup record.
     // Keyed on cleanup, not move-only-ness: whoever is responsible for destroying
     // the value must be the only one tracking it, or both destroy it. Same split
     // as gen_var_decl.
     if (tracked_for_cleanup(assign_expr.target->resolved_type)) {
-        consume_temp_noncopyable(value, true);
+        consume_temp_noncopyable(value, TempAdoption::ByAssignment);
     }
 
     // Move semantics: if value is a noncopyable identifier, mark source as moved.
@@ -2986,7 +2987,7 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
     // overwritten string read above so reassignment reclaims it rather than
     // leaking every overwrite (finding 9b).
     if (field_type && field_type->kind == TypeKind::String) {
-        consume_or_retain_string(value, field_type, /*adopted_by_variable=*/false);
+        consume_or_retain_string(value, field_type, TempAdoption::Elsewhere);
         if (overwritten_str.is_valid()) {
             emit_str_release(overwritten_str);
         }
@@ -3338,7 +3339,7 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         // field holds its own count and doesn't dangle when the source is released
         // (finding 9b).
         if (field_type && field_type->kind == TypeKind::String && value_expr) {
-            consume_or_retain_string(value, field_type, /*adopted_by_variable=*/false);
+            consume_or_retain_string(value, field_type, TempAdoption::Elsewhere);
         }
 
         // Consume a temporary the field now owns (cleanup, not move-only-ness).

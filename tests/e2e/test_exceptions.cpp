@@ -1643,4 +1643,65 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.value == 5);
     }
 
+    // Scope cleanup along the unwind path used to be wrong in both directions.
+    // Both shapes are clean the moment the `throw` is removed, so they pin the
+    // unwind path specifically, not ordinary scope exit. Only *dynamic* strings
+    // can show either — literals are interned and immortal, so retain/release
+    // are no-ops on them and the whole class is invisible with a literal.
+
+    // Over-release: `var s = <producer>` lets the binding adopt the producer's
+    // temporary in the temporary's own register. Both stayed tracked, and the
+    // unwind path recorded moved entries too (a throw *before* a move still has
+    // to clean up), so two records named one register and unwinding released the
+    // string twice — the handler then read a freed value and printed nothing.
+    TEST_CASE_TEMPLATE("a string adopted by its binding is released once when unwinding",
+                       Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct E { v: string; }
+        fun E.message(): string for Exception { return "e"; }
+        fun f(a: string) { var s: string = a + "!"; throw E { v = s }; }
+        fun main(): i32 {
+            var x: string = "dyn";
+            try { f(x); } catch (e: E) { print(e.v); }
+            return 0;
+        }
+        )";
+        auto r = Backend::run(source);
+        CHECK(r.success == true);
+        CHECK(r.stdout_output == "dyn!\n");
+    }
+
+    // Under-release: the cleanup record's end block came from the last block
+    // *created* rather than the block emission was last in. A struct literal
+    // with a tagged-union field creates its retain-join block up front and keeps
+    // emitting into it, so the record ended before the throw and unwinding
+    // skipped it — the value struct's string member leaked on every throw.
+    // (The E2E harness asserts the teardown leak invariant on every VM run.)
+    //
+    // VM-only: C backend: a tagged union with a pointer-sized variant field is
+    // copied with the slot model's byte size (3 slots = 12), but the emitted C
+    // struct aligns its union to 8 and is 16 bytes, so `memcpy(dst, src, 12)`
+    // copies half the `s` pointer and the later retain segfaults. Pre-existing
+    // and unrelated to unwinding — the same struct copy crashes with no `throw`
+    // anywhere. See docs/internals/c-backend.md → "Known C-backend gaps".
+    TEST_CASE("a value-struct local is destroyed when unwinding past it") {
+        using Backend = VMBackend;
+        const char* source = R"(
+        enum K { Num, Str }
+        struct V { when kind: K { case Num: n: i32; case Str: s: string; } }
+        fun new V.of_str(x: string) { self.kind = K::Str; self.s = x; }
+        struct E { v: V; }
+        fun E.message(): string for Exception { return "e"; }
+        fun f(a: string) { var val: V = V.of_str(a + "!"); throw E { v = val }; }
+        fun main(): i32 {
+            var x: string = "dyn";
+            try { f(x); } catch (e: E) { print(e.v.s); }
+            return 0;
+        }
+        )";
+        auto r = Backend::run(source);
+        CHECK(r.success == true);
+        CHECK(r.stdout_output == "dyn!\n");
+    }
+
 }  // TEST_SUITE("E2E Exceptions")

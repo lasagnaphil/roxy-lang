@@ -29,6 +29,22 @@ struct OwnedLocalInfo {
     BlockId start_block;   // Block where variable becomes live (for cleanup records)
     ValueId initial_value; // SSA value at declaration (for cleanup record register mapping)
     OwnedKind kind = OwnedKind::Owned;  // Owned value vs ref borrow vs owned string
+
+    // A temporary whose ownership a *declaration* adopted in the temporary's own
+    // register (`var s: string = a + "!"`): the new binding tracks the same SSA
+    // value, so it needs no count of its own and gets no Nullify — the handoff
+    // changes who owns the register, not when it stops being live.
+    //
+    // The normal path is fine either way (emit_scope_cleanup skips a moved
+    // entry), but the unwind path deliberately records moved entries, because a
+    // throw before the move still has to clean up. With no Nullify to narrow it,
+    // the temp's record covered the binding's entire range as well, and the
+    // value was destroyed twice while unwinding. So the temporary is excluded
+    // from cleanup records outright: the binding's record already covers it.
+    //
+    // Not the same as `is_moved` and not implied by it — a move to anywhere
+    // else (field, heap, callee) does emit a Nullify and does keep its record.
+    bool adopted_in_place = false;
 };
 
 // Ownership bookkeeping for the IRBuilder: which locals and temporaries own a

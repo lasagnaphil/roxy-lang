@@ -75,6 +75,16 @@ void IRBuilder::pop_scope() {
 
 BlockId IRBuilder::current_or_last_block_id() const {
     if (m_current_block) return m_current_block->id;
+    // A terminator (throw / return / unreachable) has cleared m_current_block,
+    // so the scope ends in the block emission was last in — NOT in
+    // `blocks.back()`, which is the last block *created*. Those differ whenever
+    // codegen creates its join block up front and keeps emitting into it: a
+    // `throw E { v = val }` whose struct literal has a tagged-union field emits
+    // the throw into the retain-join block, while the last created block is a
+    // per-variant `variant_retain_next`. The record then ended before the throw,
+    // and unwinding skipped it — a value-struct local with a `string` member
+    // leaked on every throw past it.
+    if (m_last_current_block) return m_last_current_block->id;
     if (!m_current_func->blocks.empty()) return m_current_func->blocks.back()->id;
     return BlockId::invalid();
 }
@@ -85,6 +95,7 @@ void IRBuilder::record_scope_cleanup_records(u32 depth) {
     for (u32 i = 0; i < m_ownership.count(); i++) {
         const OwnedLocalInfo& info = m_ownership.entry(i);
         if (info.scope_depth < depth) continue;
+        if (info.adopted_in_place) continue;  // the adopting binding's record covers it
         if (!info.start_block.is_valid() || !info.initial_value.is_valid()) continue;
         IRCleanupKind kind = info.kind == OwnedKind::RefBorrow ? IRCleanupKind::RefDec
                            : info.kind == OwnedKind::StrOwn    ? IRCleanupKind::StrRelease
@@ -160,20 +171,22 @@ void IRBuilder::acquire_ref_borrow(ValueId val, Expr* source) {
     emit_ref_borrow_inc(val, source);
 }
 
-void IRBuilder::consume_or_retain_string(ValueId val, Type* type, bool adopted_by_variable) {
+void IRBuilder::consume_or_retain_string(ValueId val, Type* type, TempAdoption adoption) {
     if (!type || type->kind != TypeKind::String || !val.is_valid()) return;
     // A tracked owned string temp: adopt its count-1 ownership (consume the temp)
     // rather than retaining a second reference.
     OwnedLocalInfo* info = m_ownership.find_live_temp(val);
     if (info && info->kind == OwnedKind::StrOwn) {
         info->is_moved = true;  // adopt: ownership transfers to the destination
-        if (!adopted_by_variable) {
+        if (adoption == TempAdoption::Elsewhere) {
             // Stored into a field/container/global (not sharing a tracked
             // local's register): end the temp's cleanup record and null its
             // mapping so its scope-exit release is suppressed.
             emit_nullify(val);
             ValueId null_val = emit_const_null();
             define_local(info->name, null_val, info->type);
+        } else if (adoption == TempAdoption::ByDeclaration) {
+            info->adopted_in_place = true;
         }
         return;
     }
@@ -182,7 +195,7 @@ void IRBuilder::consume_or_retain_string(ValueId val, Type* type, bool adopted_b
     emit_str_retain(val);
 }
 
-void IRBuilder::consume_temp_noncopyable(ValueId val, bool adopted_by_variable) {
+void IRBuilder::consume_temp_noncopyable(ValueId val, TempAdoption adoption) {
     // Find the live temporary produced as `val` (temporaries have __tmp names).
     // Only matches temporaries, not named variables that happen to share the
     // same ValueId (the tracker's value index holds temporaries only).
@@ -192,8 +205,10 @@ void IRBuilder::consume_temp_noncopyable(ValueId val, bool adopted_by_variable) 
     // When adopted by a variable (same register), the variable's cleanup record
     // handles destruction — no Nullify needed. Otherwise, emit a Nullify annotation
     // so the bytecode builder ends the cleanup record scope at this point.
-    if (!adopted_by_variable) {
+    if (adoption == TempAdoption::Elsewhere) {
         emit_nullify(val);
+    } else if (adoption == TempAdoption::ByDeclaration) {
+        info->adopted_in_place = true;
     }
     // Update the local mapping to null so yield/block-arg captures see null
     // instead of the stale pointer (prevents double-free in coroutines).

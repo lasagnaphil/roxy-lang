@@ -533,6 +533,34 @@ void disassemble_function(const BCFunction* func, String& out) {
         u32 consumed = disassemble_instruction(func->code[i], next_word, i, out);
         i += consumed;
     }
+
+    // Exception handler table
+    if (!func->exception_handlers.empty()) {
+        append("  handlers:\n");
+        for (u32 i = 0; i < func->exception_handlers.size(); i++) {
+            const auto& h = func->exception_handlers[i];
+            buf.format("    [{}] try [{}, {}) -> handler {} (type_id {}, exc_reg R{})\n",
+                       i, h.try_start_pc, h.try_end_pc, h.handler_pc, h.type_id, h.exception_reg);
+            append(buf.c_str());
+        }
+    }
+
+    // Cleanup records consumed by the unwinder
+    if (!func->cleanup_records.empty()) {
+        append("  cleanup records:\n");
+        for (u32 i = 0; i < func->cleanup_records.size(); i++) {
+            const auto& r = func->cleanup_records[i];
+            const char* kind = r.kind == static_cast<u8>(BCCleanupKind::Delete)     ? "Delete"
+                             : r.kind == static_cast<u8>(BCCleanupKind::RefDec)     ? "RefDec"
+                             : r.kind == static_cast<u8>(BCCleanupKind::Unpin)      ? "Unpin"
+                             : r.kind == static_cast<u8>(BCCleanupKind::StrRelease) ? "StrRelease"
+                             : "?";
+            buf.format("    [{}] {} R{} scope [{}, {}) live_start {} desc {}\n",
+                       i, kind, r.register_idx, r.scope_start_pc, r.scope_end_pc,
+                       r.live_start_pc, r.delete_desc_idx);
+            append(buf.c_str());
+        }
+    }
 }
 
 void disassemble_module(const BCModule* module, String& out) {

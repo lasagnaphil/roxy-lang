@@ -22,6 +22,9 @@ IRBlock* IRBuilder::create_block(StringView name) {
 
 void IRBuilder::set_current_block(IRBlock* block) {
     m_current_block = block;
+    // Remember where emission last was, so current_or_last_block_id() can answer
+    // "where does this scope end" after a terminator has cleared m_current_block.
+    if (block) m_last_current_block = block;
 }
 
 void IRBuilder::finish_block_goto(BlockId target, Span<BlockArgPair> args) {
@@ -808,7 +811,7 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
         // own count is then released by emit_scope_cleanup below, leaving the one
         // handed-off count for the caller to adopt. Mirrors the ref-return handoff.
         if (value_type && value_type->kind == TypeKind::String) {
-            consume_or_retain_string(val, value_type, /*adopted_by_variable=*/false);
+            consume_or_retain_string(val, value_type, TempAdoption::Elsewhere);
         }
 
         // Struct return: the same handoff, one level up. The caller receives a
@@ -1576,12 +1579,13 @@ void IRBuilder::gen_var_decl(Decl* decl) {
     bool moves_its_source = type && type->noncopyable();
 
     if (needs_cleanup) {
-        // If the initializer was a temporary, consume it (variable takes over tracking).
-        // Pass adopted_by_variable=true: the variable's cleanup record handles cleanup,
-        // so no Nullify annotation is needed for the temp. Keyed on cleanup, not
-        // on move-ness: whoever is responsible for destroying the value is the
-        // one that must adopt the temporary, or both would destroy it.
-        consume_temp_noncopyable(value, true);
+        // If the initializer was a temporary, consume it (variable takes over
+        // tracking). ByDeclaration: this binding tracks the temp's own SSA value,
+        // so the temp needs neither a Nullify nor a cleanup record of its own —
+        // the binding's record is the same record. Keyed on cleanup, not on
+        // move-ness: whoever is responsible for destroying the value is the one
+        // that must adopt the temporary, or both would destroy it.
+        consume_temp_noncopyable(value, TempAdoption::ByDeclaration);
 
         u32 scope_depth = static_cast<u32>(m_local_scopes.size());
         BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
@@ -1622,7 +1626,7 @@ void IRBuilder::gen_var_decl(Decl* decl) {
         // String local: a reference-counted owned value (finding 9b). Adopt a
         // fresh producer temp (count transfers) or retain an existing owner, then
         // track as a StrOwn local so it's released on every exit path.
-        consume_or_retain_string(value, type, /*adopted_by_variable=*/true);
+        consume_or_retain_string(value, type, TempAdoption::ByDeclaration);
         u32 scope_depth = static_cast<u32>(m_local_scopes.size());
         BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
         m_ownership.track({var_decl.name, type, scope_depth, false, false,
