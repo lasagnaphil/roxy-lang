@@ -10,6 +10,8 @@ class SymbolTable;
 class ErrorReporter;
 class TypeChecker;
 class SemanticAnalyzer;
+class StringView;
+struct SourceLocation;
 struct Type;
 struct TypeExpr;
 struct Expr;
@@ -57,6 +59,16 @@ struct SemaContext {
     void analyze_stmt(Stmt* stmt) const {
         analyze_stmt_fn(analyzer, stmt);
     }
+
+    // Local-shadowing ban (C#/Java tier): a local declaration — `var`, catch
+    // variable, or lambda parameter — may not reuse a name already bound to a
+    // variable or parameter of the current function, including across lambda
+    // boundaries. Module-level names (globals, functions, types) and struct
+    // fields stay shadowable. Reports an error and returns false on a shadow.
+    // Lives here (not on the analyzer) because the analyzer's declaration
+    // sites and the LambdaLifter's lambda-parameter site share it, and it
+    // only needs symbols + reporter. Defined in semantic.cpp.
+    bool check_no_local_shadowing(StringView name, SourceLocation loc) const;
 };
 
 }

@@ -133,7 +133,7 @@ Captures flow through every enclosing lambda boundary: an inner lambda capturing
 | File | Purpose |
 |---|---|
 | `src/roxy/compiler/parser.cpp` | `fun(T)->R` types, lambda + capture-list parsing |
-| `src/roxy/compiler/semantic.cpp` | capture analysis, lambda lifting, env-struct synthesis, self-capture modes |
+| `src/roxy/compiler/lambda_lifter.cpp` | capture analysis, lambda lifting, env-struct synthesis, self-capture modes (`LambdaLifter`, driven by the semantic analyzer) |
 | `src/roxy/compiler/ir_builder.cpp` | `IROp::Closure` / `CallIndirect`, function-reference trampolines |
 | `src/roxy/compiler/lowering.cpp` | `Closure` → `NEW_OBJ` + `SET_FIELD`; `CALL_INDIRECT` |
 | `include/roxy/vm/bytecode.hpp` | `CALL_INDIRECT` (0xDD), `ASSERT_HEAP` (0xDE) |

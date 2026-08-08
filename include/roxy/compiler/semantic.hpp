@@ -17,6 +17,7 @@
 #include "roxy/compiler/lifetime_checker.hpp"
 #include "roxy/compiler/trait_system.hpp"
 #include "roxy/compiler/generic_call_resolver.hpp"
+#include "roxy/compiler/lambda_lifter.hpp"
 #include "roxy/core/tsl/robin_set.h"
 
 namespace rx {
@@ -183,13 +184,6 @@ private:
     bool report_duplicate_member(SourceLocation loc, Span<InfoT> existing, StringView name,
                                  StringView struct_name, const char* noun);
 
-    // Local-shadowing ban (C#/Java tier): a local declaration — `var`, catch
-    // variable, or lambda parameter — may not reuse a name already bound to a
-    // variable or parameter of the current function, including across lambda
-    // boundaries. Module-level names (globals, functions, types) and struct
-    // fields stay shadowable. Reports an error and returns false on a shadow.
-    bool check_no_local_shadowing(StringView name, SourceLocation loc);
-
     // Pass 3 body analysis (statement-level var decls are analyzed in-body).
     void analyze_var_decl(Decl* decl);
     // Shared core of analyze_var_decl (local) and resolve_global_var (global):
@@ -233,20 +227,6 @@ private:
     Type* analyze_expr(Expr* expr);
     Type* analyze_literal_expr(Expr* expr);
     Type* analyze_identifier_expr(Expr* expr);
-    // Closure-capture path of analyze_identifier_expr: if `sym` resolves across
-    // one or more enclosing lambda boundaries, record the capture(s), rewrite
-    // `expr` in place to `__env.<name>`, set *out to the result type, and return
-    // true. Returns false when no capture applies (caller handles normally).
-    bool try_capture_identifier(Expr* expr, Symbol* sym, Type** out);
-    // Walk from the current scope outward toward `stop_scope`, returning the
-    // indices (innermost first) of every active lambda context whose boundary
-    // Lambda scope is crossed on the way. Each active ScopeKind::Lambda scope
-    // has exactly one matching context in m_lambda_contexts (both pushed in
-    // synthesize_lambda_call_fn), so a crossed boundary always resolves to an
-    // index. Shared by the identifier-capture path (stop at the symbol's
-    // defining scope), the [move]-capture path (same), and self-capture
-    // detection (stop at the struct scope; only non-emptiness matters).
-    Vector<u32> collect_crossed_lambda_contexts(const Scope* stop_scope);
     Type* analyze_unary_expr(Expr* expr);
     Type* analyze_binary_expr(Expr* expr);
     Type* analyze_ternary_expr(Expr* expr);
@@ -338,31 +318,6 @@ private:
     Type* resolve_struct_literal_type(Expr* expr, StructLiteralExpr& sl);
     void check_struct_literal_fields(Expr* expr, StructLiteralExpr& sl, Type* type);
     Type* analyze_string_interp_expr(Expr* expr);
-    Type* analyze_lambda_expr(Expr* expr);
-    struct LambdaCaptureContext;  // defined below; used by the phase helpers
-    // Phases of analyze_lambda_expr, sharing the per-lambda LambdaCaptureContext.
-    // validate: pre-validate [move]/[copy self]/[weak self] entries and collect
-    //   captures into `context` (false on error). synthesize: build the lifted
-    //   call FunDecl and analyze its body. backfill: lay out the env struct.
-    bool validate_lambda_captures(LambdaExpr& le, LambdaCaptureContext& context);
-    Decl* synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le,
-                                    StringView fun_name, StringView env_name,
-                                    Type* ret_type, LambdaCaptureContext& context);
-    void backfill_lambda_env(Type* env_type, const LambdaCaptureContext& context);
-
-    // Builders for synthetic AST nodes (used by lambda capture lowering and
-    // self-capture rewriting). Each bump-allocates an Expr and fills in the
-    // tagged-union member plus loc/resolved_type.
-    Expr* make_identifier_expr(StringView name, Type* type, SourceLocation loc);
-    Expr* make_get_expr(Expr* object, StringView name, Type* type, SourceLocation loc);
-    Expr* make_this_expr(Type* type, SourceLocation loc);
-
-    // Recursively populates implicit ref-self captures in lambda contexts
-    // 0..target_idx (inclusive). Outermost reads `self` directly via ExprThis;
-    // every inner one reads via ExprGet(__env, __self) on the next-outer env.
-    // Idempotent (skips contexts that already have has_self_capture set).
-    void ensure_self_captured_through(u32 target_idx, Type* struct_type,
-                                      SourceLocation loc);
 
     // Operator result-type helpers (these dispatch through trait bounds, so they
     // stay on the analyzer; the pure relation/coercion checks live in TypeChecker)
@@ -420,28 +375,12 @@ private:
     // template-body checking incl. the active-type-param state (see
     // generic_call_resolver.hpp).
     GenericCallResolver m_generic_calls;
+    // Closure machinery: lambda expressions (capture validation, lifting the
+    // body into a synthetic call function, env-struct backfill) and the
+    // capture rewrites on identifier/self references inside lambda bodies
+    // (see lambda_lifter.hpp).
+    LambdaLifter m_lambdas;
     Program* m_program;                   // Current program being analyzed
-
-    // Counter for unique lambda IDs (used to name synthesized env structs and call functions).
-    u32 m_lambda_id_counter = 0;
-
-    // Active lambda-body capture context. Pushed when entering analyze_lambda_expr,
-    // popped on exit. analyze_identifier_expr inspects the topmost context to detect
-    // captures (the symbol's defining scope sits past a ScopeKind::Lambda boundary).
-    // For nested closures, multiple contexts are stacked (innermost on top).
-    struct LambdaCaptureContext {
-        Scope* boundary_scope;                       // the ScopeKind::Lambda for this lambda
-        Type* env_struct_type;                       // the env struct (for cross-context __env typing)
-        Vector<CaptureInfo> captures;                // ordered, env-field order
-        tsl::robin_map<Symbol*, u32> by_symbol;      // dedup + index lookup
-        // Self-capture state. Tracks whether `self` has been captured into this
-        // lambda's env (and where in `captures`). When set by a [copy self] or
-        // [weak self] entry pre-validation, body references to `self` route
-        // through the existing entry rather than creating a duplicate.
-        bool has_self_capture = false;
-        u32 self_capture_index = 0;
-    };
-    Vector<LambdaCaptureContext*> m_lambda_contexts;
 
     // Cycle detection for direct value-type recursion in struct fields
     tsl::robin_set<Type*> m_resolving_structs;

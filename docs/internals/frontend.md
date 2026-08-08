@@ -96,7 +96,9 @@ analyzer itself): `ErrorReporter` (error collection/formatting), `TypeChecker`
 (pure type relations and coercions), `LifetimeChecker` (per-function move
 states and the branch-termination flag),
 `TraitSystem` (builtin trait registration, trait declarations, impl
-grouping/validation, default-method injection), and `GenericCallResolver`
+grouping/validation, default-method injection), `LambdaLifter` (lambda
+lifting and closure-capture analysis, including the capture rewrites on
+identifier/`self` references inside lambda bodies), and `GenericCallResolver`
 (type-arg unification/inference, generic function calls, template refs in
 value position, trait bounds, Phase B template-body checking with the
 active-type-param state the analyzer's type resolution and operator dispatch
@@ -150,6 +152,7 @@ contract block ("the single-shot analysis rule").
 - `include/roxy/compiler/type_checker.hpp` - Type relations and coercions
 - `src/roxy/compiler/type_checker.cpp` - Type checker implementation
 - `include/roxy/compiler/lifetime_checker.hpp` - Lifetime analysis (move states, termination, scope-exit checks)
+- `include/roxy/compiler/lambda_lifter.hpp` - Lambda lifting and closure-capture analysis (`LambdaLifter`)
 - `src/roxy/compiler/lifetime_checker.cpp` - Lifetime checker implementation
 - `include/roxy/compiler/trait_system.hpp` - Trait machinery (builtin traits, trait decls, impl validation, default injection)
 - `src/roxy/compiler/trait_system.cpp` - Trait system implementation
