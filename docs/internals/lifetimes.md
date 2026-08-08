@@ -1135,6 +1135,35 @@ that had held only because every tracked local used to be pointer-shaped:
   storage out from under the copy that read it. It now nulls only when
   `free_obj`.
 
+A third assumption fell later (2026-08-08, the last Lox leak): **a record's
+single PC interval can cover a scope**. It cannot — RPO lays a throw-terminated
+branch out *after* the scope's normal-exit block (the branch has no successors,
+so it post-orders first and is placed last), and the interval, truncated at the
+normal-path `Delete`'s `Nullify`, missed the throw entirely. An owned by-value
+`List` parameter in `fun take(args) { if (…) { throw …; } return 0; }` leaked on
+every throw. Nor could the interval simply be widened: SSA liveness considered
+the value dead in the throwing block, so its register was already recycled there
+(a record firing would have deleted a string constant as a list).
+
+Lowering now computes each record's **coverage** — every block reachable from
+the value's def without passing an ownership-ending kill (a `Nullify`, or the
+record's own cleanup op), following exception edges into a handler only when the
+handler's continuation demonstrably cleans the value up (or, for a rethrowing
+`finally`, never exits normally) — then pins the value's register across the
+whole coverage (liveness Pass 5b in `compute_liveness`) and emits **extension
+records** (`BCCleanupRecord::is_extension`) for covered PC runs outside the main
+interval. The unwinder evaluates a head record plus its extensions as one group:
+throw-site and handler-in-scope tests consult every interval in the group, and
+the action runs at most once. One subtlety carries the whole thing: a moved
+argument's kill is anchored at the **consuming call's boundary** (the word after
+the `CALL`), not at its `Nullify`, which is only lowered after the call's
+return-value materialization — a throw escaping the callee surfaces at exactly
+that boundary, when the callee already owns (and on unwind frees) the value, so
+covering the gap double-freed it (`Interpreter.eval_call` did exactly this).
+The C backend is untouched: it consumes `IRCleanupInfo` directly and replays
+every record once from its `__unwind` label with null guards, which already
+covers layout-independent unwinding.
+
 ### Move-only containers
 
 **Move-only** is the `!is_copy()` case: a `List`/`Map` (it owns a heap buffer), a

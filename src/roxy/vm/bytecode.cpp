@@ -555,9 +555,10 @@ void disassemble_function(const BCFunction* func, String& out) {
                              : r.kind == static_cast<u8>(BCCleanupKind::Unpin)      ? "Unpin"
                              : r.kind == static_cast<u8>(BCCleanupKind::StrRelease) ? "StrRelease"
                              : "?";
-            buf.format("    [{}] {} R{} scope [{}, {}) live_start {} desc {}\n",
+            buf.format("    [{}] {} R{} scope [{}, {}) live_start {} desc {}{}\n",
                        i, kind, r.register_idx, r.scope_start_pc, r.scope_end_pc,
-                       r.live_start_pc, r.delete_desc_idx);
+                       r.live_start_pc, r.delete_desc_idx,
+                       r.is_extension ? " (ext)" : "");
             append(buf.c_str());
         }
     }

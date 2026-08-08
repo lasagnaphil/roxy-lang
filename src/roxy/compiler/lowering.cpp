@@ -158,6 +158,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_unfusable_cmp_pcs.clear();
     m_nullify_pcs.clear();
     m_ref_inc_pcs.clear();
+    m_cleanup_kill_pcs.clear();
     // m_requires_register is rebuilt fresh by compute_const_use_modes().
     m_jump_patches.clear_keep_capacity();
     free_regs_reset();
@@ -168,6 +169,12 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_scratch_regs[0] = m_scratch_regs[1] = 0xFF;
     m_next_reg = 0;
     m_next_stack_slot = 0;
+
+    // Step 0: Compute unwind coverage for cleanup records (which blocks each
+    // tracked value is owned in). Must precede compute_liveness — its Pass 5b
+    // pins each tracked register across the whole coverage, so a covered block
+    // laid out past the scope's normal exit cannot recycle it.
+    compute_cleanup_coverage(ir_func);
 
     // Step 1: Compute liveness intervals for all SSA values
     // (blocks are already in RPO order from IR building)
@@ -539,6 +546,8 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
 
         // Record block offset
         m_block_offsets[block->id.id] = m_current_func->code.size();
+        m_block_start_pc = m_current_func->code.size();
+        m_call_use_pcs.clear();
 
         // Lower all instructions, recording where each value becomes readable.
         for (IRInst* inst : block->instructions) {
@@ -669,7 +678,8 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     }
 
     // Build cleanup records from IR cleanup info
-    for (const auto& ir_cleanup : ir_func->cleanup_info) {
+    for (u32 ci_index = 0; ci_index < ir_func->cleanup_info.size(); ci_index++) {
+        const auto& ir_cleanup = ir_func->cleanup_info[ci_index];
         u32 start_offset = block_offset(ir_cleanup.start_block.id);
         u32 end_offset = block_offset(ir_cleanup.end_block.id);
 
@@ -790,6 +800,86 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
         }
 
         m_current_func->cleanup_records.push_back(record);
+
+        // Extension records: the value's unwind coverage
+        // (compute_cleanup_coverage) can include blocks laid out past the main
+        // interval — RPO places a throw-terminated branch after the scope's
+        // normal-exit block, so the Nullify-truncated interval above misses it
+        // and a throw there leaked the value. Emit one extension record per
+        // contiguous layout run of covered blocks, clipped to the part beyond
+        // the main interval, truncated at the first kill PC inside a block.
+        // Pass 5b pinned the register across the coverage, so reading it at
+        // these PCs is safe. The unwinder evaluates head + extensions as one
+        // group (see execute_cleanup).
+        if (ci_index >= m_cleanup_covered_blocks.size()) continue;
+        const Vector<u32>& covered = m_cleanup_covered_blocks[ci_index];
+        if (covered.empty()) continue;
+
+        auto first_kill_pc_in = [&](u32 range_start, u32 range_end) -> u32 {
+            auto kill_it = m_cleanup_kill_pcs.find(ir_cleanup.value.id);
+            if (kill_it == m_cleanup_kill_pcs.end()) return NO_OFFSET;
+            u32 best = NO_OFFSET;
+            for (u32 pc : kill_it->second) {
+                if (pc >= range_start && pc <= range_end && pc < best) best = pc;
+            }
+            return best;
+        };
+
+        u32 run_start = NO_OFFSET;
+        u32 run_end = NO_OFFSET;  // exclusive
+        auto flush_run = [&]() {
+            if (run_start != NO_OFFSET && run_end != NO_OFFSET && run_start < run_end) {
+                // Only the part beyond the main interval is new coverage; the
+                // part inside it is already covered, and anything before its
+                // scope_start would predate the value's live range.
+                u32 lo = run_start > record.scope_end_pc ? run_start : record.scope_end_pc;
+                if (lo < run_end) {
+                    BCCleanupRecord ext;
+                    ext.scope_start_pc = lo;
+                    ext.scope_end_pc = run_end;
+                    ext.live_start_pc = lo;
+                    ext.register_idx = record.register_idx;
+                    ext.kind = record.kind;
+                    ext.delete_desc_idx = record.delete_desc_idx;
+                    ext.is_extension = true;
+                    m_current_func->cleanup_records.push_back(ext);
+                }
+            }
+            run_start = NO_OFFSET;
+            run_end = NO_OFFSET;
+        };
+
+        u32 prev_block = 0;
+        bool run_open = false;
+        for (u32 covered_block : covered) {
+            u32 b_start = block_offset(covered_block);
+            if (b_start == NO_OFFSET) {
+                flush_run();
+                run_open = false;
+                continue;
+            }
+            u32 next_off = block_offset(covered_block + 1);
+            u32 b_end = next_off != NO_OFFSET ? next_off
+                                              : static_cast<u32>(m_current_func->code.size());
+            if (!run_open || covered_block != prev_block + 1) {
+                flush_run();
+                run_start = b_start;
+            }
+            u32 kill_pc = first_kill_pc_in(b_start, b_end);
+            if (kill_pc != NO_OFFSET) {
+                // Ownership ends inside this block: close the run at the kill
+                // (successors of a kill block are not covered, so a
+                // layout-adjacent covered block belongs to a fresh run).
+                run_end = kill_pc;
+                flush_run();
+                run_open = false;
+            } else {
+                run_end = b_end;
+                prev_block = covered_block;
+                run_open = true;
+            }
+        }
+        flush_run();
     }
 
     m_current_func->register_count = m_next_reg;
@@ -1380,6 +1470,214 @@ void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
     // no separate collection pass or set to populate (§3.8).
 }
 
+// Compute, per cleanup record, the set of blocks in which the record's value is
+// owned on the way to a potential throw: every block reachable from the
+// record's start block without passing an ownership-ending kill. A kill is a
+// Nullify annotation on the value, or a lowered cleanup op on it (Delete /
+// StrRelease / RefDec) — the latter matters for the paths that end ownership
+// without a Nullify (e.g. a temp adopted by a declaration).
+//
+// Exception edges are followed selectively. A throw inside a try transfers
+// control to its handler block, and the value is owned there exactly when the
+// throw site was covered — but whether the *handler* should be covered depends
+// on who cleans up afterwards:
+//   - If any try-body block kills the value, ownership at the handler is
+//     path-dependent (a throw before vs. after the kill), which a PC-interval
+//     record cannot express. Don't cover the handler: pre-kill throws fire
+//     their covered records during the unwind, post-kill throws fire nothing.
+//   - Otherwise cover the handler iff its normal continuation kills the value
+//     (RAII: the builder cleans up on every normal exit of a scope the value is
+//     live in), or the handler has no normal exit at all (a finally's catch-all
+//     rethrows — the value must survive into the finally body and is freed by
+//     its own covered record at the rethrow PC).
+// Covering the handler serves the unwinder's handler-in-scope test: a handler
+// inside the value's coverage means normal-path cleanup will run, so the
+// unwind must not also fire (see execute_cleanup in interpreter.cpp).
+void BytecodeBuilder::compute_cleanup_coverage(IRFunction* ir_func) {
+    m_cleanup_covered_blocks.clear();
+    u32 record_count = ir_func->cleanup_info.size();
+    if (record_count == 0) return;
+    for (u32 i = 0; i < record_count; i++) m_cleanup_covered_blocks.push_back({});
+
+    u32 num_blocks = ir_func->blocks.size();
+    if (num_blocks == 0) return;
+
+    auto record_eligible = [](const IRCleanupInfo& info) {
+        if (!info.value.is_valid() || !info.start_block.is_valid()) return false;
+        if (info.whole_function_scope) return false;  // already spans [0, end)
+        if (info.call_borrow) return false;           // sub-block [RefInc, Nullify) window
+        if (info.kind == IRCleanupKind::Unpin) return false;
+        return true;
+    };
+
+    // Seed m_cleanup_kill_pcs keys for eligible values, so the Delete /
+    // StrRelease / RefDec / Nullify lowering paths append kill PCs only for
+    // values a record tracks.
+    bool any_eligible = false;
+    for (const auto& info : ir_func->cleanup_info) {
+        if (record_eligible(info)) {
+            m_cleanup_kill_pcs[info.value.id];  // default-construct empty vector
+            any_eligible = true;
+        }
+    }
+    if (!any_eligible) return;
+
+    // One IR walk: per tracked value, the blocks containing a kill of it.
+    tsl::robin_map<u32, Vector<u32>> kill_blocks;
+    for (IRBlock* block : ir_func->blocks) {
+        for (IRInst* inst : block->instructions) {
+            switch (inst->op) {
+                case IROp::Nullify:
+                case IROp::Delete:
+                case IROp::StrRelease:
+                case IROp::RefDec: {
+                    if (!inst->unary.is_valid()) break;
+                    if (m_cleanup_kill_pcs.find(inst->unary.id) == m_cleanup_kill_pcs.end()) break;
+                    Vector<u32>& blocks = kill_blocks[inst->unary.id];
+                    if (blocks.empty() || blocks.back() != block->id.id) {
+                        blocks.push_back(block->id.id);
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+    }
+    auto block_has_kill = [&](u32 value_id, u32 block_id) {
+        auto it = kill_blocks.find(value_id);
+        if (it == kill_blocks.end()) return false;
+        for (u32 b : it->second) {
+            if (b == block_id) return true;
+        }
+        return false;
+    };
+
+    // Which handlers guard each block (index into ir_func->exception_handlers).
+    Vector<Vector<u32>> block_to_handlers;
+    block_to_handlers.reserve(num_blocks);
+    for (u32 i = 0; i < num_blocks; i++) block_to_handlers.push_back({});
+    for (u32 h = 0; h < ir_func->exception_handlers.size(); h++) {
+        for (BlockId bid : ir_func->exception_handlers[h].try_body_blocks) {
+            if (bid.is_valid() && bid.id < num_blocks) {
+                block_to_handlers[bid.id].push_back(h);
+            }
+        }
+    }
+
+    auto for_each_successor = [&](u32 block_id, auto&& fn) {
+        const Terminator& term = ir_func->blocks[block_id]->terminator;
+        switch (term.kind) {
+            case TerminatorKind::Goto:
+                fn(term.goto_target.block);
+                break;
+            case TerminatorKind::Branch:
+                fn(term.branch.then_target.block);
+                fn(term.branch.else_target.block);
+                break;
+            default:
+                break;
+        }
+    };
+
+    // Scratch buffers shared across records.
+    Vector<bool> visited;
+    Vector<u32> worklist;
+    Vector<bool> handler_reach;
+
+    // Decide whether handler h's block continues value_id's coverage.
+    auto handler_covered = [&](u32 h, u32 value_id) {
+        const IRExceptionHandler& handler = ir_func->exception_handlers[h];
+        if (!handler.handler_block.is_valid() || handler.handler_block.id >= num_blocks) {
+            return false;
+        }
+        // (a) A kill anywhere in the try body makes ownership at the handler
+        // path-dependent — don't cover.
+        for (BlockId bid : handler.try_body_blocks) {
+            if (bid.is_valid() && bid.id < num_blocks && block_has_kill(value_id, bid.id)) {
+                return false;
+            }
+        }
+        // (b)/(c) One BFS over the handler's normal continuation: covered iff a
+        // kill of the value is reachable, or no Return is (rethrow-only path).
+        handler_reach.clear_keep_capacity();
+        handler_reach.reserve(num_blocks);
+        for (u32 i = 0; i < num_blocks; i++) handler_reach.push_back(false);
+        worklist.clear_keep_capacity();
+        worklist.push_back(handler.handler_block.id);
+        handler_reach[handler.handler_block.id] = true;
+        bool saw_return = false;
+        while (!worklist.empty()) {
+            u32 b = worklist.back();
+            worklist.pop_back();
+            if (block_has_kill(value_id, b)) return true;
+            if (ir_func->blocks[b]->terminator.kind == TerminatorKind::Return) saw_return = true;
+            for_each_successor(b, [&](BlockId succ) {
+                if (succ.is_valid() && succ.id < num_blocks && !handler_reach[succ.id]) {
+                    handler_reach[succ.id] = true;
+                    worklist.push_back(succ.id);
+                }
+            });
+        }
+        return !saw_return;
+    };
+
+    for (u32 ci = 0; ci < record_count; ci++) {
+        const IRCleanupInfo& info = ir_func->cleanup_info[ci];
+        if (!record_eligible(info)) continue;
+        if (info.start_block.id >= num_blocks) continue;
+
+        visited.clear_keep_capacity();
+        visited.reserve(num_blocks);
+        for (u32 i = 0; i < num_blocks; i++) visited.push_back(false);
+
+        Vector<u32>& covered = m_cleanup_covered_blocks[ci];
+        Vector<u32> pending;
+        pending.push_back(info.start_block.id);
+        // Memoized handler decisions for this record (handler index -> covered).
+        tsl::robin_map<u32, bool> handler_memo;
+        while (!pending.empty()) {
+            u32 b = pending.back();
+            pending.pop_back();
+            if (b >= num_blocks || visited[b]) continue;
+            // A record that hands off at a merge ends where the merge block
+            // begins — the merge param's own record covers from there.
+            if (info.ends_before_block && info.end_block.is_valid() && b == info.end_block.id) {
+                continue;
+            }
+            visited[b] = true;
+            covered.push_back(b);
+            if (block_has_kill(info.value.id, b)) continue;
+            for_each_successor(b, [&](BlockId succ) {
+                if (succ.is_valid()) pending.push_back(succ.id);
+            });
+            for (u32 h : block_to_handlers[b]) {
+                auto memo_it = handler_memo.find(h);
+                bool cover;
+                if (memo_it != handler_memo.end()) {
+                    cover = memo_it->second;
+                } else {
+                    cover = handler_covered(h, info.value.id);
+                    handler_memo[h] = cover;
+                }
+                if (cover) pending.push_back(ir_func->exception_handlers[h].handler_block.id);
+            }
+        }
+
+        // Sort: block ids equal layout positions post-RPO, so sorted order is
+        // layout order (needed for contiguous-run construction in build()).
+        for (u32 i = 1; i < covered.size(); i++) {
+            u32 v = covered[i];
+            u32 j = i;
+            while (j > 0 && covered[j - 1] > v) {
+                covered[j] = covered[j - 1];
+                j--;
+            }
+            covered[j] = v;
+        }
+    }
+}
+
 void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
     // Allocate live ranges for all SSA values in this function
     u32 num_values = ir_func->next_value_id;
@@ -1688,6 +1986,27 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
         auto& lr = m_live_ranges[ci.value.id];
         if (scope_end_point > lr.last_use_point) {
             lr.last_use_point = scope_end_point;
+        }
+    }
+
+    // Pass 5b: extend each tracked value across its whole unwind coverage
+    // (compute_cleanup_coverage). The end_block-based extension above stops at
+    // the scope's normal exit, but RPO lays a throw-terminated branch out
+    // *after* that block; the extension records emitted for such blocks read
+    // the value's register at the throw, so it must not be recycled there —
+    // SSA liveness alone considers the value dead in a block with no use.
+    for (u32 ci_idx = 0; ci_idx < ir_func->cleanup_info.size() &&
+                         ci_idx < m_cleanup_covered_blocks.size(); ci_idx++) {
+        const Vector<u32>& covered = m_cleanup_covered_blocks[ci_idx];
+        if (covered.empty()) continue;
+        const auto& info = ir_func->cleanup_info[ci_idx];
+        if (!info.value.is_valid() || info.value.id >= num_values) continue;
+        u32 max_block = covered.back();  // sorted, so back() is the layout-last
+        if (max_block >= block_points.size()) continue;
+        u32 end_point = block_points[max_block].term_point;
+        auto& lr = m_live_ranges[info.value.id];
+        if (end_point > lr.last_use_point) {
+            lr.last_use_point = end_point;
         }
     }
 
@@ -2187,6 +2506,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             // Emit two-word CALL: word 1 = [CALL][dst][_][arg_count], word 2 = [func_idx:32]
             emit_abc(Opcode::CALL, dst, 0, arg_count);
             emit(func_idx);
+            for (u32 i = 0; i < inst->call.args.size(); i++) note_call_use(inst->call.args[i]);
 
             // For small struct returns, dst now contains packed struct data in consecutive registers
             // Allocate stack space and unpack
@@ -2244,6 +2564,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             // Two-word CALL_NATIVE: word 1 = [op][dst][_][arg_count], word 2 = [func_idx:32]
             emit_abc(Opcode::CALL_NATIVE, dst, 0, arg_count);
             emit(func_idx);
+            for (u32 i = 0; i < inst->call.args.size(); i++) note_call_use(inst->call.args[i]);
             break;
         }
 
@@ -2329,6 +2650,9 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             // Emit regular two-word CALL instruction (statically linked).
             emit_abc(Opcode::CALL, dst, 0, arg_count);
             emit(func_idx);
+            for (u32 i = 0; i < inst->call_external.args.size(); i++) {
+                note_call_use(inst->call_external.args[i]);
+            }
 
             // For small struct returns, handle unpacking
             if (ret_slot_count > 0 && ret_slot_count <= 4) {
@@ -2399,6 +2723,10 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             // word 2 = reserved (future inline-cache slot).
             emit_abc(Opcode::CALL_INDIRECT, dst, closure_reg, arg_count);
             emit(0u);
+            for (u32 i = 0; i < inst->call_indirect.args.size(); i++) {
+                note_call_use(inst->call_indirect.args[i]);
+            }
+            note_call_use(inst->call_indirect.callee);
 
             // Small-struct return unpacking, mirroring IROp::Call.
             if (ret_slot_count > 0 && ret_slot_count <= 4) {
@@ -2505,6 +2833,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         case IROp::RefDec: {
             u8 ptr = ensure_in_register(inst->unary, 0);
             emit_abc(Opcode::REF_DEC, ptr, 0, 0);
+            record_cleanup_kill_pc(inst->unary);
             break;
         }
 
@@ -2517,6 +2846,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
         case IROp::StrRelease: {
             u8 ptr = ensure_in_register(inst->unary, 0);
             emit_abc(Opcode::STR_RELEASE, ptr, 0, 0);
+            record_cleanup_kill_pc(inst->unary);
             break;
         }
 
@@ -2709,6 +3039,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
                 u16 desc_idx = build_delete_desc(inst->type);
                 emit_abi(Opcode::DELETE, ptr_reg, desc_idx);
             }
+            record_cleanup_kill_pc(inst->unary);
             break;
         }
 
@@ -2717,6 +3048,31 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             // The cleanup record builder uses this to end the scope early.
             // No runtime instruction is emitted — Nullify is a compile-time annotation.
             m_nullify_pcs[inst->unary.id] = static_cast<u32>(m_current_func->code.size());
+            // Anchored kill for coverage runs: ownership actually ended at the
+            // last same-block ownership event — a release op (whose PC the
+            // Delete/StrRelease/RefDec lowering already recorded) or a
+            // consuming call (m_call_use_pcs). Instructions lowered between
+            // that event and this annotation (return-value materialization,
+            // SSA nulling) are not owned coverage: a throw escaping the
+            // consuming callee surfaces at exactly the call boundary, when the
+            // callee already owns — and on unwind frees — the value, so
+            // covering the gap would free it twice.
+            if (inst->unary.is_valid()) {
+                auto kill_it = m_cleanup_kill_pcs.find(inst->unary.id);
+                if (kill_it != m_cleanup_kill_pcs.end()) {
+                    u32 anchor = static_cast<u32>(m_current_func->code.size());
+                    u32 candidate = 0;
+                    if (!kill_it->second.empty() && kill_it->second.back() >= m_block_start_pc) {
+                        candidate = kill_it->second.back();
+                    }
+                    auto use_it = m_call_use_pcs.find(inst->unary.id);
+                    if (use_it != m_call_use_pcs.end() && use_it->second > candidate) {
+                        candidate = use_it->second;
+                    }
+                    if (candidate != 0 && candidate < anchor) anchor = candidate;
+                    kill_it.value().push_back(anchor);
+                }
+            }
             break;
         }
 

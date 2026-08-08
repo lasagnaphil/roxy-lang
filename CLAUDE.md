@@ -593,4 +593,4 @@ profilers, Tracy, workload classes, guardrails, baseline findings):
   - `profiling.md` - Profiling the compiler & interpreter: RelWithDebInfo build, `roxy --time` per-phase compile timing + compile-vs-execute split, `roxy --repeat=N` in-process compile loop, the `ENABLE_BC_PROFILE` opcode profiler, and the samply/Instruments sampling-profiler workflow
   - `identifier-interning.md` - Post-mortem on the abandoned `Sym` interning attempt (+5.6% regression), and the canonical mangler that was kept from it
 
-Three more at the repo root: `TODO.md` (known bugs and technical debt — check it before assuming a feature works), `OPTIMIZATION.md` (the compiler's own compile-time performance program: baseline, measurement rules, negative results), and `HANDOFF.md` (in-flight work on scope cleanup along the exception-unwind path — repros, traps, and the leak-tracing method; delete it when that lands).
+Two more at the repo root: `TODO.md` (known bugs and technical debt — check it before assuming a feature works) and `OPTIMIZATION.md` (the compiler's own compile-time performance program: baseline, measurement rules, negative results).

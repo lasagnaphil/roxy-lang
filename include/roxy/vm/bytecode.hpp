@@ -492,6 +492,15 @@ struct BCCleanupRecord {
     u8 register_idx;          // Register holding the owned value / borrow
     u8 kind;                  // BCCleanupKind: Delete owned value vs RefDec a borrow
     u16 delete_desc_idx;      // Index into BCFunction::delete_descs[] (Delete kind only)
+    // A value's coverage is not always one PC interval: RPO layout places a
+    // throw-terminated branch *after* the scope's normal-exit block, so PCs the
+    // value is owned at fall outside the Nullify-truncated main interval. Such
+    // runs are emitted as extension records directly following their head
+    // record. The unwinder evaluates a head plus its extensions as one group:
+    // throw-site and handler-site tests consult every interval in the group,
+    // and the cleanup action runs at most once (the head's register/kind/desc —
+    // extensions carry copies, but only the head's are used).
+    bool is_extension = false;
 };
 
 // Bytecode function

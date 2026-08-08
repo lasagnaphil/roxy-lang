@@ -194,6 +194,63 @@ private:
     static constexpr u32 NO_READY_PC = UINT32_MAX;
     Vector<u32> m_value_ready_pcs;
 
+    // Exception-unwind coverage for block-scoped cleanup records: for each
+    // cleanup_info entry, the sorted set of block ids (== layout positions after
+    // RPO reorder) where the record's value is owned on the way to a potential
+    // throw — every block reachable from its start block without passing an
+    // ownership-ending kill (Nullify, or the record's own cleanup op). This can
+    // exceed the record's single [start, end) PC interval: RPO lays a
+    // throw-terminated branch out *after* the scope's normal-exit block, so the
+    // interval truncated at the Nullify misses it and the value leaks
+    // (lifetimes.md "Applying the model"). The coverage feeds two consumers:
+    // liveness Pass 5b pins the value's register across all covered blocks, and
+    // build() emits extension records (BCCleanupRecord::is_extension) for
+    // covered PC runs outside the main interval. Empty for records the
+    // machinery doesn't apply to (call borrows, Unpin, whole-function refs).
+    Vector<Vector<u32>> m_cleanup_covered_blocks;
+    void compute_cleanup_coverage(IRFunction* ir_func);
+
+    // Ownership-ending PCs per tracked cleanup value: every Nullify annotation
+    // plus every lowered Delete/StrRelease/RefDec on the value (PC just past the
+    // releasing instruction, matching m_nullify_pcs' convention). Keys are
+    // pre-seeded by compute_cleanup_coverage for eligible record values only, so
+    // the hot StrRelease/RefDec lowering paths append nothing for untracked
+    // values. Used to truncate an extension run at the kill inside its block —
+    // unlike m_nullify_pcs, which keeps only the last PC for the legacy
+    // single-interval narrowing.
+    tsl::robin_map<u32, Vector<u32>> m_cleanup_kill_pcs;
+
+    // Append the current PC (just past the last emitted instruction) to the
+    // value's kill list, if a cleanup record tracks the value.
+    void record_cleanup_kill_pc(ValueId value) {
+        if (!value.is_valid()) return;
+        auto it = m_cleanup_kill_pcs.find(value.id);
+        if (it != m_cleanup_kill_pcs.end()) {
+            it.value().push_back(static_cast<u32>(m_current_func->code.size()));
+        }
+    }
+
+    // Consumption boundaries within the current block: ValueId -> PC just past
+    // the last CALL-family instruction that used the value as an argument.
+    // Cleared at each block start. A moved argument's ownership transfers at
+    // the call, and a throw escaping the callee surfaces at exactly this PC
+    // (the word after the call instruction) — but the move's Nullify is only
+    // lowered after the call's return-value materialization, several
+    // instructions later. Anchoring the kill at the Nullify's own PC would
+    // leave that gap covered, so an escaping throw would free a value the
+    // callee already owned (and freed). Tracked values only.
+    tsl::robin_map<u32, u32> m_call_use_pcs;
+    u32 m_block_start_pc = 0;
+
+    // Note a call-argument use of a tracked value; call right after emitting
+    // the call instruction words (before return materialization).
+    void note_call_use(ValueId value) {
+        if (!value.is_valid()) return;
+        if (m_cleanup_kill_pcs.find(value.id) != m_cleanup_kill_pcs.end()) {
+            m_call_use_pcs[value.id] = static_cast<u32>(m_current_func->code.size());
+        }
+    }
+
     // Patch jump offsets after all blocks are emitted
     void patch_jumps();
 

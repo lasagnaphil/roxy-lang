@@ -1797,4 +1797,106 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(r.stdout_output == "bad\n");
     }
 
+    // A cleanup record is a PC interval, but a value's coverage is not: RPO
+    // lays a throw-terminated branch out *after* the scope's normal-exit block
+    // (the branch is post-ordered first, so it is placed last), so the interval
+    // truncated at the normal-path Delete's Nullify missed the throw entirely
+    // and the owned parameter leaked. Coverage is now computed per block
+    // (reachable from the def without passing an ownership-ending kill), the
+    // register is pinned across it, and the runs outside the main interval get
+    // extension records the unwinder evaluates together with the head.
+    //
+    // This was the very last Lox leak: `Interpreter.call_fun` throws its arity
+    // error out of exactly this shape, leaking the by-value args list —
+    // test_run_arity_error / test_run_clock's `clock(1)`.
+    TEST_CASE_TEMPLATE("a throwing branch laid out past the scope's normal exit still frees an owned param", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct E { msg: string; }
+        fun new E(m: string) { self.msg = m; }
+        fun E.message(): string for Exception { return self.msg; }
+        fun take(args: List<i32>): i32 {
+            if (args.len() != 0) { throw E("bad"); }
+            return 0;
+        }
+        fun main(): i32 {
+            var l: List<i32> = List<i32>(); l.push(1);
+            try { var r: i32 = take(l); } catch (e: E) { print(e.msg); }
+            return 0;
+        }
+        )";
+        auto r = Backend::run(source);
+        CHECK(r.success == true);
+        CHECK(r.stdout_output == "bad\n");
+    }
+
+    // Same shape with the handler in the *same* frame, on both sides of the
+    // scope boundary. Scope inside the try: the handler is outside the list's
+    // scope, so the unwind must free it (it leaked before). Scope enclosing the
+    // try: the handler is inside the list's coverage — including the throwing
+    // branch's extension record — so the unwind must NOT free it, and the list
+    // is still usable after the catch.
+    TEST_CASE_TEMPLATE("in-frame catch frees a list scoped inside the try, spares one scoped outside", Backend, RX_E2E_BACKENDS) {
+        const char* scope_inside_try = R"(
+        struct E { msg: string; }
+        fun new E(m: string) { self.msg = m; }
+        fun E.message(): string for Exception { return self.msg; }
+        fun main(): i32 {
+            try {
+                var l: List<i32> = List<i32>(); l.push(1);
+                if (l.len() != 0) { throw E("bad"); }
+            } catch (e: E) { print(e.msg); }
+            return 0;
+        }
+        )";
+        auto r1 = Backend::run(scope_inside_try);
+        CHECK(r1.success == true);
+        CHECK(r1.stdout_output == "bad\n");
+
+        const char* scope_around_try = R"(
+        struct E { msg: string; }
+        fun new E(m: string) { self.msg = m; }
+        fun E.message(): string for Exception { return self.msg; }
+        fun main(): i32 {
+            var l: List<i32> = List<i32>(); l.push(1);
+            try {
+                if (l.len() != 0) { throw E("bad"); }
+            } catch (e: E) { print(e.msg); }
+            print(f"len={l.len()}");
+            return 0;
+        }
+        )";
+        auto r2 = Backend::run(scope_around_try);
+        CHECK(r2.success == true);
+        CHECK(r2.stdout_output == "bad\nlen=1\n");
+    }
+
+    // A finally's catch-all handler rethrows instead of exiting normally, so
+    // the value must survive into the finally body (which may use it) and be
+    // freed by its own covered record at the rethrow — not at the original
+    // throw, which would hand the finally body a freed value; and not never,
+    // which leaked it once the rethrow escaped the frame.
+    TEST_CASE_TEMPLATE("a value in scope at a finally survives the finally body and is freed at the rethrow", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct E { msg: string; }
+        fun new E(m: string) { self.msg = m; }
+        fun E.message(): string for Exception { return self.msg; }
+        fun inner(): i32 {
+            var l: List<i32> = List<i32>(); l.push(1);
+            try {
+                if (l.len() != 0) { throw E("bad"); }
+            } finally {
+                print(f"finally: len={l.len()}");
+            }
+            return 0;
+        }
+        fun main(): i32 {
+            try { var r: i32 = inner(); } catch (e: E) { print(e.msg); }
+            return 0;
+        }
+        )";
+        auto r = Backend::run(source);
+        CHECK(r.success == true);
+        CHECK(r.stdout_output == "finally: len=1\nbad\n");
+    }
+
 }  // TEST_SUITE("E2E Exceptions")

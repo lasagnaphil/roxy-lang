@@ -454,22 +454,39 @@ static void execute_cleanup(RoxyVM* vm, const BCFunction* func,
                             u32 throw_pc, u32 handler_pc_or_max, u64* regs) {
     if (func->cleanup_records.empty()) return;
 
-    // Iterate in reverse for LIFO cleanup order
-    for (i32 i = static_cast<i32>(func->cleanup_records.size()) - 1; i >= 0; i--) {
-        const BCCleanupRecord& record = func->cleanup_records[i];
+    // Iterate in reverse for LIFO cleanup order. A record may be followed by
+    // extension records (is_extension) covering additional PC runs of the same
+    // value — blocks of its scope that RPO laid out past the main interval,
+    // e.g. a throwing branch placed after the scope's normal exit. A head and
+    // its extensions are evaluated as one group: the throw-site and
+    // handler-site tests consult every interval in the group, and the cleanup
+    // action runs at most once, using the head record.
+    i32 i = static_cast<i32>(func->cleanup_records.size()) - 1;
+    while (i >= 0) {
+        i32 head = i;
+        while (head > 0 && func->cleanup_records[head].is_extension) head--;
+        const BCCleanupRecord& record = func->cleanup_records[head];
 
         // Check if the throw site is within this variable's live range. Uses
         // live_start_pc: before it the register has not been written yet, so
         // cleaning up would read whatever the register last held.
-        if (throw_pc < record.live_start_pc || throw_pc >= record.scope_end_pc) {
-            continue;  // Throw is outside this variable's live range
-        }
-
+        bool throw_in_range = false;
         // Check if the handler is also within this variable's scope
         // If so, normal-path cleanup will handle it (handler is still in scope)
-        if (handler_pc_or_max >= record.scope_start_pc &&
-            handler_pc_or_max < record.scope_end_pc) {
-            continue;  // Handler is in scope - normal cleanup will handle this
+        bool handler_in_scope = false;
+        for (i32 k = head; k <= i; k++) {
+            const BCCleanupRecord& r = func->cleanup_records[k];
+            if (throw_pc >= r.live_start_pc && throw_pc < r.scope_end_pc) {
+                throw_in_range = true;
+            }
+            if (handler_pc_or_max >= r.scope_start_pc &&
+                handler_pc_or_max < r.scope_end_pc) {
+                handler_in_scope = true;
+            }
+        }
+        i = head - 1;
+        if (!throw_in_range || handler_in_scope) {
+            continue;
         }
 
         // Read the register value
