@@ -11,27 +11,30 @@ Last updated: 2026-08-08
 ## High Priority
 
 *Found by the teardown leak check added 2026-08-02 (`roxy --check-leaks`; the
-E2E harness asserts it on every program it runs). Both were invisible before:
-the free-trap only fires on an explicit `delete`, so nothing was looking.*
+E2E harness asserts it on every program it runs). It was invisible before: the
+free-trap only fires on an explicit `delete`, so nothing was looking.*
 
-- [ ] **A coroutine suspended inside a `catch` leaks the caught exception when
-  destroyed without being drained**: `fun gen(): Coro<i32> { try { throw MyErr {}; } catch (e: MyErr) { yield 42; } }`
-  followed by one `resume()` and no drain leaves the exception object alive.
-  Yielding from inside the catch promotes `e` into the coroutine's state struct;
-  the resume path deletes it (`get_field self.e` → `delete`), but the generated
-  `__coro_*$$delete` never does, so an undrained coroutine frees the state struct
-  and drops the exception on the floor. Cause: `generate_coro_destructor` selects
-  fields with `member_needs_drop(field.type)`, and an exception is an *ordinary
-  copyable struct* — it is owned by the catch scope, not by its type
-  (lifetimes.md "Caught exceptions"). This is the same "decided from the wrong
-  source of truth" shape as the return-path bugs fixed the same day.
-  Fixing it needs both halves: include catch-param fields in `$$delete`, **and**
-  null the field on the resume path after the existing delete (the pattern the
-  ref-local `RefDec` → `SetField(null)` rewrite in `coroutine_lower` already
-  uses), or a drained coroutine double-frees. Narrowed to needing *both* a yield
-  inside the catch and an undrained coroutine — yield outside the catch, a fully
-  drained coroutine, and a throw/catch in a callee are all clean. Pinned by
-  `ExpectedLeak` in the two `E2E Coroutines` cases; remove those when fixed.
+- [ ] **Coroutine promotion conflates same-named locals in disjoint scopes, and
+  segfaults when their types differ**: two locals that share a name in
+  *non-overlapping* scopes are legal (shadowing is what's banned), but
+  `coroutine_lowering`'s Step 2 keys promoted state fields by name, first type
+  wins — so both bindings land in one field sized and typed for the first.
+  Writing the second through it is a wild store. Minimal repro, no exceptions
+  involved, crashes with SIGSEGV (verified 2026-08-08, and on `adfb20a` before
+  that day's fix, so it is pre-existing):
+  `fun gen(): Coro<i32> { if (true) { var x: i32 = 1; yield x; } if (true) { var x: Big = Big {...}; yield x.a; } }`
+  Same shape with matching types is merely conflated, not fatal. Only the VM
+  tolerates it at all: the C backend emits the field with the first binding's
+  type, so the second binding's store is a hard C++ error ("assigning to
+  'MyErr *' from 'int32_t'") and the program simply fails to build — the same bug
+  caught by the C compiler rather than by untyped VM slots. The fix is to
+  key promotion per *binding* rather than per name — but every cross-block lookup
+  in `phase1_promote` is by name too (block params carry the name), so it needs a
+  unique name assigned at promotion and propagated through those lookups, or
+  unique local names from the IR builder. Pinned indirectly by "Catch param
+  sharing a name with a later local is left alone" in `E2E Coroutines`, whose
+  `ExpectedLeak` is the fallback the catch-param cleanup takes when it detects
+  the conflation (2026-08-08); remove that opt-out when this is fixed.
 - [ ] **The Lox interpreter leaks one List per interpreter call**: running any
   script through `examples/lox` leaks exactly one **list** per call the
   interpreter makes (verified 2026-08-08 on `adfb20a`: a 1-call script leaks 1,
@@ -51,12 +54,13 @@ the free-trap only fires on an explicit `delete`, so nothing was looking.*
   Lox *program's* own logic rather than a compiler bug; with no GC that is still
   a real leak, but it changes where the fix goes.
 
-*The point worth keeping from how these two were found: eleven further bugs were
-fixed here on 2026-08-02 — five in coroutines, three in destructor chaining, two
-`ref`-counting holes, one in operator parsing — and every one of them was
-invisible to a fully green suite. Nine came from compiling `CLAUDE.md`'s example
-program, which had never been run; it now compiles and runs verbatim. Per-bug
-records are in this file's git history.*
+*The point worth keeping from how this one was found: twelve further bugs were
+fixed here — five in coroutines, three in destructor chaining, two `ref`-counting
+holes, one in operator parsing (all 2026-08-02), and a caught exception leaked by
+a coroutine destroyed while suspended inside its `catch` (2026-08-08) — and every
+one of them was invisible to a fully green suite. Nine came from compiling
+`CLAUDE.md`'s example program, which had never been run; it now compiles and runs
+verbatim. Per-bug records are in this file's git history.*
 
 ---
 

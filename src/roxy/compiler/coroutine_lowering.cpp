@@ -233,10 +233,16 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
     // RefDec here: the field is non-null exactly when the borrow is still held
     // at destroy (a ref local nulls its field when released on the resume path —
     // see the Nullify→SetField pass in coroutine_lower). The one exception is a
-    // catch param `e`: a `ref` field set by exception *dispatch*, never counted,
-    // so it must be left alone. `catch_names` holds those names.
+    // catch param `e`, which is not counted and gets an *owning* cleanup instead
+    // (see the catch arm below). `catch_names` maps those names to whether the
+    // field is unambiguously the exception; a false entry is a name-conflated
+    // field (see the caller) that must be left alone entirely.
     auto is_catch_param_field = [&](StringView name) -> bool {
         return catch_names.count(name) != 0;
+    };
+    auto owns_caught_exception = [&](StringView name) -> bool {
+        auto it = catch_names.find(name);
+        return it != catch_names.end() && it->second;
     };
 
     // Single parameter: self: ref<__coro_*>
@@ -259,22 +265,35 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
         const FieldInfo& field = fields[i];
         if (!field.type) continue;
 
-        // Which fields need cleanup is the shared, non-recursive decision
-        // (`member_needs_drop`: noncopyable, or a bare `ref`) — the same one the
-        // synthetic-destructor pass and IRBuilder::emit_field_cleanup use. It
-        // was hand-enumerated here as "uniq | noncopyable container | Coro",
-        // which silently skipped every other owning shape: once value structs
-        // began living *inline* in the state struct, a promoted struct owning a
-        // `uniq` was never destroyed at all.
-        if (!member_needs_drop(field.type)) continue;
+        // A catch clause's exception variable owns the caught object: the
+        // unwinder hands the pointer to the handler without freeing it, so the
+        // catch *scope* frees it on every exit (lifetimes.md, "Caught
+        // exceptions"). A coroutine suspended inside the catch holds that
+        // obligation in its state field, so this destructor must discharge it.
+        //
+        // Ownership here is a fact about the binding, not about the field's
+        // type — which is why it is decided from `catch_names`. The field is
+        // `ref E`, or the erased `ExceptionRef` for a catch-all; consulting the
+        // type would release a count nobody took for the first, and skip the
+        // object entirely for the second (its drop plan is None), which is
+        // exactly how an undrained coroutine came to leak its caught exception.
+        if (is_catch_param_field(field.name) && !owns_caught_exception(field.name)) continue;
+        bool is_catch_field = is_catch_param_field(field.name);
+
+        // Which fields need cleanup is otherwise the shared, non-recursive
+        // decision (`member_needs_drop`: noncopyable, or a bare `ref`) — the same
+        // one the synthetic-destructor pass and IRBuilder::emit_field_cleanup
+        // use. It was hand-enumerated here as "uniq | noncopyable container |
+        // Coro", which silently skipped every other owning shape: once value
+        // structs began living *inline* in the state struct, a promoted struct
+        // owning a `uniq` was never destroyed at all.
+        if (!is_catch_field && !member_needs_drop(field.type)) continue;
 
         // A `ref` field is a counted borrow (ref param acquired at init, or ref
         // local acquired mid-body); release it here (RefDec the borrowed pointer,
         // never free the pointee), guarded by the null check below so an
-        // already-released local is skipped. Only a catch param `e` is excluded —
-        // it's set by exception dispatch, not counted. ("Applying the model".)
-        bool is_ref = field.type->kind == TypeKind::Ref;
-        if (is_ref && is_catch_param_field(field.name)) continue;
+        // already-released local is skipped. ("Applying the model".)
+        bool is_ref = !is_catch_field && field.type->kind == TypeKind::Ref;
 
         // An inline value struct *is* its storage — there is no pointer to
         // null-check, and no object to free. Address it and run a typed Delete,
@@ -312,7 +331,19 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
         // In cleanup block: release the resource. A `ref` field only releases its
         // borrow count (the owner frees the pointee); owning fields run their
         // destructor + free.
-        if (is_ref) {
+        if (is_catch_field) {
+            // Free the caught exception, mirroring the two arms of
+            // IRBuilder::emit_implicit_destroy: a typed catch (`ref E`) frees as
+            // `uniq E`, so E's `fun delete` runs; a catch-all has no concrete
+            // type at compile time and frees type-erased (a void-typed Delete),
+            // the same limitation as the unhandled-exception path.
+            Type* caught_type = field.type->kind == TypeKind::Ref
+                ? field.type->ref_info.inner_type : nullptr;
+            Type* delete_type = caught_type ? types.uniq_type(caught_type)
+                                            : types.void_type();
+            emit_unary_void_op(allocator, dtor_func, cleanup_block, IROp::Delete,
+                               field_val, delete_type);
+        } else if (is_ref) {
             emit_unary_void_op(allocator, dtor_func, cleanup_block, IROp::RefDec,
                                field_val, types.void_type());
         } else if (field.type->kind == TypeKind::Uniq) {
@@ -1266,15 +1297,39 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
     // a load of __state (fixed slot 1) compared against CORO_STATE_DONE, so it
     // needs no dispatch and works uniformly on erased Coro<T> values.
 
-    // Catch-clause variable names: a promoted `ref` catch param is a state field
-    // set by exception dispatch, not a counted borrow, so the destructor must not
-    // RefDec it (unlike ref params and ref locals). Collect the handler blocks'
-    // exception-param names.
+    // Catch-clause variable names: a promoted catch param is a state field set by
+    // exception dispatch, not a counted borrow, so the destructor must not RefDec
+    // it (unlike ref params and ref locals) — it frees it instead, since the catch
+    // binding owns the caught object. Collect the handler blocks' exception-param
+    // names, mapped to whether that field is unambiguously the exception (below).
     tsl::robin_map<StringView, bool> catch_names;
+    tsl::robin_map<StringView, Type*> catch_param_types;
     for (auto& handler : original->exception_handlers) {
         if (handler.handler_block.id < original->blocks.size()) {
             IRBlock* hb = original->blocks[handler.handler_block.id];
-            if (!hb->params.empty()) catch_names[hb->params[0].name] = true;
+            if (!hb->params.empty()) {
+                catch_names[hb->params[0].name] = true;
+                catch_param_types[hb->params[0].name] = hb->params[0].type;
+            }
+        }
+    }
+
+    // Promotion is keyed by variable NAME (Step 2 above), so a catch param and an
+    // unrelated local in a *disjoint* scope that happen to share a name land in
+    // the same state field — see TODO.md, "coroutine promotion conflates
+    // same-named locals in disjoint scopes", which is a live bug in its own right
+    // (it already crashes without any catch involved). Such a field holds
+    // whichever binding wrote last, so freeing it as the exception could free an
+    // `i32`. Detect the conflation by type disagreement — the other binding
+    // necessarily reaches some block param under the same name with a different
+    // type — and fall back to leaving the field alone, which is what this
+    // destructor did for every catch param before it learned to free them. A leak
+    // in a shape that is already miscompiled beats a wild free.
+    for (auto* block : original->blocks) {
+        for (const auto& bp : block->params) {
+            auto type_it = catch_param_types.find(bp.name);
+            if (type_it == catch_param_types.end()) continue;
+            if (bp.type != type_it->second) catch_names[bp.name] = false;
         }
     }
 
@@ -1294,24 +1349,38 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
     phase2_split(original, allocator, self_val, coro_yield_type,
                  state_field, yield_field, types, promoted_vars);
 
-    // A promoted `ref` *local* is a counted borrow acquired mid-body (RefInc at
-    // `var r = src`) and released on the resume path when its scope exits — the
-    // IR builder pairs that RefDec with a Nullify. Promotion loads the local
-    // from its state field (GetField) before the RefDec, so we clear the field
-    // right after the RefDec with a SetField(null). Then the destructor's
-    // null-guarded RefDec releases the borrow only when the coro is destroyed
-    // while the local is still live (field non-null), never double-decrementing
-    // a borrow already released on the resume/completion path. Ref *params* have
-    // no mid-body RefDec (their per-frame inc/dec are suppressed), so this
-    // touches only ref locals.
+    // Two kinds of promoted field are released on the *resume* path as well as
+    // in `$$delete`, and each needs its state field cleared right after that
+    // release so the destructor's null guard can tell "still held" from "already
+    // released" — without it, a coroutine driven to completion would be released
+    // twice:
+    //
+    //   - a `ref` *local*: a counted borrow acquired mid-body (RefInc at
+    //     `var r = src`) and released when its scope exits, paired by the IR
+    //     builder with a Nullify. Ref *params* have no mid-body RefDec (their
+    //     per-frame inc/dec are suppressed), so they never appear here.
+    //   - a *catch param*: the caught exception, freed by the catch scope on
+    //     every exit (`Delete`). Same shape, different op — and the field must
+    //     survive as long as the binding does, which is why the clear goes after
+    //     the free rather than at the yield.
+    //
+    // Promotion rewrote each release's operand into a load from the state field
+    // (GetField), so the rewrite is: find a release whose operand is a GetField
+    // of a tracked field, and append a SetField(null) for it.
     {
-        tsl::robin_map<StringView, bool> ref_local_fields;
+        tsl::robin_map<StringView, IROp> clear_after;
         for (const auto& pv : promoted_vars) {
-            if (pv.type && pv.type->kind == TypeKind::Ref && !catch_names.count(pv.name)) {
-                ref_local_fields[pv.name] = true;
+            auto catch_it = catch_names.find(pv.name);
+            if (catch_it != catch_names.end()) {
+                // Only an unambiguously-owned exception field is cleared; a
+                // name-conflated one is not freed by `$$delete` either, so
+                // clearing it would only hide the conflation.
+                if (catch_it->second) clear_after[pv.name] = IROp::Delete;
+            } else if (pv.type && pv.type->kind == TypeKind::Ref) {
+                clear_after[pv.name] = IROp::RefDec;
             }
         }
-        if (!ref_local_fields.empty()) {
+        if (!clear_after.empty()) {
             for (auto* block : original->blocks) {
                 tsl::robin_map<u32, IRInst*> defs;
                 for (auto* inst : block->instructions) defs[inst->result.id] = inst;
@@ -1320,12 +1389,13 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
                 bool changed = false;
                 for (auto* inst : block->instructions) {
                     rebuilt.push_back(inst);
-                    if (inst->op != IROp::RefDec) continue;
+                    if (inst->op != IROp::RefDec && inst->op != IROp::Delete) continue;
                     auto dit = defs.find(inst->unary.id);
                     if (dit == defs.end() || dit->second->op != IROp::GetField) continue;
                     IRInst* def = dit->second;
-                    if (!ref_local_fields.count(def->field.field_name)) continue;
-                    // Clear the state field right after releasing the borrow.
+                    auto cit = clear_after.find(def->field.field_name);
+                    if (cit == clear_after.end() || cit->second != inst->op) continue;
+                    // Clear the state field right after the release.
                     IRInst* null_c = allocator.emplace<IRInst>();
                     null_c->op = IROp::ConstNull;
                     null_c->type = types.nil_type();

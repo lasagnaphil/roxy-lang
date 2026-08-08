@@ -499,14 +499,10 @@ TEST_SUITE("E2E Coroutines") {
     }
 
     TEST_CASE_TEMPLATE("Coroutine yield in catch block", Backend, RX_E2E_BACKENDS) {
-        // Suspending INSIDE a catch block parks the caught exception in the
-        // coroutine's state struct, and destroying the coroutine without
-        // draining it never frees that object: the generated $$delete cleans
-        // only fields whose TYPE needs dropping, and an exception struct is an
-        // ordinary copyable struct — it is owned by the catch scope, not by its
-        // type. See TODO.md.
-        ExpectedLeak known_leak;
-
+        // Suspending INSIDE a catch parks the caught exception in the state
+        // struct, and this coroutine is destroyed undrained — so `$$delete` is
+        // the only thing that can free it. The teardown census (asserted for
+        // every program the harness runs) is what checks that it does.
         const char* source = R"(
         struct MyErr {}
         fun MyErr.message(): string for Exception {
@@ -609,14 +605,9 @@ TEST_SUITE("E2E Coroutines") {
     }
 
     TEST_CASE_TEMPLATE("Coroutine yield in catch after throw", Backend, RX_E2E_BACKENDS) {
-        // Suspending INSIDE a catch block parks the caught exception in the
-        // coroutine's state struct, and destroying the coroutine without
-        // draining it never frees that object: the generated $$delete cleans
-        // only fields whose TYPE needs dropping, and an exception struct is an
-        // ordinary copyable struct — it is owned by the catch scope, not by its
-        // type. See TODO.md.
-        ExpectedLeak known_leak;
-
+        // Two resumes, but the coroutine is still suspended inside the catch
+        // when it dies, so the exception is freed by `$$delete` rather than by
+        // the catch scope. The census pins that it is freed exactly once.
         const char* source = R"(
         struct MyErr {
             val: i32;
@@ -645,6 +636,164 @@ TEST_SUITE("E2E Coroutines") {
         auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "99\n100\n");
+    }
+
+    TEST_CASE_TEMPLATE("Coroutine destroyed in catch runs the exception's destructor",
+                       Backend, RX_E2E_BACKENDS) {
+        // The undrained case frees as `uniq MyErr`, not as raw memory, so a
+        // user destructor still runs — and runs once. Printing from it is what
+        // distinguishes "freed properly" from "freed type-erased", which the
+        // census alone cannot see.
+        const char* source = R"(
+        struct MyErr {
+            val: i32;
+        }
+        fun MyErr.message(): string for Exception {
+            return "err";
+        }
+        fun delete MyErr() {
+            print("dtor");
+        }
+
+        fun gen(): Coro<i32> {
+            try {
+                throw MyErr { val = 7 };
+            } catch (e: MyErr) {
+                yield e.val;
+                yield e.val + 1;
+            }
+        }
+
+        fun main(): i32 {
+            var g = gen();
+            print(g.resume());
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "7\ndtor\n");
+    }
+
+    TEST_CASE_TEMPLATE("Drained coroutine frees a caught exception exactly once",
+                       Backend, RX_E2E_BACKENDS) {
+        // The other half of the fix: the catch scope frees the exception when
+        // the resume path leaves the catch, so `$$delete` must NOT free it
+        // again. The resume path clears the state field right after its Delete,
+        // and this destructor firing exactly once is what pins that.
+        const char* source = R"(
+        struct MyErr {
+            val: i32;
+        }
+        fun MyErr.message(): string for Exception {
+            return "err";
+        }
+        fun delete MyErr() {
+            print("dtor");
+        }
+
+        fun gen(): Coro<i32> {
+            try {
+                throw MyErr { val = 7 };
+            } catch (e: MyErr) {
+                yield e.val;
+            }
+            yield 100;
+        }
+
+        fun main(): i32 {
+            var g = gen();
+            while (!g.done()) {
+                print(g.resume());
+            }
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "7\ndtor\n100\n0\n");
+    }
+
+    TEST_CASE_TEMPLATE("Coroutine destroyed in a catch-all frees the exception",
+                       Backend, RX_E2E_BACKENDS) {
+        // A catch-all binds the erased `ExceptionRef`, whose drop plan is None —
+        // so the field is freed because the *binding* owns it, not because its
+        // type says so. Type-erased, hence no destructor call (the same
+        // limitation as the unhandled-exception path); the census still checks
+        // the memory is reclaimed.
+        const char* source = R"(
+        struct MyErr {
+            val: i32;
+        }
+        fun MyErr.message(): string for Exception {
+            return "err";
+        }
+
+        fun gen(): Coro<i32> {
+            try {
+                throw MyErr { val = 5 };
+            } catch (e) {
+                yield 1;
+                yield 2;
+            }
+        }
+
+        fun main(): i32 {
+            var g = gen();
+            print(g.resume());
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n");
+    }
+
+    // VM-only: C backend: the conflated field is emitted with the first
+    // binding's type, so the second binding's store is a hard C++ type error
+    // ("assigning to 'MyErr *' from 'int32_t'"). That is the same conflation bug
+    // this case pins, caught by the C compiler instead of tolerated by the VM's
+    // untyped slots — see TODO.md, "coroutine promotion conflates same-named
+    // locals".
+    TEST_CASE("Catch param sharing a name with a later local is left alone") {
+        // Promotion keys state fields by NAME, so this `e` and the catch's `e`
+        // — disjoint scopes, different types — share one field. Freeing that
+        // field as the exception would free an i32, so the destructor leaves a
+        // name-conflated field alone and the exception leaks instead. The leak
+        // is the deliberate fallback; the crash it replaces is not.
+        ExpectedLeak known_leak;
+
+        const char* source = R"(
+        struct MyErr {
+            val: i32;
+        }
+        fun MyErr.message(): string for Exception {
+            return "err";
+        }
+
+        fun gen(): Coro<i32> {
+            try {
+                throw MyErr { val = 7 };
+            } catch (e: MyErr) {
+                yield e.val;
+            }
+            var e: i32 = 5;
+            yield e;
+        }
+
+        fun main(): i32 {
+            var g = gen();
+            print(g.resume());
+            return 0;
+        }
+    )";
+
+        auto result = VMBackend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "7\n");
     }
 
     TEST_CASE_TEMPLATE("Coroutine yield in try with loop", Backend, RX_E2E_BACKENDS) {

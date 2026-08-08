@@ -234,9 +234,34 @@ Two different things can free a promoted field, and exactly one must:
   use; hand-enumerating the kinds here is how inline value structs came to leak
   once they gained inline storage.
 
-Borrowing (`ref`) fields are the exception to the first rule: a counted borrow is
-released by `$$delete` on *every* path, so the completion path deliberately does
-not clear them.
+A `ref` *parameter* is the exception to the first rule: its count is taken once
+at creation and released by `$$delete` on *every* path, so the completion path
+deliberately does not clear it.
+
+Two field kinds are released on the resume path *and* by `$$delete`, and they
+resolve the overlap the same way — clear the field immediately after the resume
+path's release, so `$$delete`'s null guard reads "already released":
+
+- a `ref` **local**, a borrow acquired mid-body and released when its scope
+  exits (`RefDec` → `SetField(null)`);
+- a **catch param**, the caught exception, which the catch scope frees on every
+  exit (`Delete` → `SetField(null)`).
+
+The catch param is also the one field whose cleanup is *not* decided by its
+type. A caught exception is owned by the binding, not by the type — the field is
+`ref E` (or the erased `ExceptionRef` for a catch-all), so `member_needs_drop`
+would say "release a borrow" for one and "nothing to do" for the other, and
+neither frees the object. `$$delete` therefore treats the names in `catch_names`
+as owning: a typed catch frees as `uniq E` so `fun delete E` runs, a catch-all
+frees type-erased. Deciding it from the type instead is why a coroutine
+suspended inside a catch used to leak its exception.
+
+One guard on that: promoted fields are keyed by *name*, so a catch param and an
+unrelated local in a disjoint scope that share a name share a field. `$$delete`
+detects the conflation (some block param binds that name at a different type) and
+falls back to leaving the field alone — the exception leaks, as it did before,
+rather than an `i32` being freed as an object. The conflation itself is a
+separate live bug; see `TODO.md`.
 
 `out`/`inout` parameters are second-class ([lifetimes.md](lifetimes.md), "The
 second-class family"): they flow downward and may never be stored. Since a

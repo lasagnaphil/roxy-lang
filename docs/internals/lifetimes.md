@@ -466,16 +466,24 @@ The per-frame resume-flow inc/dec are *suppressed* for coroutine functions
 (`m_ref_params` cleared in the IR builder), because the coroutine split scatters the
 entry-inc / exit-dec across resume states and would miss the dec on early destroy.
 Counting for the state struct's lifetime instead keeps the balance whether the coro
-runs to completion or is destroyed mid-iteration. Only *parameter* `ref` fields are
-decremented in `$$delete`; a catch param `e` (a `ref` field set by exception
-dispatch, not acquired at creation) is deliberately excluded.
+runs to completion or is destroyed mid-iteration. A `ref` *local* is decremented on
+whichever path comes first — its scope exit if the coroutine gets that far, else
+`$$delete` — the resume path clearing its field so the two cannot both fire.
+
+A catch param `e` is a `ref` field too, but is never *counted*: it is set by
+exception dispatch, and what it holds is an owned object (below). It is therefore
+excluded from the `ref_dec` and freed instead — as `uniq E` for a typed catch, or
+type-erased for a catch-all — again under the field-clearing rule, since the catch
+scope frees it on the resume path.
 
 ### Caught exceptions
 
 A thrown exception is a heap object the catch does not *borrow* but *owns*: it is
 registered as an owned local of the catch scope, so scope cleanup frees it once on
 every exit, and a re-throw hands it off (guarded against the in-flight exception in
-the free path) rather than freeing it. This is ownership/RAII, not counting — see
+the free path) rather than freeing it. A coroutine suspended inside the catch
+inherits that obligation through its state field (see [Coroutines](#coroutines)).
+This is ownership/RAII, not counting — see
 [exceptions.md](exceptions.md) "Exception object lifetime" for the full model.
 
 ### Containers are move-only
