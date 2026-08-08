@@ -15,44 +15,25 @@ Last updated: 2026-08-08
 They were invisible before: the free-trap only fires on an explicit `delete`, so
 nothing was looking.*
 
-- [ ] **Scope cleanup on the exception-unwind path is wrong in both directions**,
-  which is what remains of the Lox leak. Narrowed 2026-08-08 to two minimal
-  repros; both are clean the moment the `throw` is removed, so this is the
-  unwind path specifically, not ordinary scope exit.
-  *(in progress — see `HANDOFF.md` for state, traps, and the tracing method)*
+- [ ] **A Lox runtime error leaks the string in the value being evaluated.** All
+  that remains of the Lox leak: `examples/lox/test.roxy` is down to 6 live
+  objects (5 strings + 1 list) from 293 on 2026-08-02, and every one of the 5
+  is a Lox string literal in an expression whose evaluation raises a Lox
+  *runtime* error — one per case in `test_eval_runtime_errors`
+  (`-"hi"`, `1 + "x"`, `"a" - 1`, `"a" < "b"`). Every other alloc site is clean:
+  the `call_fun` / `eval_binary` / `call_native` / `eval_get` clusters are all
+  gone, and every `expect_run_output` case is clean.
 
-  *Over-release — a moved-out struct temporary is destroyed anyway.* The
-  temporary that a struct literal builds is copied into the heap exception
-  object and marked moved (`nullify`), but its cleanup record still fires during
-  unwind, releasing the string field the heap object now owns. The count reaches
-  zero while the handler is still using it, so the value is **gone by the time
-  the catch reads it**:
-  ```roxy
-  struct E { v: string; }
-  fun E.message(): string for Exception { return "e"; }
-  fun f(a: string) { var s: string = a + "!"; throw E { v = s }; }
-  fun main(): i32 { var x: string = "dyn";
-      try { f(x); } catch (e: E) { print(e.v); }   // prints an EMPTY line
-      return 0; }
-  ```
+  The path is `Interpreter.interpret`, which catches `RuntimeError` around a
+  `return self.evaluate(e);`. The LoxValue holding the string is in flight when
+  the throw happens, and its count is never released. Three unwind-path bugs
+  were fixed here on 2026-08-08 (see the git log for `824759f` and `cfa9d31`);
+  this is a fourth site in the same family, not yet diagnosed. Start with the
+  tracing method below rather than guessing at shapes — roughly ten
+  hand-written repros of the "obvious" shape came back clean each time.
 
-  *Under-release — a value-struct local is not destroyed at all.* Same shape with
-  the local being a value struct that owns a counted member: nothing releases it
-  while unwinding, so it leaks. (Replace `s` above with
-  `var val: V = V.of_str(a + "!")` where `V` is a tagged union with a `string`
-  variant, and throw `E { v = val }`.)
-
-  Both point at `record_scope_cleanup_records` / the Nullify-narrowing of
-  cleanup records: it records every owned local in scope without consulting
-  `is_moved`, and narrowing evidently does not cover a moved struct temporary,
-  while a value-struct local seems not to produce a firing record at all.
-  Together they are most of the Lox residue: `examples/lox/test.roxy` leaks 33
-  objects (31 strings + 2 lists), down from 293 on 2026-08-02. Lox reaches this
-  path on every function return, since `return` is implemented by throwing a
-  `ReturnException`. Remaining alloc sites, for cross-checking a fix:
-  `call_fun` ×12, `eval_binary` ×4, `call_native` ×3, `eval_get` ×2, plus ~9
-  scanner strings reached only through the `expect_*_error` tests. The 2 lists
-  are specific to `test.roxy` and no longer scale with interpreter calls.
+  The **1 list** is a separate residual, specific to `test.roxy` and not
+  scaling with interpreter calls. It has never been diagnosed.
 
   Method that found this, worth reusing: tag each allocation with the VM call
   stack, then trace every `ref_count` transition of one leaked object and pair
@@ -60,15 +41,19 @@ nothing was looking.*
   turned a day of fruitless shape-guessing (~10 hand-written repros of the
   "obvious" shape, all clean) into a diagnosis in minutes.
 
-*The point worth keeping from how these were found: seventeen further bugs were
+*The point worth keeping from how these were found: twenty further bugs were
 fixed here — five in coroutines, three in destructor chaining, two `ref`-counting
 holes, one in operator parsing (all 2026-08-02), and on 2026-08-08 a caught
 exception leaked by a coroutine destroyed while suspended inside its `catch`, an
 undropped by-value container parameter of a method, divergent conditional moves
 (which leaked in an `if` and double-freed in an `if/else if` chain),
 name-conflated coroutine state fields (a segfault), `when` arms that skipped
-their scope cleanup after the first one, and a variant field storing a string it
-did not own — and every one of them was invisible to a fully green suite. Nine
+their scope cleanup after the first one, a variant field storing a string it
+did not own, a string temporary adopted by its binding whose duplicate cleanup
+record released it twice while unwinding, a cleanup record whose end block came
+from the last block *created* rather than the block emission was last in, and a
+local reassigned in a branch whose record still named its pre-merge register —
+and every one of them was invisible to a fully green suite. Nine
 came from compiling `CLAUDE.md`'s example program, which had never been run; it
 now compiles and runs verbatim. Per-bug records are in this file's git history.*
 
