@@ -2223,4 +2223,83 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.value == 2);
     }
 
+    // ── every arm of a `when` cleans up, not just the first one generated ──
+    //
+    // Case bodies are alternatives from one starting state, but the `when`
+    // snapshot deliberately excluded `is_moved`. So the first body to destroy a
+    // local — any `return` runs scope cleanup, which marks it moved — left that
+    // flag set for its siblings, and every later arm skipped the destroy.
+    //
+    // The leak is invisible unless the *right* arm runs, which is why it hid in
+    // Lox for so long: `Interpreter.eval_binary` dispatches twelve arms, one of
+    // them cleaned up its two `LoxValue` locals, and only the string-carrying
+    // ones could leak anything.
+    TEST_CASE_TEMPLATE("every arm of a when destroys its locals", Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Res { id: i32; }
+        fun delete Res() { print("~Res"); }
+
+        enum Op { First, Second, Third }
+
+        fun run(op: Op): i32 {
+            var a: uniq Res = uniq Res();
+            a.id = 1;
+            when op {
+                case First:
+                    return 10;
+                case Second:
+                    return 20;
+                case Third:
+                    return 30;
+            }
+            return 0;
+        }
+
+        fun main(): i32 {
+            print(run(Op::First));
+            print(run(Op::Second));
+            print(run(Op::Third));
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        // One destructor per call, whichever arm ran.
+        CHECK(result.stdout_output == "~Res\n10\n~Res\n20\n~Res\n30\n");
+    }
+
+    // ── a string stored into a tagged union's variant field is owned by it ──
+    //
+    // The struct-literal path wrote its regular fields and its variant fields
+    // through two hand-written copies of the same logic, and the variant copy
+    // was missing the weak conversion, the `ref` acquire, and this string
+    // adopt-or-retain. The temporary's count was released at the end of the
+    // statement and the field dangled — printing the field gave back nothing.
+    TEST_CASE_TEMPLATE("a computed string in a variant field survives the statement",
+                       Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        enum K { Num, Str }
+        struct V {
+            when kind: K {
+                case Num: n: i32;
+                case Str: s: string;
+            }
+        }
+
+        fun mk(a: string, b: string): V {
+            return V { kind = K::Str, s = a + b };
+        }
+
+        fun main(): i32 {
+            var x: string = "dyn";
+            var v: V = mk(x, "amic");
+            print(v.s);
+            return 0;
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.stdout_output == "dynamic\n");
+    }
+
 }

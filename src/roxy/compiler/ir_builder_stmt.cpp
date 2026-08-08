@@ -1021,10 +1021,20 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
     IRBlock* merge_block = create_block("endwhen");
     Vector<PhiInfo> phi_info = make_merge_phis(merge_block, modified_in_cases);
 
-    // 4. Save variable state before any case (so all cases see original
-    // values). Scopes only: is_moved is intentionally not snapshotted here —
-    // see the merge-state note below and the rationale in gen_try_stmt.
-    ScopeSnapshot saved = snapshot_scopes(/*with_move_state=*/false);
+    // 4. Save variable state before any case, so all cases see original values
+    // — INCLUDING is_moved. Without the move state, the first case body to
+    // destroy a local (any `return` runs scope cleanup, which marks it moved)
+    // left that flag set for its siblings, and every later case then skipped
+    // the destroy. That is why `when` was leaking whichever case ran second:
+    // one arm of `Interpreter.eval_binary`'s dispatch cleaned up its
+    // `LoxValue` locals and the other eleven did not.
+    ScopeSnapshot saved = snapshot_scopes(/*with_move_state=*/true);
+    // The all-cases-unmatched edge (no else clause) reaches the merge with the
+    // pre-when state; captured separately for move reconciliation below.
+    ScopeSnapshot fallthrough_state = snapshot_scopes(/*with_move_state=*/true);
+    // Surviving paths into the merge, for reconcile_divergent_moves.
+    Vector<MergePath> paths;
+    IRBlock* when_fallthrough_pred = nullptr;
 
     // Track case blocks and their corresponding case names for code gen
     struct CaseInfo {
@@ -1101,6 +1111,7 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         // Branch: if condition matches, go to case body, else check next
         // When falling through to merge, pass original phi values
         if (fallthrough_block == merge_block) {
+            when_fallthrough_pred = m_current_block;
             finish_block_branch(case_cond, ci.body_block->id, fallthrough_block->id,
                                 {}, phi_original_args(phi_info));
         } else {
@@ -1124,12 +1135,20 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
             gen_decl(d);
         }
         pop_scope();
+        if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+            paths.push_back({m_current_block, snapshot_scopes(/*with_move_state=*/true)});
+        }
         goto_merge_if_open(merge_block, phi_info);
     }
 
     // 8. Generate else body if present
     if (else_block) {
-        restore_scopes(saved);
+        // A *trapping* else is the unreachable fall-through of an exhaustive
+        // no-else `when`: no body runs on it, so it must not roll the move state
+        // back to pre-when — that would resurrect a local every real case moved
+        // and double-free it at scope exit. Only a genuine else body is an
+        // alternative path that starts from the pre-when state.
+        restore_scopes(saved, /*restore_move_state=*/!else_is_trap);
         set_current_block(else_block);
         if (else_is_trap) {
             // Exhaustive no-else: this edge is provably unreachable. Trap so the
@@ -1142,6 +1161,9 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
                 gen_decl(d);
             }
             pop_scope();
+            if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
+                paths.push_back({m_current_block, snapshot_scopes(/*with_move_state=*/true)});
+            }
             goto_merge_if_open(merge_block, phi_info);
         }
     }
@@ -1154,8 +1176,18 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
     // are immediately rebound from merge_param below, so this only affects
     // non-phi vars — which by construction must agree across all surviving
     // paths (semantic forbids divergent moves on non-phi vars). is_moved is
-    // intentionally left alone, mirroring the rationale in gen_try_stmt.
-    restore_scopes(saved);
+    // intentionally left as the last body left it: if every surviving path
+    // moved a local, restoring the pre-when flag would resurrect it and
+    // double-free at scope exit. Divergence between paths — some moved, some
+    // did not — is settled by reconcile_divergent_moves instead.
+    restore_scopes(saved, /*restore_move_state=*/false);
+    if (!else_block) {
+        // No else clause: the unmatched edge reaches the merge having moved
+        // nothing, so it is a surviving path too. (A trapping else, or a real
+        // else body, means every edge into the merge came through a body.)
+        paths.push_back({nullptr, std::move(fallthrough_state)});
+    }
+    reconcile_divergent_moves(paths, when_fallthrough_pred, merge_block, phi_info);
     set_current_block(merge_block);
     bind_merge_phis(phi_info);
 }

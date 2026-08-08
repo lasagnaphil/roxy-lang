@@ -3296,6 +3296,66 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
         return nullptr;
     };
 
+    // Store one field of the literal, with every ownership obligation that store
+    // carries. Shared by the regular-field and variant-field loops below, which
+    // differ only in where the field lives — a variant field sits at its when
+    // clause's union offset. They were written out twice and drifted: the
+    // variant copy was missing the weak conversion, the `ref` acquire, and the
+    // `string` adopt-or-retain, so `V { kind = K::Str, s = a + b }` stored a
+    // string whose only count was the temporary's, and freed it at the end of
+    // the statement — the field dangled from then on.
+    auto init_field = [&](StringView name, Type* field_type, u32 slot_offset,
+                          u32 slot_count, Expr* value_expr) {
+        ValueId value = gen_expr(value_expr);
+
+        // Wrap uniq/ref → weak conversion for struct literal field
+        if (value_expr) {
+            value = maybe_wrap_weak(value, value_expr->resolved_type, field_type, value_expr);
+        }
+
+        // For struct-typed fields, use StructCopy since the value is a pointer
+        if (field_type && field_type->is_struct()) {
+            // Get address of the field
+            ValueId field_addr = emit_get_field_addr(struct_ptr, name, slot_offset, field_type);
+            // Copy struct data from value (source pointer) to field_addr (dest
+            // pointer). The literal being built owns its fields, so a source that
+            // stays live has to be cloned — the struct-typed counterpart of the
+            // consume_or_retain_string below.
+            emit_struct_copy(field_addr, value, slot_count, field_type,
+                             struct_copy_kind_for(value_expr));
+        } else {
+            emit_set_field(struct_ptr, name, slot_offset, slot_count, value, field_type);
+        }
+
+        // A `ref` field is a counted borrow: storing a borrow into it acquires a
+        // count on the pointee (released on struct drop; lifetimes.md "Value lifecycle"
+        // step 3). The struct is move-only, so the source stays live — no move.
+        if (field_type && field_type->kind == TypeKind::Ref && value_expr) {
+            emit_ref_inc(value);
+        }
+
+        // A `string` field: retain the stored string (or adopt a fresh temp) so the
+        // field holds its own count and doesn't dangle when the source is released
+        // (finding 9b).
+        if (field_type && field_type->kind == TypeKind::String && value_expr) {
+            consume_or_retain_string(value, field_type, /*adopted_by_variable=*/false);
+        }
+
+        // Consume a temporary the field now owns (cleanup, not move-only-ness).
+        if (tracked_for_cleanup(field_type) && value_expr) {
+            consume_temp_noncopyable(value);
+        }
+
+        // Nullify source variable when moving a noncopyable value into the field
+        if (field_type && field_type->noncopyable() && value_expr) {
+            if (value_expr->kind == AstKind::ExprIdentifier) {
+                mark_moved_from(value_expr->identifier.name);
+            }
+            // `Foo { x = o.field }`: null the moved-out source field in its root.
+            nullify_moved_field_source(value_expr);
+        }
+    };
+
     // Initialize regular fields (including discriminants which are in struct_info.fields)
     for (auto& field_info : struct_type->struct_info.fields) {
         Expr* value_expr = nullptr;
@@ -3308,56 +3368,8 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
             value_expr = find_field_default(struct_type, field_info.name);
         }
 
-        ValueId value = gen_expr(value_expr);
-
-        // Wrap uniq/ref → weak conversion for struct literal field
-        if (value_expr) {
-            value = maybe_wrap_weak(value, value_expr->resolved_type, field_info.type, value_expr);
-        }
-
-        // For struct-typed fields, use StructCopy since the value is a pointer
-        if (field_info.type && field_info.type->is_struct()) {
-            // Get address of the field
-            ValueId field_addr = emit_get_field_addr(struct_ptr, field_info.name, field_info.slot_offset, field_info.type);
-            // Copy struct data from value (source pointer) to field_addr (dest
-            // pointer). The literal being built owns its fields, so a source that
-            // stays live has to be cloned — the struct-typed counterpart of the
-            // consume_or_retain_string below.
-            emit_struct_copy(field_addr, value, field_info.slot_count, field_info.type,
-                             struct_copy_kind_for(value_expr));
-        } else {
-            emit_set_field(struct_ptr, field_info.name, field_info.slot_offset, field_info.slot_count, value, field_info.type);
-        }
-
-        // A `ref` field is a counted borrow: storing a borrow into it acquires a
-        // count on the pointee (released on struct drop; lifetimes.md "Value lifecycle"
-        // step 3). The struct is move-only, so the source stays live — no move.
-        if (field_info.type && field_info.type->kind == TypeKind::Ref && value_expr) {
-            emit_ref_inc(value);
-        }
-
-        // A `string` field: retain the stored string (or adopt a fresh temp) so the
-        // field holds its own count and doesn't dangle when the source is released
-        // (finding 9b). Structs stay copyable/trivial, so the field is not released
-        // on struct drop — a string held in a struct field is a bounded leak, the
-        // same as before this change; the retain only prevents a use-after-free.
-        if (field_info.type && field_info.type->kind == TypeKind::String && value_expr) {
-            consume_or_retain_string(value, field_info.type, /*adopted_by_variable=*/false);
-        }
-
-        // Consume a temporary the field now owns (cleanup, not move-only-ness).
-        if (tracked_for_cleanup(field_info.type) && value_expr) {
-            consume_temp_noncopyable(value);
-        }
-
-        // Nullify source variable when moving a noncopyable value into a regular field
-        if (field_info.type && field_info.type->noncopyable() && value_expr) {
-            if (value_expr->kind == AstKind::ExprIdentifier) {
-                mark_moved_from(value_expr->identifier.name);
-            }
-            // `Foo { x = o.field }`: null the moved-out source field in its root.
-            nullify_moved_field_source(value_expr);
-        }
+        init_field(field_info.name, field_info.type, field_info.slot_offset,
+                   field_info.slot_count, value_expr);
     }
 
     // Initialize variant fields from when clauses
@@ -3371,33 +3383,11 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
 
                 auto it = provided_fields.find(variant_field_info.name);
                 if (it != provided_fields.end()) {
-                    Expr* value_expr = it->second;
-                    ValueId value = gen_expr(value_expr);
-
-                    // Compute the actual offset: union_slot_offset + variant field's offset
-                    u32 actual_slot_offset = clause.union_slot_offset + variant_field_info.slot_offset;
-
-                    // For struct-typed variant fields, use StructCopy
-                    if (variant_field_info.type && variant_field_info.type->is_struct()) {
-                        ValueId field_addr = emit_get_field_addr(struct_ptr, variant_field_info.name, actual_slot_offset, variant_field_info.type);
-                        emit_struct_copy(field_addr, value, variant_field_info.slot_count,
-                                         variant_field_info.type, struct_copy_kind_for(value_expr));
-                    } else {
-                        emit_set_field(struct_ptr, variant_field_info.name, actual_slot_offset, variant_field_info.slot_count, value, variant_field_info.type);
-                    }
-
-                    // Consume noncopyable temporaries moved into variant fields
-                    if (variant_field_info.type && variant_field_info.type->noncopyable()) {
-                        consume_temp_noncopyable(value);
-                    }
-
-                    // Nullify source variable when moving a noncopyable value into a variant field
-                    if (variant_field_info.type && variant_field_info.type->noncopyable()) {
-                        if (value_expr->kind == AstKind::ExprIdentifier) {
-                            mark_moved_from(value_expr->identifier.name);
-                        }
-                        nullify_moved_field_source(value_expr);
-                    }
+                    // A variant field lives at its when clause's union offset;
+                    // everything else about storing it is the regular case.
+                    init_field(variant_field_info.name, variant_field_info.type,
+                               clause.union_slot_offset + variant_field_info.slot_offset,
+                               variant_field_info.slot_count, it->second);
                 }
             }
         }

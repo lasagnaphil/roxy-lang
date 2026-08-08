@@ -15,41 +15,35 @@ Last updated: 2026-08-08
 They were invisible before: the free-trap only fires on an explicit `delete`, so
 nothing was looking.*
 
-- [ ] **The Lox interpreter leaks one string per string concatenation**:
-  `var s = "a"; s = s + "b"; print s;` through `examples/lox` leaks 1 string,
-  `print "a" + "b";` leaks 2, and a 5-iteration append loop leaks 3 — it tracks
-  concatenations, not calls. Pre-existing and unrelated to the per-call List
-  leak fixed 2026-08-08 (that one hid it: the same programs used to report
-  hundreds of leaked lists alongside).
-  Lox's `eval_binary` builds a `LoxValue` — a tagged union with a `str_val:
-  string` variant — from a computed concatenation and returns it by value, which
-  is the shape to attack. **A likely-related bug, found while narrowing this and
-  reproduced on `adfb20a`**: returning such a union *loses* the string —
-  `fun mk(a: string): V { return V { kind = K::Str, s = a + "b" }; }` then
-  printing `v.s` prints nothing, while the same union built as a local, or
-  returned with a string *literal*, is correct. Note the two point opposite ways
-  (a leak is an under-release, a lost value an over-release), so they may be one
-  imbalance seen from both ends or two bugs; the union-return repro is the
-  smaller one to start from.
+- [ ] **The Lox interpreter still leaks in a few interpreter paths**:
+  `examples/lox/test.roxy` leaks 33 objects (31 strings + 2 lists), down from
+  293 on 2026-08-02 and from 42 before the `when`-arm cleanup fix on 2026-08-08.
+  Every simple script is now clean; what remains needs classes, closures, or
+  runtime errors to reproduce, and no single cause dominates any more. Alloc-site
+  tags (VM call stack recorded at allocation, the technique that found both
+  earlier causes — see below) group the residue as:
+  `call_fun` ×12, `eval_binary` ×4, `call_native` ×3, `eval_get` ×2, plus ~9
+  scanner strings reached only through the `expect_*_error` tests. The 2 lists
+  are specific to `test.roxy` and no longer scale with interpreter calls.
 
-  Scale for whoever picks this up: `examples/lox/test.roxy` leaks 42 objects
-  (40 strings + 2 lists), down from 293 before the per-call List fix. The 40
-  strings are this entry. The **2 remaining lists** are a separate residual —
-  they no longer scale with interpreter calls (every `.lox` script above is now
-  list-clean), so they are specific to what `test.roxy` itself does; find their
-  allocation site the way the per-call leak was found, by tagging list
-  allocations with the VM call stack rather than guessing shapes.
+  Method: tag each allocation with the VM call stack, then trace `ref_count`
+  transitions for one leaked object and pair each retain with its release. The
+  unmatched retain names the owner — that is what identified both fixed causes
+  in minutes after a day of guessing at program shapes. Do not guess shapes;
+  ~10 hand-written repros of the "obvious" shape all came back clean while the
+  real one differed in which `when` arm ran.
 
-*The point worth keeping from how these were found: fifteen further bugs were
+*The point worth keeping from how these were found: seventeen further bugs were
 fixed here — five in coroutines, three in destructor chaining, two `ref`-counting
 holes, one in operator parsing (all 2026-08-02), and on 2026-08-08 a caught
 exception leaked by a coroutine destroyed while suspended inside its `catch`, an
 undropped by-value container parameter of a method, divergent conditional moves
-(which leaked in an `if` and double-freed in an `if/else if` chain), and
-name-conflated coroutine state fields (a segfault) — and every one of them was
-invisible to a fully green suite. Nine came from compiling `CLAUDE.md`'s example
-program, which had never been run; it now compiles and runs verbatim. Per-bug
-records are in this file's git history.*
+(which leaked in an `if` and double-freed in an `if/else if` chain),
+name-conflated coroutine state fields (a segfault), `when` arms that skipped
+their scope cleanup after the first one, and a variant field storing a string it
+did not own — and every one of them was invisible to a fully green suite. Nine
+came from compiling `CLAUDE.md`'s example program, which had never been run; it
+now compiles and runs verbatim. Per-bug records are in this file's git history.*
 
 ---
 

@@ -855,6 +855,22 @@ gave it away. Both were reachable — a plain `if` took the first and leaked, an
 is an implicit fall-through edge with no block of its own, one is materialized
 to hold the drop.
 
+**Alternative paths must also start from the same move state.** `if`, the
+`if/else if` chain, and `when` all snapshot it before the first branch and
+restore it per branch, because a branch that destroys a local marks it moved and
+that flag would otherwise carry into its siblings, which then skip their own
+destroy. `when` did not, and leaked whichever arm ran second. Two edges are
+exempt: an exhaustive `when`'s *trapping* else (unreachable, runs no body, so
+rolling back to pre-when would resurrect what every real arm moved), and `catch`
+(see below) — both are cases where the "sibling branch" framing does not hold.
+
+`try`/`catch` is the deliberate exception: a catch clause does **not** restore
+the move state. It is not an alternative to the try body from a common start —
+it runs *after* part of that body, so rolling the flag back would re-enable the
+implicit destroy in `r = uniq T()` for a `uniq` the try body already consumed,
+double-freeing a dead slot. Use-after-move in a catch is the semantic analyzer's
+job to reject, not the IR builder's to repair.
+
 ### The `borrowed` type modifier
 
 `borrowed T` is a **resolve-time type transform** that demotes an owning type to a
