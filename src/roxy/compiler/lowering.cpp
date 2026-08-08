@@ -1,4 +1,5 @@
 #include "roxy/compiler/lowering.hpp"
+#include "roxy/compiler/ir_optimize.hpp"
 #include "roxy/compiler/mangling.hpp"
 #include "roxy/compiler/type_env.hpp"
 #include "roxy/core/format.hpp"
@@ -117,20 +118,9 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_current_func->name = ir_func->name;
     m_current_func->param_count = ir_func->params.size();
 
-    // Compute ret_reg_count based on return type
-    {
-        Type* ret_type = ir_func->return_type;
-        if (ret_type && ret_type->kind == TypeKind::Weak) {
-            m_current_func->ret_reg_count = 2;
-        } else {
-            u32 ret_slot_count = get_struct_slot_count(ret_type);
-            if (ret_slot_count > 0 && ret_slot_count <= 4) {
-                m_current_func->ret_reg_count = static_cast<u8>((ret_slot_count + 1) / 2);
-            } else {
-                m_current_func->ret_reg_count = 1;
-            }
-        }
-    }
+    // Compute ret_reg_count based on return type: 2 for weak refs, packed
+    // slot-pair count for register-resident small structs, else 1.
+    m_current_func->ret_reg_count = static_cast<u8>(get_value_reg_count(ir_func->return_type));
 
     // Reset state.
     // Dense ValueId-indexed side tables: refill with sentinels, keeping the
@@ -320,20 +310,10 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
 
                 // For calls, reserve dst + contiguous registers for args and
                 // struct/weak returns together (reserve_call_window).
-                if ((inst->op == IROp::Call || inst->op == IROp::CallNative) && inst->result.is_valid()) {
-                    u32 extra_regs_for_return = 0;
-                    u32 ret_reg_count = get_value_reg_count(inst->type);
-                    if (ret_reg_count > 1) {
-                        extra_regs_for_return = ret_reg_count;
-                    } else {
-                        u32 ret_slot_count = get_struct_slot_count(inst->type);
-                        if (ret_slot_count > 0 && ret_slot_count <= 4) {
-                            extra_regs_for_return = (ret_slot_count + 1) / 2;
-                        }
-                    }
-
+                if (is_call && inst->op != IROp::CallIndirect && inst->result.is_valid()) {
                     // Compute actual arg register count based on types
-                    StringView func_name = inst->call.func_name;
+                    StringView func_name = (inst->op == IROp::CallExternal)
+                        ? inst->call_external.func_name : inst->call.func_name;
                     IRFunction* callee_func = nullptr;
                     auto func_it = m_func_indices.find(func_name);
                     if (func_it != m_func_indices.end()) {
@@ -342,61 +322,25 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                     u32 total_arg_regs = compute_call_arg_reg_count(inst, callee_func, m_value_types,
                         [this](Type* t) { return get_struct_slot_count(t); });
 
-                    reserve_call_window(inst, extra_regs_for_return, total_arg_regs);
-                }
-
-                if (inst->op == IROp::CallExternal && inst->result.is_valid()) {
-                    u32 extra_regs_for_return = 0;
-                    u32 ret_reg_count = get_value_reg_count(inst->type);
-                    if (ret_reg_count > 1) {
-                        extra_regs_for_return = ret_reg_count;
-                    } else {
-                        u32 ret_slot_count = get_struct_slot_count(inst->type);
-                        if (ret_slot_count > 0 && ret_slot_count <= 4) {
-                            extra_regs_for_return = (ret_slot_count + 1) / 2;
-                        }
-                    }
-
-                    StringView func_name = inst->call_external.func_name;
-                    IRFunction* callee_func = nullptr;
-                    auto func_it = m_func_indices.find(func_name);
-                    if (func_it != m_func_indices.end()) {
-                        callee_func = m_ir_module->functions[func_it->second];
-                    }
-                    u32 total_arg_regs = compute_call_arg_reg_count(inst, callee_func, m_value_types,
-                        [this](Type* t) { return get_struct_slot_count(t); });
-
-                    reserve_call_window(inst, extra_regs_for_return, total_arg_regs);
+                    reserve_call_window(inst, call_return_extra_regs(inst->type), total_arg_regs);
                 }
 
                 // CallIndirect (closure dispatch): callee resolved at runtime, but the
                 // arg register block uses the same convention as direct CALL.
                 if (inst->op == IROp::CallIndirect && inst->result.is_valid()) {
-                    u32 extra_regs_for_return = 0;
-                    u32 ret_reg_count = get_value_reg_count(inst->type);
-                    if (ret_reg_count > 1) {
-                        extra_regs_for_return = ret_reg_count;
-                    } else {
-                        u32 ret_slot_count = get_struct_slot_count(inst->type);
-                        if (ret_slot_count > 0 && ret_slot_count <= 4) {
-                            extra_regs_for_return = (ret_slot_count + 1) / 2;
-                        }
-                    }
-
                     // No callee_func at IR time — sum register counts from explicit-arg types.
                     u32 total_arg_regs = 0;
                     for (auto arg_id : inst->call_indirect.args) {
                         Type* arg_type = value_type_of(arg_id.id);
-                        u32 sc = get_struct_slot_count(arg_type);
-                        if (sc > 0 && sc <= 4) {
-                            total_arg_regs += (sc + 1) / 2;
+                        u32 arg_slot_count = get_struct_slot_count(arg_type);
+                        if (arg_slot_count > 0 && arg_slot_count <= 4) {
+                            total_arg_regs += (arg_slot_count + 1) / 2;
                         } else {
                             total_arg_regs += get_value_reg_count(arg_type);
-                            if (total_arg_regs == 0) total_arg_regs = 1;
                         }
                     }
 
-                    reserve_call_window(inst, extra_regs_for_return, total_arg_regs);
+                    reserve_call_window(inst, call_return_extra_regs(inst->type), total_arg_regs);
                 }
 
                 alloc_point++;
@@ -1307,162 +1251,24 @@ void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
 
     for (IRBlock* block : ir_func->blocks) {
         for (IRInst* inst : block->instructions) {
-            switch (inst->op) {
-                // RK-eligible binary ops
-                case IROp::AddI: case IROp::SubI: case IROp::MulI:
-                case IROp::AddF: case IROp::SubF: case IROp::MulF:
-                case IROp::AddD: case IROp::SubD: case IROp::MulD:
-                case IROp::DivD:
-                case IROp::EqD: case IROp::NeD:
-                case IROp::LtD: case IROp::LeD: case IROp::GtD: case IROp::GeD: {
-                    if (is_commutative_binary(inst->op)) {
-                        // Both sides can land in the RK slot — neither forces a register.
-                    } else {
-                        // RHS skippable, LHS forces register.
-                        mark_reg(inst->binary.left);
-                    }
-                    break;
-                }
-
-                // Non-RK binary ops still in the IR set: both sides require registers.
-                case IROp::DivI: case IROp::ModI:
-                case IROp::DivU: case IROp::ModU:
-                case IROp::DivF:
-                case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor:
-                case IROp::Shl: case IROp::Shr: case IROp::UShr:
-                case IROp::EqI: case IROp::NeI:
-                case IROp::LtI: case IROp::LeI: case IROp::GtI: case IROp::GeI:
-                case IROp::LtU: case IROp::LeU: case IROp::GtU: case IROp::GeU:
-                case IROp::EqF: case IROp::NeF:
-                case IROp::LtF: case IROp::LeF: case IROp::GtF: case IROp::GeF:
-                case IROp::And: case IROp::Or:
+            // RK-eligible binary ops (exactly the set rk_opcode_for maps): the
+            // RHS can land in the RK constant slot, and commutative
+            // canonicalization can swap a LHS constant over — so only a
+            // non-commutative LHS forces a register.
+            if (rk_opcode_for(inst->op) != Opcode::NOP) {
+                if (!is_commutative_binary(inst->op)) {
                     mark_reg(inst->binary.left);
-                    mark_reg(inst->binary.right);
-                    break;
-
-                // Unary ops, calls, indexing, fields, etc. — operand always reg.
-                case IROp::NegI: case IROp::NegF: case IROp::NegD:
-                case IROp::BitNot: case IROp::Not:
-                case IROp::I_TO_F64: case IROp::F64_TO_I:
-                case IROp::I_TO_B: case IROp::B_TO_I:
-                case IROp::Copy:
-                case IROp::RefInc: case IROp::RefDec:
-                case IROp::StrRetain: case IROp::StrRelease:
-                case IROp::WeakCheck: case IROp::WeakCreate:
-                case IROp::Delete:
-                case IROp::Throw:
-                case IROp::Nullify:
-                case IROp::AssertHeap:
-                case IROp::ContainerPin:
-                case IROp::ContainerUnpin:
-                    mark_reg(inst->unary);
-                    break;
-
-                case IROp::Call:
-                case IROp::CallNative:
-                    for (u32 i = 0; i < inst->call.args.size(); i++) {
-                        mark_reg(inst->call.args[i]);
-                    }
-                    break;
-
-                case IROp::CallExternal:
-                    for (u32 i = 0; i < inst->call_external.args.size(); i++) {
-                        mark_reg(inst->call_external.args[i]);
-                    }
-                    break;
-
-                case IROp::CallIndirect:
-                    mark_reg(inst->call_indirect.callee);
-                    for (u32 i = 0; i < inst->call_indirect.args.size(); i++) {
-                        mark_reg(inst->call_indirect.args[i]);
-                    }
-                    break;
-
-                case IROp::Closure:
-                    for (u32 i = 0; i < inst->closure.captures.size(); i++) {
-                        mark_reg(inst->closure.captures[i]);
-                    }
-                    break;
-
-                case IROp::IndexGet:
-                case IROp::IndexAddr:
-                case IROp::IndexTryAddr:
-                    mark_reg(inst->index_data.container);
-                    mark_reg(inst->index_data.index);
-                    break;
-                case IROp::IndexSet:
-                    mark_reg(inst->index_data.container);
-                    mark_reg(inst->index_data.index);
-                    mark_reg(inst->index_data.value);
-                    break;
-
-                case IROp::GetField:
-                case IROp::GetFieldAddr:
-                    mark_reg(inst->field.object);
-                    break;
-                case IROp::SetField:
-                    mark_reg(inst->field.object);
-                    mark_reg(inst->store_value);
-                    break;
-
-                case IROp::StructCopy:
-                    mark_reg(inst->struct_copy.dest_ptr);
-                    mark_reg(inst->struct_copy.source_ptr);
-                    break;
-
-                case IROp::LoadPtr:
-                    mark_reg(inst->load_ptr.ptr);
-                    break;
-                case IROp::StorePtr:
-                    mark_reg(inst->store_ptr.ptr);
-                    mark_reg(inst->store_ptr.value);
-                    break;
-
-                case IROp::Cast:
-                    mark_reg(inst->cast.source);
-                    break;
-
-                case IROp::New:
-                    for (u32 i = 0; i < inst->new_data.args.size(); i++) {
-                        mark_reg(inst->new_data.args[i]);
-                    }
-                    break;
-
-                // Const ops have no operands; results are what we're testing.
-                case IROp::ConstNull: case IROp::ConstBool: case IROp::ConstInt:
-                case IROp::ConstF: case IROp::ConstD: case IROp::ConstString:
-                case IROp::StackAlloc: case IROp::GlobalAddr: case IROp::BlockArg:
-                case IROp::FuncIndex:
-                case IROp::Yield:
-                    break;
+                }
+                continue;
             }
+            // Every other op reads its operands from registers.
+            for_each_operand(inst, [&](ValueId& operand) { mark_reg(operand); });
         }
 
         // Terminator operands — all require registers (Branch condition, Return
         // value, Goto block-arg passes are handled via register-to-register MOVs).
-        const Terminator& term = block->terminator;
-        switch (term.kind) {
-            case TerminatorKind::Goto:
-                for (u32 i = 0; i < term.goto_target.args.size(); i++) {
-                    mark_reg(term.goto_target.args[i].value);
-                }
-                break;
-            case TerminatorKind::Branch:
-                mark_reg(term.branch.condition);
-                for (u32 i = 0; i < term.branch.then_target.args.size(); i++) {
-                    mark_reg(term.branch.then_target.args[i].value);
-                }
-                for (u32 i = 0; i < term.branch.else_target.args.size(); i++) {
-                    mark_reg(term.branch.else_target.args[i].value);
-                }
-                break;
-            case TerminatorKind::Return:
-                mark_reg(term.return_value);
-                break;
-            case TerminatorKind::None:
-            case TerminatorKind::Unreachable:
-                break;
-        }
+        for_each_terminator_operand(block->terminator,
+                                    [&](ValueId& operand) { mark_reg(operand); });
     }
 
     // Skip-load eligibility (numeric Const* with no register-requiring use) is
@@ -1716,129 +1522,12 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
                 m_live_ranges[inst->result.id].def_point = point;
                 m_live_ranges[inst->result.id].last_use_point = point;  // at least live at def
             }
-            // Operand last-uses (Pass 2), by op type.
-            switch (inst->op) {
-                // Binary ops
-                case IROp::AddI: case IROp::SubI: case IROp::MulI: case IROp::DivI: case IROp::ModI:
-                case IROp::DivU: case IROp::ModU:
-                case IROp::AddF: case IROp::SubF: case IROp::MulF: case IROp::DivF:
-                case IROp::AddD: case IROp::SubD: case IROp::MulD: case IROp::DivD:
-                case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor: case IROp::Shl: case IROp::Shr: case IROp::UShr:
-                case IROp::EqI: case IROp::NeI: case IROp::LtI: case IROp::LeI: case IROp::GtI: case IROp::GeI:
-                case IROp::LtU: case IROp::LeU: case IROp::GtU: case IROp::GeU:
-                case IROp::EqF: case IROp::NeF: case IROp::LtF: case IROp::LeF: case IROp::GtF: case IROp::GeF:
-                case IROp::EqD: case IROp::NeD: case IROp::LtD: case IROp::LeD: case IROp::GtD: case IROp::GeD:
-                case IROp::And: case IROp::Or:
-                    mark_use(m_live_ranges, inst->binary.left, point);
-                    mark_use(m_live_ranges, inst->binary.right, point);
-                    break;
-
-                // Unary ops
-                case IROp::NegI: case IROp::NegF: case IROp::NegD:
-                case IROp::BitNot: case IROp::Not:
-                case IROp::I_TO_F64: case IROp::F64_TO_I: case IROp::I_TO_B: case IROp::B_TO_I:
-                case IROp::Copy:
-                case IROp::RefInc: case IROp::RefDec: case IROp::WeakCheck: case IROp::WeakCreate:
-                case IROp::StrRetain: case IROp::StrRelease:
-                case IROp::Delete:
-                case IROp::Throw:
-                case IROp::Nullify:
-                case IROp::AssertHeap:
-                case IROp::ContainerPin:
-                case IROp::ContainerUnpin:
-                    mark_use(m_live_ranges, inst->unary, point);
-                    break;
-
-                // Call / CallNative
-                case IROp::Call:
-                case IROp::CallNative:
-                    for (u32 i = 0; i < inst->call.args.size(); i++) {
-                        mark_use(m_live_ranges, inst->call.args[i], point);
-                    }
-                    break;
-
-                // CallExternal
-                case IROp::CallExternal:
-                    for (u32 i = 0; i < inst->call_external.args.size(); i++) {
-                        mark_use(m_live_ranges, inst->call_external.args[i], point);
-                    }
-                    break;
-
-                // CallIndirect (closure dispatch)
-                case IROp::CallIndirect:
-                    mark_use(m_live_ranges, inst->call_indirect.callee, point);
-                    for (u32 i = 0; i < inst->call_indirect.args.size(); i++) {
-                        mark_use(m_live_ranges, inst->call_indirect.args[i], point);
-                    }
-                    break;
-
-                // Closure construction (captures)
-                case IROp::Closure:
-                    for (u32 i = 0; i < inst->closure.captures.size(); i++) {
-                        mark_use(m_live_ranges, inst->closure.captures[i], point);
-                    }
-                    break;
-
-                // Container indexing
-                case IROp::IndexGet:
-                case IROp::IndexAddr:
-                case IROp::IndexTryAddr:
-                    mark_use(m_live_ranges, inst->index_data.container, point);
-                    mark_use(m_live_ranges, inst->index_data.index, point);
-                    break;
-
-                case IROp::IndexSet:
-                    mark_use(m_live_ranges, inst->index_data.container, point);
-                    mark_use(m_live_ranges, inst->index_data.index, point);
-                    mark_use(m_live_ranges, inst->index_data.value, point);
-                    break;
-
-                // Field access
-                case IROp::GetField:
-                case IROp::GetFieldAddr:
-                    mark_use(m_live_ranges, inst->field.object, point);
-                    break;
-
-                case IROp::SetField:
-                    mark_use(m_live_ranges, inst->field.object, point);
-                    mark_use(m_live_ranges, inst->store_value, point);
-                    break;
-
-                // Struct copy
-                case IROp::StructCopy:
-                    mark_use(m_live_ranges, inst->struct_copy.dest_ptr, point);
-                    mark_use(m_live_ranges, inst->struct_copy.source_ptr, point);
-                    break;
-
-                // Pointer ops
-                case IROp::LoadPtr:
-                    mark_use(m_live_ranges, inst->load_ptr.ptr, point);
-                    break;
-
-                case IROp::StorePtr:
-                    mark_use(m_live_ranges, inst->store_ptr.ptr, point);
-                    mark_use(m_live_ranges, inst->store_ptr.value, point);
-                    break;
-
-                // Cast
-                case IROp::Cast:
-                    mark_use(m_live_ranges, inst->cast.source, point);
-                    break;
-
-                // New (args)
-                case IROp::New:
-                    for (u32 i = 0; i < inst->new_data.args.size(); i++) {
-                        mark_use(m_live_ranges, inst->new_data.args[i], point);
-                    }
-                    break;
-
-                // No operands
-                case IROp::ConstNull: case IROp::ConstBool: case IROp::ConstInt:
-                case IROp::ConstF: case IROp::ConstD: case IROp::ConstString:
-                case IROp::StackAlloc: case IROp::GlobalAddr: case IROp::BlockArg:
-                case IROp::FuncIndex:
-                    break;
-            }
+            // Operand last-uses (Pass 2), via the shared operand walker
+            // (ir_optimize.hpp) — one op-shape enumeration for the whole
+            // compiler instead of a per-pass copy.
+            for_each_operand(inst, [&](ValueId& operand) {
+                mark_use(m_live_ranges, operand, point);
+            });
             point++;
         }
 
@@ -1847,40 +1536,27 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
         // the register allocator from reusing a block-param register before all
         // of that block's block-arg MOVs are emitted (parallel-assignment safety).
         u32 terminator_point = point;
+        Terminator& term = block->terminator;
+        for_each_terminator_operand(term, [&](ValueId& operand) {
+            mark_use(m_live_ranges, operand, terminator_point);
+        });
         auto extend_target_params = [&](const JumpTarget& target) {
+            if (target.args.size() == 0) return;
             if (!target.block.is_valid() || target.block.id >= ir_func->blocks.size()) return;
             IRBlock* target_block = ir_func->blocks[target.block.id];
             for (u32 i = 0; i < target_block->params.size(); i++) {
                 mark_use(m_live_ranges, target_block->params[i].value, terminator_point);
             }
         };
-        const Terminator& term = block->terminator;
         switch (term.kind) {
             case TerminatorKind::Goto:
-                for (u32 i = 0; i < term.goto_target.args.size(); i++) {
-                    mark_use(m_live_ranges, term.goto_target.args[i].value, point);
-                }
-                if (term.goto_target.args.size() > 0) extend_target_params(term.goto_target);
+                extend_target_params(term.goto_target);
                 break;
-
             case TerminatorKind::Branch:
-                mark_use(m_live_ranges, term.branch.condition, point);
-                for (u32 i = 0; i < term.branch.then_target.args.size(); i++) {
-                    mark_use(m_live_ranges, term.branch.then_target.args[i].value, point);
-                }
-                for (u32 i = 0; i < term.branch.else_target.args.size(); i++) {
-                    mark_use(m_live_ranges, term.branch.else_target.args[i].value, point);
-                }
-                if (term.branch.then_target.args.size() > 0) extend_target_params(term.branch.then_target);
-                if (term.branch.else_target.args.size() > 0) extend_target_params(term.branch.else_target);
+                extend_target_params(term.branch.then_target);
+                extend_target_params(term.branch.else_target);
                 break;
-
-            case TerminatorKind::Return:
-                mark_use(m_live_ranges, term.return_value, point);
-                break;
-
-            case TerminatorKind::None:
-            case TerminatorKind::Unreachable:
+            default:
                 break;
         }
         point++;  // terminator slot
@@ -2093,22 +1769,6 @@ u16 BytecodeBuilder::add_constant(const BCConstant& c) {
     return static_cast<u16>(index);
 }
 
-u16 BytecodeBuilder::add_int_constant(i64 value) {
-    // Check if we can use immediate
-    if (value >= IMM16_MIN && value <= IMM16_MAX) {
-        return static_cast<u16>(value);  // Used directly as immediate
-    }
-    return add_constant(BCConstant::make_int(value));
-}
-
-u16 BytecodeBuilder::add_float_constant(f64 value) {
-    return add_constant(BCConstant::make_float(value));
-}
-
-u16 BytecodeBuilder::add_string_constant(const char* data, u32 length) {
-    return add_constant(BCConstant::make_string(data, length));
-}
-
 // RK helpers: dedup against the existing pool so a single constant value reused
 // across many sites costs one pool slot, not N. Linear scan is fine — pools are
 // typically <100 entries per function.
@@ -2275,8 +1935,86 @@ void BytecodeBuilder::emit_aoff(Opcode op, u8 a, i16 offset) {
     emit(encode_aoff(op, a, offset));
 }
 
-void BytecodeBuilder::lower_block(IRBlock* block) {
-    // Already handled in build_function
+void BytecodeBuilder::emit_call_args(Span<ValueId> args, IRFunction* callee_func,
+                                     u8 first_arg_reg, bool structs_in_registers) {
+    u8 arg_reg_offset = 0;
+    for (u32 i = 0; i < args.size(); i++) {
+        ValueId arg_val = args[i];
+        u8 arg_src = ensure_in_register(arg_val, 0);
+        u8 arg_dst = static_cast<u8>(first_arg_reg + arg_reg_offset);
+
+        // out/inout parameters receive the pointer already computed by
+        // gen_lvalue_addr — pass it directly.
+        bool param_is_ptr = (callee_func && i < callee_func->param_is_ptr.size() &&
+                             callee_func->param_is_ptr[i]);
+        if (param_is_ptr) {
+            if (arg_src != arg_dst) {
+                emit_abc(Opcode::MOV, arg_dst, arg_src, 0);
+            }
+            arg_reg_offset += 1;
+            continue;
+        }
+
+        Type* arg_type = value_type_of(arg_val.id);
+        if (arg_type && arg_type->kind == TypeKind::Weak) {
+            // Weak ref: {pointer, generation} in two consecutive registers.
+            if (arg_src != arg_dst) {
+                emit_abc(Opcode::MOV, arg_dst, arg_src, 0);
+                emit_abc(Opcode::MOV, static_cast<u8>(arg_dst + 1), static_cast<u8>(arg_src + 1), 0);
+            }
+            arg_reg_offset += 2;
+            continue;
+        }
+
+        u32 arg_slot_count = structs_in_registers ? get_struct_slot_count(arg_type) : 0;
+        if (arg_slot_count > 0 && arg_slot_count <= 4) {
+            // Small struct: load struct data from memory to consecutive registers
+            emit_abc(Opcode::STRUCT_LOAD_REGS, arg_dst, arg_src, static_cast<u8>(arg_slot_count));
+            emit(0);  // Padding word
+            arg_reg_offset += static_cast<u8>((arg_slot_count + 1) / 2);
+        } else {
+            // Large structs pass their pointer; everything else its value.
+            if (arg_src != arg_dst) {
+                emit_abc(Opcode::MOV, arg_dst, arg_src, 0);
+            }
+            arg_reg_offset += 1;
+        }
+    }
+}
+
+void BytecodeBuilder::emit_small_struct_return_unpack(u8 dst, u32 ret_slot_count) {
+    if (ret_slot_count == 0 || ret_slot_count > 4) return;
+    u32 stack_offset = m_next_stack_slot;
+    m_next_stack_slot += ret_slot_count;
+
+    u8 temp_reg = bump_register();
+    emit_abi(Opcode::STACK_ADDR, temp_reg, static_cast<u16>(stack_offset));
+    emit_abc(Opcode::STRUCT_STORE_REGS, temp_reg, dst, static_cast<u8>(ret_slot_count));
+    emit(0);  // Padding word
+    // dst now points to the stack copy of the returned struct.
+    emit_abc(Opcode::MOV, dst, temp_reg, 0);
+}
+
+void BytecodeBuilder::lower_direct_call(IRInst* inst, u8 dst, StringView func_name,
+                                        Span<ValueId> args, const char* not_found_error) {
+    auto it = m_func_indices.find(func_name);
+    if (it == m_func_indices.end()) {
+        report_error(not_found_error);
+        return;
+    }
+    u32 func_idx = it->second;
+    IRFunction* callee_func = m_ir_module->functions[func_idx];
+
+    // Calling convention: arguments follow the destination/return registers.
+    u8 ret_reg_count = static_cast<u8>(get_value_reg_count(inst->type));
+    emit_call_args(args, callee_func, static_cast<u8>(dst + ret_reg_count), true);
+
+    // Two-word CALL: word 1 = [CALL][dst][_][arg_count], word 2 = [func_idx:32]
+    emit_abc(Opcode::CALL, dst, 0, static_cast<u8>(args.size()));
+    emit(func_idx);
+    for (u32 i = 0; i < args.size(); i++) note_call_use(args[i]);
+
+    emit_small_struct_return_unpack(dst, get_struct_slot_count(inst->type));
 }
 
 void BytecodeBuilder::lower_instruction(IRInst* inst) {
@@ -2426,247 +2164,33 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             // The value should already be in the register (or spill slot)
             break;
 
-        case IROp::Call: {
-            StringView func_name = inst->call.func_name;
-            auto it = m_func_indices.find(func_name);
-            if (it == m_func_indices.end()) {
-                report_error("Internal error: function not found during bytecode lowering");
-                break;
-            }
-            u32 func_idx = it->second;
-            u8 arg_count = static_cast<u8>(inst->call.args.size());
-
-            // Get callee function to check for pointer parameters
-            IRFunction* callee_func = m_ir_module->functions[func_idx];
-
-            // Check if return type is a struct or weak ref
-            u8 ret_reg_count = static_cast<u8>(get_value_reg_count(inst->type));
-            u32 ret_slot_count = get_struct_slot_count(inst->type);
-            if (ret_slot_count > 0 && ret_slot_count <= 4) {
-                ret_reg_count = static_cast<u8>((ret_slot_count + 1) / 2);
-            }
-
-            // Copy arguments to consecutive registers starting from dst+ret_reg_count
-            // (calling convention: arguments follow the destination/return registers)
-            // Track cumulative register offset for multi-register struct arguments
-            u8 first_arg_reg = dst + ret_reg_count;
-            u8 arg_reg_offset = 0;
-            for (u32 i = 0; i < inst->call.args.size(); i++) {
-                ValueId arg_val = inst->call.args[i];
-                u8 arg_src = ensure_in_register(arg_val, 0);
-
-                // Check if this parameter is a pointer (out/inout)
-                bool param_is_ptr = (i < callee_func->param_is_ptr.size() && callee_func->param_is_ptr[i]);
-
-                if (param_is_ptr) {
-                    // Pointer parameter: pass the pointer directly (already computed by gen_lvalue_addr)
-                    if (arg_src != first_arg_reg + arg_reg_offset) {
-                        emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
-                    }
-                    arg_reg_offset += 1;
-                } else {
-                    // Check if argument is a struct or weak ref
-                    Type* arg_type = value_type_of(arg_val.id);
-
-                    if (arg_type && arg_type->kind == TypeKind::Weak) {
-                        // Weak ref: copy 2 consecutive registers (pointer + generation)
-                        if (arg_src != first_arg_reg + arg_reg_offset) {
-                            emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
-                        }
-                        if ((arg_src + 1) != (first_arg_reg + arg_reg_offset + 1)) {
-                            emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset + 1, arg_src + 1, 0);
-                        }
-                        arg_reg_offset += 2;
-                    } else {
-                        u32 arg_slot_count = get_struct_slot_count(arg_type);
-
-                        if (arg_slot_count > 0 && arg_slot_count <= 4) {
-                            // Small struct: load struct data from memory to consecutive registers
-                            u8 arg_reg_count = static_cast<u8>((arg_slot_count + 1) / 2);
-                            emit_abc(Opcode::STRUCT_LOAD_REGS, first_arg_reg + arg_reg_offset, arg_src, static_cast<u8>(arg_slot_count));
-                            emit(0);  // Padding word
-                            arg_reg_offset += arg_reg_count;
-                        } else if (arg_slot_count > 4) {
-                            // Large struct: pass pointer
-                            if (arg_src != first_arg_reg + arg_reg_offset) {
-                                emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
-                            }
-                            arg_reg_offset += 1;
-                        } else {
-                            // Regular value
-                            if (arg_src != first_arg_reg + arg_reg_offset) {
-                                emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
-                            }
-                            arg_reg_offset += 1;
-                        }
-                    }
-                }
-            }
-
-            // Emit two-word CALL: word 1 = [CALL][dst][_][arg_count], word 2 = [func_idx:32]
-            emit_abc(Opcode::CALL, dst, 0, arg_count);
-            emit(func_idx);
-            for (u32 i = 0; i < inst->call.args.size(); i++) note_call_use(inst->call.args[i]);
-
-            // For small struct returns, dst now contains packed struct data in consecutive registers
-            // Allocate stack space and unpack
-            if (ret_slot_count > 0 && ret_slot_count <= 4) {
-                u32 stack_offset = m_next_stack_slot;
-                m_next_stack_slot += ret_slot_count;
-
-                u8 temp_reg = bump_register();
-                emit_abi(Opcode::STACK_ADDR, temp_reg, static_cast<u16>(stack_offset));
-                emit_abc(Opcode::STRUCT_STORE_REGS, temp_reg, dst, static_cast<u8>(ret_slot_count));
-                emit(0);  // Padding word
-                // Now dst should point to the stack location
-                emit_abc(Opcode::MOV, dst, temp_reg, 0);
-            }
+        case IROp::Call:
+            lower_direct_call(inst, dst, inst->call.func_name, inst->call.args,
+                              "Internal error: function not found during bytecode lowering");
             break;
-        }
 
         case IROp::CallNative: {
-            // Similar to Call but uses CALL_NATIVE opcode
-            u32 func_idx = inst->call.native_index;
-            u8 arg_count = static_cast<u8>(inst->call.args.size());
-
-            // Copy arguments to consecutive registers starting from dst+1.
-            // A `weak T` is {pointer, generation} and occupies two consecutive
-            // registers, so it takes two moves — the same special case
-            // IROp::Call and IROp::CallIndirect make, and what
+            // Similar to Call but uses CALL_NATIVE opcode, with args at dst+1.
+            // Natives take structs by pointer, so no STRUCT_LOAD_REGS packing
+            // (structs_in_registers = false); a `weak T` still occupies two
+            // consecutive registers — the same convention as CALL, and what
             // compute_call_arg_reg_count already sized this window for.
-            // Advancing by one register per argument instead would leave the
-            // generation as whatever happened to occupy the next register, and
-            // a native storing the value (List<weak T>.push) would record a
-            // garbage generation that traps as dangling on the next read.
-            u8 first_arg_reg = dst + 1;
-            u8 arg_reg_offset = 0;
-            for (u32 i = 0; i < inst->call.args.size(); i++) {
-                ValueId arg_val = inst->call.args[i];
-                u8 arg_src = ensure_in_register(arg_val, 0);
-                Type* arg_type = value_type_of(arg_val.id);
-
-                if (arg_type && arg_type->kind == TypeKind::Weak) {
-                    if (arg_src != first_arg_reg + arg_reg_offset) {
-                        emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
-                    }
-                    if ((arg_src + 1) != (first_arg_reg + arg_reg_offset + 1)) {
-                        emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset + 1, arg_src + 1, 0);
-                    }
-                    arg_reg_offset += 2;
-                } else {
-                    if (arg_src != first_arg_reg + arg_reg_offset) {
-                        emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
-                    }
-                    arg_reg_offset += 1;
-                }
-            }
+            emit_call_args(inst->call.args, nullptr, static_cast<u8>(dst + 1), false);
 
             // Two-word CALL_NATIVE: word 1 = [op][dst][_][arg_count], word 2 = [func_idx:32]
-            emit_abc(Opcode::CALL_NATIVE, dst, 0, arg_count);
-            emit(func_idx);
+            emit_abc(Opcode::CALL_NATIVE, dst, 0, static_cast<u8>(inst->call.args.size()));
+            emit(inst->call.native_index);
             for (u32 i = 0; i < inst->call.args.size(); i++) note_call_use(inst->call.args[i]);
             break;
         }
 
-        case IROp::CallExternal: {
-            // Cross-module function call - resolved at link time via static linking
-            // After linking, all functions are in the same module, so we emit a regular CALL
-            StringView func_name = inst->call_external.func_name;
-            u8 arg_count = static_cast<u8>(inst->call_external.args.size());
-
-            // Look up function in the merged module's function table
-            auto it = m_func_indices.find(func_name);
-            if (it == m_func_indices.end()) {
-                report_error("Internal error: external function not found during linking");
-                break;
-            }
-            u32 func_idx = it->second;
-
-            // Get callee function to check for pointer parameters
-            IRFunction* callee_func = m_ir_module->functions[func_idx];
-
-            // Check if return type is a struct or weak ref
-            u8 ret_reg_count = static_cast<u8>(get_value_reg_count(inst->type));
-            u32 ret_slot_count = get_struct_slot_count(inst->type);
-            if (ret_slot_count > 0 && ret_slot_count <= 4) {
-                ret_reg_count = static_cast<u8>((ret_slot_count + 1) / 2);
-            }
-
-            // Copy arguments to consecutive registers starting from dst+ret_reg_count
-            u8 first_arg_reg = dst + ret_reg_count;
-            u8 arg_reg_offset = 0;
-            for (u32 i = 0; i < inst->call_external.args.size(); i++) {
-                ValueId arg_val = inst->call_external.args[i];
-                u8 arg_src = ensure_in_register(arg_val, 0);
-
-                // Check if this parameter is a pointer (out/inout)
-                bool param_is_ptr = (i < callee_func->param_is_ptr.size() && callee_func->param_is_ptr[i]);
-
-                if (param_is_ptr) {
-                    // Pointer parameter: pass the pointer directly
-                    if (arg_src != first_arg_reg + arg_reg_offset) {
-                        emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
-                    }
-                    arg_reg_offset += 1;
-                } else {
-                    // Check if argument is a struct or weak ref
-                    Type* arg_type = value_type_of(arg_val.id);
-
-                    if (arg_type && arg_type->kind == TypeKind::Weak) {
-                        // Weak ref: copy 2 consecutive registers (pointer + generation)
-                        if (arg_src != first_arg_reg + arg_reg_offset) {
-                            emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
-                        }
-                        if ((arg_src + 1) != (first_arg_reg + arg_reg_offset + 1)) {
-                            emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset + 1, arg_src + 1, 0);
-                        }
-                        arg_reg_offset += 2;
-                    } else {
-                        u32 arg_slot_count = get_struct_slot_count(arg_type);
-
-                        if (arg_slot_count > 0 && arg_slot_count <= 4) {
-                            // Small struct: load struct data from memory to consecutive registers
-                            u8 arg_reg_count = static_cast<u8>((arg_slot_count + 1) / 2);
-                            emit_abc(Opcode::STRUCT_LOAD_REGS, first_arg_reg + arg_reg_offset, arg_src, static_cast<u8>(arg_slot_count));
-                            emit(0);  // Padding word
-                            arg_reg_offset += arg_reg_count;
-                        } else if (arg_slot_count > 4) {
-                            // Large struct: pass pointer
-                            if (arg_src != first_arg_reg + arg_reg_offset) {
-                                emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
-                            }
-                            arg_reg_offset += 1;
-                        } else {
-                            // Regular value
-                            if (arg_src != first_arg_reg + arg_reg_offset) {
-                                emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
-                            }
-                            arg_reg_offset += 1;
-                        }
-                    }
-                }
-            }
-
-            // Emit regular two-word CALL instruction (statically linked).
-            emit_abc(Opcode::CALL, dst, 0, arg_count);
-            emit(func_idx);
-            for (u32 i = 0; i < inst->call_external.args.size(); i++) {
-                note_call_use(inst->call_external.args[i]);
-            }
-
-            // For small struct returns, handle unpacking
-            if (ret_slot_count > 0 && ret_slot_count <= 4) {
-                u32 stack_offset = m_next_stack_slot;
-                m_next_stack_slot += ret_slot_count;
-
-                u8 temp_reg = bump_register();
-                emit_abi(Opcode::STACK_ADDR, temp_reg, static_cast<u16>(stack_offset));
-                emit_abc(Opcode::STRUCT_STORE_REGS, temp_reg, dst, static_cast<u8>(ret_slot_count));
-                emit(0);  // Padding word
-                emit_abc(Opcode::MOV, dst, temp_reg, 0);
-            }
+        case IROp::CallExternal:
+            // Cross-module function call — resolved at link time via static
+            // linking. After linking, all functions are in the same module, so
+            // this lowers to a regular CALL.
+            lower_direct_call(inst, dst, inst->call_external.func_name, inst->call_external.args,
+                              "Internal error: external function not found during linking");
             break;
-        }
 
         case IROp::CallIndirect: {
             // Indirect call through a closure value. The interpreter reads the
@@ -2674,71 +2198,21 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             // with the env pointer as the first (hidden) argument; explicit args
             // follow at consecutive registers starting from first_arg_reg.
             u8 closure_reg = ensure_in_register(inst->call_indirect.callee, 0);
-            u8 arg_count = static_cast<u8>(inst->call_indirect.args.size());
-
             u8 ret_reg_count = static_cast<u8>(get_value_reg_count(inst->type));
-            u32 ret_slot_count = get_struct_slot_count(inst->type);
-            if (ret_slot_count > 0 && ret_slot_count <= 4) {
-                ret_reg_count = static_cast<u8>((ret_slot_count + 1) / 2);
-            }
-
-            u8 first_arg_reg = dst + ret_reg_count;
-            u8 arg_reg_offset = 0;
-            for (u32 i = 0; i < inst->call_indirect.args.size(); i++) {
-                ValueId arg_val = inst->call_indirect.args[i];
-                u8 arg_src = ensure_in_register(arg_val, 0);
-                Type* arg_type = value_type_of(arg_val.id);
-
-                if (arg_type && arg_type->kind == TypeKind::Weak) {
-                    if (arg_src != first_arg_reg + arg_reg_offset) {
-                        emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
-                    }
-                    if ((arg_src + 1) != (first_arg_reg + arg_reg_offset + 1)) {
-                        emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset + 1, arg_src + 1, 0);
-                    }
-                    arg_reg_offset += 2;
-                } else {
-                    u32 arg_slot_count = get_struct_slot_count(arg_type);
-                    if (arg_slot_count > 0 && arg_slot_count <= 4) {
-                        u8 arg_reg_count = static_cast<u8>((arg_slot_count + 1) / 2);
-                        emit_abc(Opcode::STRUCT_LOAD_REGS, first_arg_reg + arg_reg_offset, arg_src,
-                                 static_cast<u8>(arg_slot_count));
-                        emit(0);
-                        arg_reg_offset += arg_reg_count;
-                    } else if (arg_slot_count > 4) {
-                        if (arg_src != first_arg_reg + arg_reg_offset) {
-                            emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
-                        }
-                        arg_reg_offset += 1;
-                    } else {
-                        if (arg_src != first_arg_reg + arg_reg_offset) {
-                            emit_abc(Opcode::MOV, first_arg_reg + arg_reg_offset, arg_src, 0);
-                        }
-                        arg_reg_offset += 1;
-                    }
-                }
-            }
+            emit_call_args(inst->call_indirect.args, nullptr,
+                           static_cast<u8>(dst + ret_reg_count), true);
 
             // Two-word CALL_INDIRECT: word 1 = [op][dst][closure_reg][arg_count],
             // word 2 = reserved (future inline-cache slot).
-            emit_abc(Opcode::CALL_INDIRECT, dst, closure_reg, arg_count);
+            emit_abc(Opcode::CALL_INDIRECT, dst, closure_reg,
+                     static_cast<u8>(inst->call_indirect.args.size()));
             emit(0u);
             for (u32 i = 0; i < inst->call_indirect.args.size(); i++) {
                 note_call_use(inst->call_indirect.args[i]);
             }
             note_call_use(inst->call_indirect.callee);
 
-            // Small-struct return unpacking, mirroring IROp::Call.
-            if (ret_slot_count > 0 && ret_slot_count <= 4) {
-                u32 stack_offset = m_next_stack_slot;
-                m_next_stack_slot += ret_slot_count;
-
-                u8 temp_reg = bump_register();
-                emit_abi(Opcode::STACK_ADDR, temp_reg, static_cast<u16>(stack_offset));
-                emit_abc(Opcode::STRUCT_STORE_REGS, temp_reg, dst, static_cast<u8>(ret_slot_count));
-                emit(0);
-                emit_abc(Opcode::MOV, dst, temp_reg, 0);
-            }
+            emit_small_struct_return_unpack(dst, get_struct_slot_count(inst->type));
             break;
         }
 
@@ -3422,11 +2896,6 @@ void BytecodeBuilder::fuse_compare_branch() {
     }
 }
 
-bool BytecodeBuilder::is_large_struct(Type* type) const {
-    if (!type || !type->is_struct()) return false;
-    return type->struct_info.slot_count > 4;
-}
-
 u32 BytecodeBuilder::get_struct_slot_count(Type* type) const {
     if (!type || !type->is_struct()) return 0;
     return type->struct_info.slot_count;
@@ -3437,6 +2906,13 @@ u32 BytecodeBuilder::get_value_reg_count(Type* type) const {
     if (type->kind == TypeKind::Weak) return 2;  // 128-bit: pointer + generation
     u32 slot_count = get_struct_slot_count(type);
     return (slot_count > 0 && slot_count <= 4) ? (slot_count + 1) / 2 : 1;
+}
+
+u32 BytecodeBuilder::call_return_extra_regs(Type* type) const {
+    if (!type) return 0;
+    if (type->kind == TypeKind::Weak) return 2;
+    u32 slot_count = get_struct_slot_count(type);
+    return (slot_count > 0 && slot_count <= 4) ? (slot_count + 1) / 2 : 0;
 }
 
 Opcode BytecodeBuilder::get_opcode(IROp op) const {

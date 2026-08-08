@@ -132,8 +132,9 @@ bool is_cse_eligible(IROp op);
 // callback receives a mutable reference so the same helper serves both
 // reading (use-count, DCE) and rewriting (copy propagation).
 //
-// IMPORTANT: This switch covers every IROp. New ops must be added here AND
-// to the corresponding switch in lowering.cpp's compute_liveness().
+// IMPORTANT: This switch covers every IROp — it is the single operand-shape
+// enumeration shared by the optimizer passes and BytecodeBuilder's liveness /
+// const-use analyses. New ops must be added here.
 template <typename Fn>
 inline void for_each_operand(IRInst* inst, Fn&& fn) {
     switch (inst->op) {

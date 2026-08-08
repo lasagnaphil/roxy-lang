@@ -113,9 +113,6 @@ private:
 
     // Constant pool management
     u16 add_constant(const BCConstant& c);
-    u16 add_int_constant(i64 value);
-    u16 add_float_constant(f64 value);
-    u16 add_string_constant(const char* data, u32 length);
 
     // RK (register-or-constant) helpers — return existing pool index or append.
     // i32 result so caller can detect "would overflow u8 RK index" via < 0 check
@@ -135,9 +132,29 @@ private:
     bool try_emit_rk_binary(IRInst* inst, u8 dst);
 
     // Block lowering
-    void lower_block(IRBlock* block);
     void lower_instruction(IRInst* inst);
     void lower_terminator(IRBlock* block);
+
+    // Copy a call's arguments into its contiguous window starting at
+    // first_arg_reg. callee_func supplies out/inout pointer-parameter info
+    // (nullptr for natives and indirect calls, which have none). When
+    // structs_in_registers is true, small-struct arguments (1-4 slots) are
+    // packed into consecutive registers via STRUCT_LOAD_REGS (the CALL /
+    // CALL_INDIRECT convention); natives instead take every struct by pointer.
+    void emit_call_args(Span<ValueId> args, IRFunction* callee_func, u8 first_arg_reg,
+                        bool structs_in_registers);
+
+    // After a call whose small-struct return (1-4 slots) arrived packed in
+    // consecutive registers at dst: store the packed slots to fresh stack
+    // storage and leave the struct's address in dst, like every other struct
+    // value. No-op for non-struct and large-struct (by-pointer) returns.
+    void emit_small_struct_return_unpack(u8 dst, u32 ret_slot_count);
+
+    // Shared lowering for Call and CallExternal — after static linking both
+    // dispatch through the merged module's function table with the same
+    // two-word CALL encoding.
+    void lower_direct_call(IRInst* inst, u8 dst, StringView func_name, Span<ValueId> args,
+                           const char* not_found_error);
 
     // Block argument handling at jump sites
     void emit_block_args(const JumpTarget& target);
@@ -293,15 +310,18 @@ private:
     // self-referential structs reference their own (in-progress) descriptor.
     tsl::robin_map<Type*, u16> m_delete_desc_cache;
 
-    // Check if type is a struct that should be passed by reference (>4 slots)
-    bool is_large_struct(Type* type) const;
-
     // Get slot count for a struct type, or 0 if not a struct
     u32 get_struct_slot_count(Type* type) const;
 
     // Get the number of registers needed for a value of the given type
     // Returns 2 for weak refs (128-bit), struct-based counts for structs, 1 for everything else
     u32 get_value_reg_count(Type* type) const;
+
+    // Registers a call window reserves above dst for a multi-register return:
+    // 2 for weak refs, the packed slot-pair count for small structs (1-4
+    // slots), 0 when the return fits in dst alone (scalars, and large structs
+    // returned through a hidden pointer).
+    u32 call_return_extra_regs(Type* type) const;
 
     // Current function being built
     BCFunction* m_current_func;
