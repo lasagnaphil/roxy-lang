@@ -15,25 +15,50 @@ Last updated: 2026-08-08
 They were invisible before: the free-trap only fires on an explicit `delete`, so
 nothing was looking.*
 
-- [ ] **A Lox runtime error leaks the string in the value being evaluated.** All
-  that remains of the Lox leak: `examples/lox/test.roxy` is down to 6 live
-  objects (5 strings + 1 list) from 293 on 2026-08-02, and every one of the 5
-  is a Lox string literal in an expression whose evaluation raises a Lox
-  *runtime* error — one per case in `test_eval_runtime_errors`
-  (`-"hi"`, `1 + "x"`, `"a" - 1`, `"a" < "b"`). Every other alloc site is clean:
-  the `call_fun` / `eval_binary` / `call_native` / `eval_get` clusters are all
-  gone, and every `expect_run_output` case is clean.
+- [ ] **A scope's cleanup record cannot cover a throwing block laid out after
+  its normal-path cleanup.** The last leak in `examples/lox/test.roxy`, now
+  down to **1 object** (a list) from 293 on 2026-08-02. Minimal repro:
 
-  The path is `Interpreter.interpret`, which catches `RuntimeError` around a
-  `return self.evaluate(e);`. The LoxValue holding the string is in flight when
-  the throw happens, and its count is never released. Three unwind-path bugs
-  were fixed here on 2026-08-08 (see the git log for `824759f` and `cfa9d31`);
-  this is a fourth site in the same family, not yet diagnosed. Start with the
-  tracing method below rather than guessing at shapes — roughly ten
-  hand-written repros of the "obvious" shape came back clean each time.
+  ```roxy
+  struct S { n: i32; }
+  struct E { msg: string; }
+  fun new E(m: string) { self.msg = m; }
+  fun E.message(): string for Exception { return self.msg; }
+  fun take(args: List<i32>): i32 {
+      if (args.len() != 0) { throw E("bad"); }
+      return 0;
+  }
+  fun main(): i32 {
+      var l: List<i32> = List<i32>(); l.push(1);
+      try { var r: i32 = take(l); } catch (e: E) { print(e.msg); }
+      return 0;
+  }
+  ```
 
-  The **1 list** is a separate residual, specific to `test.roxy` and not
-  scaling with interpreter calls. It has never been diagnosed.
+  `args` is an owned by-value container parameter, so the callee destroys it.
+  The normal-path `Delete` + `Nullify` land in the `endif` block, which RPO
+  lays out *before* the throwing `then` block, and a cleanup record is a single
+  linear PC interval: the `Nullify` truncates it below the throw's PC, so
+  unwinding runs nothing. In Lox this is `Interpreter.call_native`, which
+  throws a Lox arity error out of exactly this shape — `test_run_clock`'s
+  `clock(1);` case is the only thing still leaking.
+
+  It is the same family as the four unwind-path bugs fixed 2026-08-08, but a
+  **different mechanism**: those were about which block a record ends at; this
+  is the PC-interval representation itself, which assumes a scope's blocks are
+  contiguous and that its normal-exit block is last. Neither holds. Variants
+  that are clean, which pin the trigger: both paths terminating (no merge
+  block), and an unconditional throw. Free function or method makes no
+  difference.
+
+  **The obvious fix does not work.** Splitting the record into the PC runs the
+  `Nullify` does not dominate would name a register that no longer holds the
+  value: in the repro the throwing block is `STACK_ADDR R0, stack[0]` /
+  `LOAD_CONST R1, 0`, and R1 — the register the record names — has been
+  recycled for the string constant, because SSA liveness considers `args` dead
+  there. A real fix has to extend the value's register liveness across its
+  whole cleanup-record range, which is a register-allocator change, not a
+  lowering one.
 
   Method that found this, worth reusing: tag each allocation with the VM call
   stack, then trace every `ref_count` transition of one leaked object and pair
@@ -41,7 +66,7 @@ nothing was looking.*
   turned a day of fruitless shape-guessing (~10 hand-written repros of the
   "obvious" shape, all clean) into a diagnosis in minutes.
 
-*The point worth keeping from how these were found: twenty further bugs were
+*The point worth keeping from how these were found: twenty-one further bugs were
 fixed here — five in coroutines, three in destructor chaining, two `ref`-counting
 holes, one in operator parsing (all 2026-08-02), and on 2026-08-08 a caught
 exception leaked by a coroutine destroyed while suspended inside its `catch`, an
@@ -52,7 +77,9 @@ their scope cleanup after the first one, a variant field storing a string it
 did not own, a string temporary adopted by its binding whose duplicate cleanup
 record released it twice while unwinding, a cleanup record whose end block came
 from the last block *created* rather than the block emission was last in, and a
-local reassigned in a branch whose record still named its pre-merge register —
+local reassigned in a branch whose record still named its pre-merge register, and
+a cleanup record whose end block the optimizer dropped as unreachable and whose
+range therefore collapsed onto the entry block —
 and every one of them was invisible to a fully green suite. Nine
 came from compiling `CLAUDE.md`'s example program, which had never been run; it
 now compiles and runs verbatim. Per-bug records are in this file's git history.*
