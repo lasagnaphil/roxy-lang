@@ -15,23 +15,49 @@ Last updated: 2026-08-08
 They were invisible before: the free-trap only fires on an explicit `delete`, so
 nothing was looking.*
 
-- [ ] **The Lox interpreter still leaks in a few interpreter paths**:
-  `examples/lox/test.roxy` leaks 33 objects (31 strings + 2 lists), down from
-  293 on 2026-08-02 and from 42 before the `when`-arm cleanup fix on 2026-08-08.
-  Every simple script is now clean; what remains needs classes, closures, or
-  runtime errors to reproduce, and no single cause dominates any more. Alloc-site
-  tags (VM call stack recorded at allocation, the technique that found both
-  earlier causes — see below) group the residue as:
+- [ ] **Scope cleanup on the exception-unwind path is wrong in both directions**,
+  which is what remains of the Lox leak. Narrowed 2026-08-08 to two minimal
+  repros; both are clean the moment the `throw` is removed, so this is the
+  unwind path specifically, not ordinary scope exit:
+
+  *Over-release — a moved-out struct temporary is destroyed anyway.* The
+  temporary that a struct literal builds is copied into the heap exception
+  object and marked moved (`nullify`), but its cleanup record still fires during
+  unwind, releasing the string field the heap object now owns. The count reaches
+  zero while the handler is still using it, so the value is **gone by the time
+  the catch reads it**:
+  ```roxy
+  struct E { v: string; }
+  fun E.message(): string for Exception { return "e"; }
+  fun f(a: string) { var s: string = a + "!"; throw E { v = s }; }
+  fun main(): i32 { var x: string = "dyn";
+      try { f(x); } catch (e: E) { print(e.v); }   // prints an EMPTY line
+      return 0; }
+  ```
+
+  *Under-release — a value-struct local is not destroyed at all.* Same shape with
+  the local being a value struct that owns a counted member: nothing releases it
+  while unwinding, so it leaks. (Replace `s` above with
+  `var val: V = V.of_str(a + "!")` where `V` is a tagged union with a `string`
+  variant, and throw `E { v = val }`.)
+
+  Both point at `record_scope_cleanup_records` / the Nullify-narrowing of
+  cleanup records: it records every owned local in scope without consulting
+  `is_moved`, and narrowing evidently does not cover a moved struct temporary,
+  while a value-struct local seems not to produce a firing record at all.
+  Together they are most of the Lox residue: `examples/lox/test.roxy` leaks 33
+  objects (31 strings + 2 lists), down from 293 on 2026-08-02. Lox reaches this
+  path on every function return, since `return` is implemented by throwing a
+  `ReturnException`. Remaining alloc sites, for cross-checking a fix:
   `call_fun` ×12, `eval_binary` ×4, `call_native` ×3, `eval_get` ×2, plus ~9
   scanner strings reached only through the `expect_*_error` tests. The 2 lists
   are specific to `test.roxy` and no longer scale with interpreter calls.
 
-  Method: tag each allocation with the VM call stack, then trace `ref_count`
-  transitions for one leaked object and pair each retain with its release. The
-  unmatched retain names the owner — that is what identified both fixed causes
-  in minutes after a day of guessing at program shapes. Do not guess shapes;
-  ~10 hand-written repros of the "obvious" shape all came back clean while the
-  real one differed in which `when` arm ran.
+  Method that found this, worth reusing: tag each allocation with the VM call
+  stack, then trace every `ref_count` transition of one leaked object and pair
+  each retain with its release — the unmatched retain names the owner. That
+  turned a day of fruitless shape-guessing (~10 hand-written repros of the
+  "obvious" shape, all clean) into a diagnosis in minutes.
 
 *The point worth keeping from how these were found: seventeen further bugs were
 fixed here — five in coroutines, three in destructor chaining, two `ref`-counting
