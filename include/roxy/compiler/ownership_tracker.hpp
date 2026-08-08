@@ -45,6 +45,12 @@ struct OwnedLocalInfo {
     // Not the same as `is_moved` and not implied by it — a move to anywhere
     // else (field, heap, callee) does emit a Nullify and does keep its record.
     bool adopted_in_place = false;
+
+    // Re-anchored onto a merge block's param (see
+    // IRBuilder::rebind_owned_local_to_merge_param). Marks the record this entry
+    // later produces as the post-merge half of a tiled pair, which only the
+    // bytecode backend consumes — IRCleanupInfo::from_merge_rebind.
+    bool rebound_at_merge = false;
 };
 
 // Ownership bookkeeping for the IRBuilder: which locals and temporaries own a

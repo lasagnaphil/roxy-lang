@@ -200,7 +200,42 @@ Span<BlockArgPair> IRBuilder::phi_current_args(const Vector<PhiInfo>& phi_info) 
 void IRBuilder::bind_merge_phis(const Vector<PhiInfo>& phi_info) {
     for (const auto& phi : phi_info) {
         define_local(phi.name, phi.merge_param, phi.type);
+        rebind_owned_local_to_merge_param(phi.name, phi.merge_param);
     }
+}
+
+void IRBuilder::rebind_owned_local_to_merge_param(StringView name, ValueId merge_param) {
+    // A tracked local assigned inside a branch arrives at the merge as a block
+    // param — a fresh SSA value in a fresh register. Its ownership entry still
+    // named the *pre-merge* value, and a cleanup record names a register, so
+    // after the merge the record pointed at storage the local had left behind:
+    // an exception unwinding past the merge destroyed the stale value and leaked
+    // the live one. (Ordinary scope exit was fine — emit_implicit_destroy looks
+    // the name up, so it always sees the current value.)
+    //
+    // Close the old record where the merge begins and re-anchor the entry to the
+    // param, so the two records tile the local's live range instead of one of
+    // them covering it wrongly.
+    OwnedLocalInfo* info = m_ownership.find_by_name(name);
+    if (!info || !m_current_block) return;
+    // Temporaries are keyed by value in the tracker's index; re-anchoring one
+    // would desync it. Only named locals reach a merge param anyway.
+    if (info->is_temporary) return;
+    if (info->initial_value == merge_param) return;
+
+    if (!info->is_moved && info->start_block.is_valid() && info->initial_value.is_valid()) {
+        IRCleanupKind kind = info->kind == OwnedKind::RefBorrow ? IRCleanupKind::RefDec
+                           : info->kind == OwnedKind::StrOwn    ? IRCleanupKind::StrRelease
+                           : IRCleanupKind::Delete;
+        IRCleanupInfo ci{info->initial_value, info->type, info->start_block,
+                         m_current_block->id, kind};
+        ci.ends_before_block = true;
+        m_current_func->cleanup_info.push_back(ci);
+    }
+
+    info->initial_value = merge_param;
+    info->start_block = m_current_block->id;
+    info->rebound_at_merge = true;
 }
 
 void IRBuilder::goto_merge_if_open(IRBlock* merge_block, const Vector<PhiInfo>& phi_info) {

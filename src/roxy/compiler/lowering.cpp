@@ -680,9 +680,13 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
         BCCleanupRecord record;
         record.scope_start_pc = start_offset;
 
-        // scope_end_pc is the offset AFTER the end block's last instruction
+        // scope_end_pc is the offset AFTER the end block's last instruction —
+        // except for a record that hands off at a merge, which ends exactly
+        // where the merge block begins (see IRCleanupInfo::ends_before_block).
         BlockId end_block_id = ir_cleanup.end_block;
-        if (end_block_id.id + 1 < ir_func->blocks.size()) {
+        if (ir_cleanup.ends_before_block) {
+            record.scope_end_pc = end_offset;
+        } else if (end_block_id.id + 1 < ir_func->blocks.size()) {
             u32 next_offset = block_offset(end_block_id.id + 1);
             if (next_offset != NO_OFFSET) {
                 record.scope_end_pc = next_offset;

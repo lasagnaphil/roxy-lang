@@ -2511,6 +2511,9 @@ void CEmitter::emit_cleanup_records(const IRFunction* func, i32 body_group, Stri
     // LIFO: reverse creation order, matching the VM's reverse cleanup-record scan.
     for (i32 i = static_cast<i32>(func->cleanup_info.size()) - 1; i >= 0; i--) {
         const IRCleanupInfo& ci = func->cleanup_info[i];
+        // Bytecode-only tiling: this is the post-merge half of a pair whose
+        // pre-merge half already names this local. See IRCleanupInfo.
+        if (ci.from_merge_rebind) continue;
         if (body_group >= 0 &&
             !m_try_groups[body_group].body_blocks.count(ci.start_block.id)) {
             continue;  // dispatch path: only locals created inside this try body

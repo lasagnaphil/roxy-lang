@@ -100,8 +100,9 @@ void IRBuilder::record_scope_cleanup_records(u32 depth) {
         IRCleanupKind kind = info.kind == OwnedKind::RefBorrow ? IRCleanupKind::RefDec
                            : info.kind == OwnedKind::StrOwn    ? IRCleanupKind::StrRelease
                            : IRCleanupKind::Delete;
-        m_current_func->cleanup_info.push_back(
-            {info.initial_value, info.type, info.start_block, end_block, kind});
+        IRCleanupInfo record{info.initial_value, info.type, info.start_block, end_block, kind};
+        record.from_merge_rebind = info.rebound_at_merge;
+        m_current_func->cleanup_info.push_back(record);
     }
 }
 

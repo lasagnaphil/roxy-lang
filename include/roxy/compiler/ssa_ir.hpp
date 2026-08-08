@@ -502,6 +502,17 @@ struct IRCleanupInfo {
     // block-derived start would wrongly cover earlier-in-block argument
     // evaluation, firing a RefDec on a not-yet-initialized register on throw.
     bool call_borrow = false;
+    // The range ends at the START of end_block, not after it. Used where a
+    // tracked local changes SSA value at a control-flow merge: the pre-merge
+    // record must stop exactly where the merge param takes over, or both
+    // records cover the merge block and the value is destroyed twice.
+    bool ends_before_block = false;
+    // The post-merge half of such a pair: the same local, now named by the merge
+    // block's param. **Bytecode only.** The two halves tile a PC range, and the
+    // C backend has no ranges — its unwind label runs every record once, so
+    // emitting both would destroy one local twice. It keeps the pre-merge half
+    // alone, which is exactly the single record it saw before tiling existed.
+    bool from_merge_rebind = false;
 };
 
 // IR Function

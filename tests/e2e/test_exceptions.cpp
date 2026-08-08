@@ -1704,4 +1704,47 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(r.stdout_output == "dyn!\n");
     }
 
+    // A local assigned inside a branch arrives at the merge as a block param —
+    // a fresh SSA value in a fresh register. Its cleanup record still named the
+    // pre-merge register, so an exception unwinding past the merge destroyed the
+    // storage the local had left behind and leaked the live value. Ordinary
+    // scope exit was unaffected: it looks the local up by name, so it always
+    // sees the current value.
+    //
+    // This is what most of `examples/lox` still leaked — Lox's `execute` does
+    // exactly this shape (`var v = nil; if (...) { v = evaluate(...); } throw
+    // ReturnException(v);`), and Lox implements every `return` by throwing.
+    // VM-only: C backend: the generated source does not compile. A cleanup
+    // record whose value is a by-value struct (here `make(a)`'s materialized
+    // result) is emitted with pointer-shaped null guards — `if (v8) { … v8 = 0; }`
+    // on a `Box` — which is ill-formed C++. Pre-existing: it fails identically
+    // with the merge fix disabled. See docs/internals/c-backend.md → "Known
+    // C-backend gaps".
+    TEST_CASE("a local reassigned in a branch is destroyed when unwinding past the merge") {
+        using Backend = VMBackend;
+        const char* source = R"(
+        struct Box { s: string; }
+        fun new Box(x: string) { self.s = x; }
+        struct E { v: Box; }
+        fun new E(b: Box) { self.v = b; }
+        fun E.message(): string for Exception { return "e"; }
+        fun make(a: string): Box { return Box(a + "!"); }
+        fun f(a: string) {
+            var v: Box = Box("");
+            if (a != "") { v = make(a); }
+            throw E(v);
+        }
+        fun main(): i32 {
+            var x: string = "dyn";
+            var result: Box = Box("");
+            try { f(x); } catch (r: E) { result = r.v; }
+            print(result.s);
+            return 0;
+        }
+        )";
+        auto r = Backend::run(source);
+        CHECK(r.success == true);
+        CHECK(r.stdout_output == "dyn!\n");
+    }
+
 }  // TEST_SUITE("E2E Exceptions")

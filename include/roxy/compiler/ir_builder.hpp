@@ -385,6 +385,11 @@ private:
     Span<BlockArgPair> phi_current_args(const Vector<PhiInfo>& phi_info);
     // Rebind each phi var to its merge-block param.
     void bind_merge_phis(const Vector<PhiInfo>& phi_info);
+
+    // Re-anchor a tracked local's cleanup bookkeeping onto the merge block param
+    // that now holds it, closing the pre-merge record at the merge. See the
+    // definition for why the unwind path needs this and scope exit does not.
+    void rebind_owned_local_to_merge_param(StringView name, ValueId merge_param);
     // If the current block is still open, jump to the merge block passing the
     // phis' current values.
     void goto_merge_if_open(IRBlock* merge_block, const Vector<PhiInfo>& phi_info);
