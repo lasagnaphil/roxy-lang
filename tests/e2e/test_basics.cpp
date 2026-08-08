@@ -383,6 +383,32 @@ TEST_SUITE("E2E Basics") {
             CHECK(result.success);
             CHECK(result.value == 500);
         }
+
+        SUBCASE("300 small-struct-returning calls - no per-call register ratchet") {
+            // Regression: the small-struct-return unpack (STACK_ADDR +
+            // STRUCT_STORE_REGS after the CALL) bumped a fresh, permanently
+            // reserved register at every call site. Call windows themselves
+            // are compacted into dead register space (reserve_call_window),
+            // but these temps ratcheted the frame top by one per call, so a
+            // few hundred calls returning a Vec2 overflowed the 255-register
+            // frame despite low real pressure. The temp now reuses the call's
+            // own reserved window slot just above the packed return slots,
+            // which is transient argument space, dead once the call returned.
+            std::string src =
+                "struct Vec2 { x: i32; y: i32; }\n"
+                "fun make(i: i32): Vec2 {\n"
+                "    return Vec2 { x = i, y = i + 1 };\n"
+                "}\n"
+                "fun main(): i32 {\n"
+                "    var total: i32 = 0;\n";
+            for (int i = 0; i < 300; i++) {
+                src += "    total = total + make(" + std::to_string(i) + ").x;\n";
+            }
+            src += "    return total;\n}\n";
+            TestResult result = run_and_capture(src.c_str(), "main");
+            CHECK(result.success);
+            CHECK(result.value == 44850);  // 0 + 1 + ... + 299
+        }
     }
 
     TEST_CASE("function exceeding the i16 branch-offset range is rejected") {

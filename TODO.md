@@ -10,7 +10,19 @@ Last updated: 2026-08-08
 
 ## High Priority
 
-*(empty — the teardown leak check added 2026-08-02 (`roxy --check-leaks`; the
+- [ ] **Reassigning a `weak` local from a `uniq` owner leaks the owner**:
+  `var w: weak Owner = u; w = u;` — the *initialization* is fine, but the
+  *reassignment* consumes `u`'s cleanup (its scope-exit Delete is truncated
+  away), so the owner is never deleted: 1 object alive at teardown. A
+  loop-carried weak (`w = u;` inside a `while`) hits the same path. This is an
+  IR-builder lifetime issue (the assignment path apparently treats the uniq
+  RHS as moved), not a lowering one — it reproduces on builds predating the
+  2026-08-08 lowering fixes. Found while pinning the multi-register
+  block-param clobber; the pin ("Weak loop-carried block param survives a call
+  in the loop body" in `tests/e2e/test_heap.cpp`) opts out with an
+  `ExpectedLeak` naming this entry.
+
+*(Otherwise clear — the teardown leak check added 2026-08-02 (`roxy --check-leaks`; the
 E2E harness asserts it on every program it runs) surfaced a family of
 exception-unwind leaks that is now fully fixed: `examples/lox/test.roxy` runs
 at **0 live objects** at teardown, from 293 on 2026-08-02. The last one — a

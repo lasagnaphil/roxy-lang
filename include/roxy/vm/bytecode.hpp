@@ -317,6 +317,38 @@ inline i16 decode_offset(u32 instr) {
     return static_cast<i16>(instr & 0xFFFF);
 }
 
+// True for opcodes that occupy two code words (payload in the second word):
+// calls (function index / reserved slot), field ops (slot offset),
+// packed-struct register transfers (padding word), and the fused
+// compare-and-branch family (i32 branch offset). Anything that walks raw code
+// words — the disassembler, fuse_compare_branch — must skip the payload word,
+// or it would misread it as an instruction. Keep in sync with the interpreter
+// handlers that read or skip an extra `*pc++`.
+inline bool is_two_word_instruction(Opcode op) {
+    switch (op) {
+        case Opcode::CALL:
+        case Opcode::CALL_NATIVE:
+        case Opcode::CALL_INDIRECT:
+        case Opcode::GET_FIELD:
+        case Opcode::SET_FIELD:
+        case Opcode::GET_FIELD_ADDR:
+        case Opcode::STRUCT_LOAD_REGS:
+        case Opcode::STRUCT_STORE_REGS:
+        case Opcode::JMP_IF_EQ_I: case Opcode::JMP_IF_NE_I:
+        case Opcode::JMP_IF_LT_I: case Opcode::JMP_IF_LE_I:
+        case Opcode::JMP_IF_GT_I: case Opcode::JMP_IF_GE_I:
+        case Opcode::JMP_IF_EQ_D: case Opcode::JMP_IF_NE_D:
+        case Opcode::JMP_IF_LT_D: case Opcode::JMP_IF_LE_D:
+        case Opcode::JMP_IF_GT_D: case Opcode::JMP_IF_GE_D:
+        case Opcode::JMP_IF_EQ_D_RK: case Opcode::JMP_IF_NE_D_RK:
+        case Opcode::JMP_IF_LT_D_RK: case Opcode::JMP_IF_LE_D_RK:
+        case Opcode::JMP_IF_GT_D_RK: case Opcode::JMP_IF_GE_D_RK:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // Constant pool value
 struct BCConstant {
     enum Type : u8 {

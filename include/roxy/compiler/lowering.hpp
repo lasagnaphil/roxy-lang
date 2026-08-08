@@ -64,6 +64,12 @@ private:
     u8 bump_register();  // Allocate next fresh register with bounds check
     // Insert a register into the active set, sorted by last_use (expiry order).
     void insert_active(u8 reg, u32 last_use);
+    // Allocate a contiguous multi-register value (weak refs, register-resident
+    // small structs) at the frame top: bump every register, map each one to
+    // the owner (so the spill picker recognizes and skips the whole group),
+    // and insert each into the active set (so they expire normally and
+    // reserve_call_window's live floor sees them).
+    void allocate_multi_register_value(ValueId value, u32 reg_count);
     // True if the value is produced by a Call/CallNative/CallExternal/
     // CallIndirect — such values are never spillable (the call's argument
     // window is anchored at the result register).
@@ -130,6 +136,12 @@ private:
     // and return true. Otherwise emit nothing and return false (caller falls
     // back to the non-RK encoding).
     bool try_emit_rk_binary(IRInst* inst, u8 dst);
+
+    // If `inst` is a comparison whose SSA result is live past this block's
+    // terminator, record its PC in m_unfusable_cmp_pcs so fuse_compare_branch
+    // keeps the register write a later block reads. Shared by the RK and
+    // non-RK emission paths; marks every comparison family, fusable or not.
+    void mark_unfusable_if_cross_block(IRInst* inst, u32 cmp_pc);
 
     // Block lowering
     void lower_instruction(IRInst* inst);

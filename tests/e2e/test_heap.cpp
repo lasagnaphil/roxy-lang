@@ -605,6 +605,51 @@ TEST_SUITE("E2E Heap") {
         CHECK(result.value == 30);
     }
 
+    TEST_CASE_TEMPLATE("Weak loop-carried block param survives a call in the loop body", Backend, RX_E2E_BACKENDS) {
+        // Regression: a weak-typed block param at a loop header is
+        // pre-allocated at the entry block's terminator
+        // (pre_alloc_target_params). That path used to skip inserting the
+        // param's two registers into the register allocator's active set, so
+        // reserve_call_window — whose placement floor is the highest active
+        // register — treated them as dead space and anchored the call's
+        // dst/arg window on top of them. Every iteration's call then clobbered
+        // the weak's {pointer, generation}, and the read after the call
+        // dereferenced garbage (segfault). Requires `w` to be the LAST
+        // variable modified in the body: block-param order follows body
+        // modification order, and a single-register param allocated above the
+        // weak shields it (single-register params were always in the active
+        // set), masking the bug.
+        //
+        // The reassignment `w = u` also leaks the Owner — a separate,
+        // pre-existing IR-builder bug (the assignment consumes u's cleanup).
+        ExpectedLeak _known;  // see TODO.md: reassigning a weak local from a uniq owner leaks the owner
+        const char* source = R"(
+        struct Owner { val: i32; }
+
+        fun bump(x: i32): i32 {
+            return x + 1;
+        }
+
+        fun main(): i32 {
+            var u: uniq Owner = uniq Owner { val = 5 };
+            var i: i32 = 0;
+            var total: i32 = 0;
+            var w: weak Owner = u;
+            while (i < 3) {
+                total = total + bump(i);
+                total = total + w.val;
+                i = i + 1;
+                w = u;
+            }
+            return total;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 21);  // bump: 1+2+3, w.val: 5*3
+    }
+
     TEST_CASE_TEMPLATE("Weak nil assignment", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point {

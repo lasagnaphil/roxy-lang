@@ -439,13 +439,17 @@ u32 disassemble_instruction(u32 instr, u32 next_word, u32 offset, String& out) {
             break;
         }
 
-        // Format: dst, src, slot_count (struct operations)
+        // Format: [dst, src, slot_count] + [padding] (2-word — the interpreter
+        // skips the padding word, so the disassembly must too or the pad would
+        // print as a bogus instruction)
         case Opcode::STRUCT_LOAD_REGS:
             buf.format("R{}, R{}, slots={}", a, b, c);
+            words_consumed = 2;
             break;
 
         case Opcode::STRUCT_STORE_REGS:
             buf.format("R{}, R{}, slots={}", a, b, c);
+            words_consumed = 2;
             break;
 
         case Opcode::STRUCT_COPY:

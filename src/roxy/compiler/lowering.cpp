@@ -27,6 +27,26 @@ static bool op_may_push_frame(IROp op) {
     }
 }
 
+// Any IR comparison op (signed/unsigned integer, f32, f64). Deliberately
+// broader than the currently fusable set (pick_fused in fuse_compare_branch):
+// marking a compare that never fuses is harmless, and it means adding fused
+// variants for a new family (e.g. unsigned) cannot silently skip the
+// cross-block unfusable guard.
+static bool is_comparison_op(IROp op) {
+    switch (op) {
+        case IROp::EqI: case IROp::NeI:
+        case IROp::LtI: case IROp::LeI: case IROp::GtI: case IROp::GeI:
+        case IROp::LtU: case IROp::LeU: case IROp::GtU: case IROp::GeU:
+        case IROp::EqF: case IROp::NeF:
+        case IROp::LtF: case IROp::LeF: case IROp::GtF: case IROp::GeF:
+        case IROp::EqD: case IROp::NeD:
+        case IROp::LtD: case IROp::LeD: case IROp::GtD: case IROp::GeD:
+            return true;
+        default:
+            return false;
+    }
+}
+
 BytecodeBuilder::BytecodeBuilder()
     : m_current_func(nullptr)
     , m_current_ir_func(nullptr)
@@ -197,19 +217,12 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
             reg_count = static_cast<u8>(get_value_reg_count(param.type));
         }
 
-        // Add parameter to active set so it can expire when no longer used
+        // Add each register used by this parameter to the active set so it
+        // can expire when no longer used
         if (param.value.id < m_live_ranges.size()) {
             u32 last_use = m_live_ranges[param.value.id].last_use_point;
-            // Add each register used by this parameter to the active set
             for (u8 r = 0; r < reg_count; r++) {
-                // Insert into m_active sorted by last_use
-                ActiveAlloc alloc{last_use, static_cast<u8>(param_reg_offset + r)};
-                auto* pos = m_active.find_if([&](const ActiveAlloc& a) { return a.last_use > last_use; });
-                if (pos) {
-                    m_active.insert(pos, alloc);
-                } else {
-                    m_active.push_back(alloc);
-                }
+                insert_active(static_cast<u8>(param_reg_offset + r), last_use);
             }
         }
 
@@ -229,26 +242,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                 if (!has_register(param.value)) {
                     u32 reg_count = get_value_reg_count(param.type);
                     if (reg_count > 1) {
-                        // Multi-register values (weak refs) need bump allocation.
-                        // Map every register to the owner so the spill picker
-                        // recognizes (and skips) the whole group.
-                        u8 reg = bump_register();
-                        m_value_to_reg[param.value.id] = reg;
-                        m_reg_to_value[reg] = param.value.id;
-                        for (u32 r = 1; r < reg_count; r++) {
-                            u8 extra_reg = bump_register();
-                            if (extra_reg != 0xFF) m_reg_to_value[extra_reg] = param.value.id;
-                        }
-                        // Track every register in the active set: they expire
-                        // like any other value, and reserve_call_window's live
-                        // floor must see them or a call window would be placed
-                        // on top of them.
-                        if (param.value.id < m_live_ranges.size()) {
-                            u32 last_use = m_live_ranges[param.value.id].last_use_point;
-                            for (u32 r = 0; r < reg_count; r++) {
-                                insert_active(static_cast<u8>(reg + r), last_use);
-                            }
-                        }
+                        allocate_multi_register_value(param.value, reg_count);
                     } else {
                         allocate_register(param.value);
                     }
@@ -277,28 +271,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                             // together in reserve_call_window below (needs the
                             // per-op arg register count).
                         } else if (reg_count > 1) {
-                            // Multi-register values (weak refs, register-
-                            // resident small structs) must use bump to ensure
-                            // contiguous register allocation. Map every
-                            // register to the owner so the spill picker
-                            // recognizes (and skips) the whole group.
-                            u8 reg = bump_register();
-                            m_value_to_reg[inst->result.id] = reg;
-                            m_reg_to_value[reg] = inst->result.id;
-                            for (u32 r = 1; r < reg_count; r++) {
-                                u8 extra_reg = bump_register();
-                                if (extra_reg != 0xFF) m_reg_to_value[extra_reg] = inst->result.id;
-                            }
-                            // Track every register in the active set: they
-                            // expire like any other value, and
-                            // reserve_call_window's live floor must see them
-                            // or a call window would be placed on top of them.
-                            if (inst->result.id < m_live_ranges.size()) {
-                                u32 last_use = m_live_ranges[inst->result.id].last_use_point;
-                                for (u32 r = 0; r < reg_count; r++) {
-                                    insert_active(static_cast<u8>(reg + r), last_use);
-                                }
-                            }
+                            allocate_multi_register_value(inst->result, reg_count);
                         } else {
                             allocate_register(inst->result);
                         }
@@ -360,10 +333,7 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                     if (!has_register(param.value)) {
                         u32 reg_count = get_value_reg_count(param.type);
                         if (reg_count > 1) {
-                            u8 reg = bump_register();
-                            m_value_to_reg[param.value.id] = reg;
-                            m_reg_to_value[reg] = param.value.id;
-                            for (u32 r = 1; r < reg_count; r++) bump_register();
+                            allocate_multi_register_value(param.value, reg_count);
                         } else {
                             allocate_register(param.value);
                         }
@@ -849,6 +819,27 @@ void BytecodeBuilder::insert_active(u8 reg, u32 last_use) {
     }
 }
 
+void BytecodeBuilder::allocate_multi_register_value(ValueId value, u32 reg_count) {
+    u8 reg = bump_register();
+    m_value_to_reg[value.id] = reg;
+    m_reg_to_value[reg] = value.id;
+    for (u32 r = 1; r < reg_count; r++) {
+        u8 extra_reg = bump_register();
+        if (extra_reg != 0xFF) m_reg_to_value[extra_reg] = value.id;
+    }
+    // Track every register in the active set: they expire like any other
+    // value, and reserve_call_window's live floor must see them or a call
+    // window would be placed on top of them. (Skipping this for
+    // forward-target block params clobbered a loop-carried weak param when a
+    // call in the loop body reused its "dead-looking" registers.)
+    if (value.id < m_live_ranges.size()) {
+        u32 last_use = m_live_ranges[value.id].last_use_point;
+        for (u32 r = 0; r < reg_count; r++) {
+            insert_active(static_cast<u8>(reg + r), last_use);
+        }
+    }
+}
+
 bool BytecodeBuilder::is_call_result(u32 value_id) const {
     if (!m_current_ir_func || value_id >= m_current_ir_func->values_by_id.size()) return false;
     IRInst* def = m_current_ir_func->values_by_id[value_id];
@@ -981,14 +972,7 @@ u8 BytecodeBuilder::allocate_register(ValueId value) {
     // Block params still get fresh registers (can_reuse = false because they're
     // cross-block), but they ARE freed when dead.
     if (value.id < m_live_ranges.size()) {
-        u32 last_use = m_live_ranges[value.id].last_use_point;
-        ActiveAlloc alloc{last_use, reg};
-        auto* pos = m_active.find_if([&](const ActiveAlloc& a) { return a.last_use > last_use; });
-        if (pos) {
-            m_active.insert(pos, alloc);
-        } else {
-            m_active.push_back(alloc);
-        }
+        insert_active(reg, m_live_ranges[value.id].last_use_point);
     }
 
     return reg;
@@ -1906,17 +1890,16 @@ bool BytecodeBuilder::try_emit_rk_binary(IRInst* inst, u8 dst) {
     u8 left_reg = ensure_in_register(left_id, 0);
     u32 cmp_pc = m_current_func->code.size();
     emit_abc(rk_op, dst, left_reg, static_cast<u8>(pool_idx));
+    mark_unfusable_if_cross_block(inst, cmp_pc);
+    return true;
+}
 
-    // Mark RK comparisons as unfusable when their result outlives this block.
-    // Same reason as the non-RK path: fusion drops the register write.
-    bool is_cmp = (inst->op >= IROp::EqI && inst->op <= IROp::GeU)
-               || (inst->op >= IROp::EqD && inst->op <= IROp::GeD);
-    if (is_cmp && inst->result.is_valid() &&
-        inst->result.id < m_value_same_block.size() &&
-        !m_value_same_block[inst->result.id]) {
+void BytecodeBuilder::mark_unfusable_if_cross_block(IRInst* inst, u32 cmp_pc) {
+    if (!is_comparison_op(inst->op)) return;
+    if (!inst->result.is_valid() || inst->result.id >= m_value_same_block.size()) return;
+    if (!m_value_same_block[inst->result.id]) {
         m_unfusable_cmp_pcs.insert(cmp_pc);
     }
-    return true;
 }
 
 void BytecodeBuilder::emit(u32 instr) {
@@ -1987,7 +1970,17 @@ void BytecodeBuilder::emit_small_struct_return_unpack(u8 dst, u32 ret_slot_count
     u32 stack_offset = m_next_stack_slot;
     m_next_stack_slot += ret_slot_count;
 
-    u8 temp_reg = bump_register();
+    // Scratch register for the stack address: the first window slot above the
+    // packed return slots. It is inside the call's reserved window —
+    // reserve_call_window sized it with extra_regs_for_return >= 1 exactly
+    // when the return is a small struct — and window space above the packed
+    // slots is transient argument space, dead once the call has returned; any
+    // SSA value sharing the register is defined only after this point (the
+    // same ordering argument reserve_call_window itself relies on). The
+    // previous bump_register() here permanently reserved one register PER
+    // CALL SITE, so a few hundred small-struct-returning calls overflowed the
+    // 255-register frame despite low real pressure.
+    u8 temp_reg = static_cast<u8>(dst + (ret_slot_count + 1) / 2);
     emit_abi(Opcode::STACK_ADDR, temp_reg, static_cast<u16>(stack_offset));
     emit_abc(Opcode::STRUCT_STORE_REGS, temp_reg, dst, static_cast<u8>(ret_slot_count));
     emit(0);  // Padding word
@@ -2121,13 +2114,7 @@ void BytecodeBuilder::lower_instruction(IRInst* inst) {
             // Mark compares as unfusable when their SSA result is live past
             // this block's terminator — otherwise fuse_compare_branch would drop the
             // register write that the later block's read depends on.
-            bool is_cmp = (inst->op >= IROp::EqI && inst->op <= IROp::GeI)
-                       || (inst->op >= IROp::EqD && inst->op <= IROp::GeD);
-            if (is_cmp && inst->result.is_valid() &&
-                inst->result.id < m_value_same_block.size() &&
-                !m_value_same_block[inst->result.id]) {
-                m_unfusable_cmp_pcs.insert(cmp_pc);
-            }
+            mark_unfusable_if_cross_block(inst, cmp_pc);
             canonicalize_u32(inst, dst);
             spill_if_needed(inst->result, dst);
             break;
@@ -2640,8 +2627,16 @@ void BytecodeBuilder::emit_block_args(const JumpTarget& target) {
     if (!target.block.is_valid() || target.block.id >= m_current_ir_func->blocks.size()) return;
     IRBlock* target_block = m_current_ir_func->blocks[target.block.id];
 
+    // A jump must pass exactly one argument per target block parameter —
+    // silently truncating to the shorter list would leave the unmatched
+    // params reading whatever their registers happen to hold.
+    if (target.args.size() != target_block->params.size()) {
+        report_error("Internal error: jump argument count does not match target block parameters");
+        return;
+    }
+
     // Emit MOV instructions for each block argument
-    for (u32 i = 0; i < target.args.size() && i < target_block->params.size(); i++) {
+    for (u32 i = 0; i < target.args.size(); i++) {
         u8 src = ensure_in_register(target.args[i].value, 0);
         u8 param_dst = get_result_register(target_block->params[i].value);
 
@@ -2651,9 +2646,9 @@ void BytecodeBuilder::emit_block_args(const JumpTarget& target) {
 
         if (src != param_dst) {
             emit_abc(Opcode::MOV, param_dst, src, 0);
-        }
-        if (reg_count > 1 && (src + 1) != (param_dst + 1)) {
-            emit_abc(Opcode::MOV, param_dst + 1, src + 1, 0);
+            if (reg_count > 1) {
+                emit_abc(Opcode::MOV, static_cast<u8>(param_dst + 1), static_cast<u8>(src + 1), 0);
+            }
         }
         spill_if_needed(target_block->params[i].value, param_dst);
     }
@@ -2864,24 +2859,38 @@ void BytecodeBuilder::fuse_compare_branch() {
         return Opcode::NOP;
     };
 
-    for (u32 i = 0; i + 1 < code.size(); i++) {
+    // Walk instruction-by-instruction, not word-by-word: a two-word
+    // instruction's payload (a CALL's function index, a GET_FIELD slot offset,
+    // a padding word) must never be decoded as an opcode — a payload whose top
+    // byte happened to match a compare opcode would get fused into garbage.
+    u32 i = 0;
+    while (i + 1 < code.size()) {
         Opcode cmp_op = decode_opcode(code[i]);
+        if (is_two_word_instruction(cmp_op)) {
+            i += 2;
+            continue;
+        }
         Opcode jmp_op = decode_opcode(code[i + 1]);
 
-        if (jmp_op != Opcode::JMP_IF_NOT && jmp_op != Opcode::JMP_IF) continue;
-
-        Opcode fused_op = pick_fused(cmp_op, jmp_op == Opcode::JMP_IF_NOT);
-        if (fused_op == Opcode::NOP) continue;
+        Opcode fused_op = (jmp_op == Opcode::JMP_IF_NOT || jmp_op == Opcode::JMP_IF)
+            ? pick_fused(cmp_op, jmp_op == Opcode::JMP_IF_NOT)
+            : Opcode::NOP;
 
         // Skip compares whose result is used beyond this block's terminator.
         // Fusion drops the compare's register write, so a cross-block read would
         // get stale/uninitialized bytes.
-        if (m_unfusable_cmp_pcs.count(i)) continue;
+        if (fused_op == Opcode::NOP || m_unfusable_cmp_pcs.count(i)) {
+            i++;
+            continue;
+        }
 
         // The comparison destination must match the branch condition register
         u8 cmp_dst = decode_a(code[i]);
         u8 jmp_reg = decode_a(code[i + 1]);
-        if (cmp_dst != jmp_reg) continue;
+        if (cmp_dst != jmp_reg) {
+            i++;
+            continue;
+        }
 
         u8 src1 = decode_b(code[i]);
         u8 src2 = decode_c(code[i]);  // register or RK constant index
@@ -2892,7 +2901,7 @@ void BytecodeBuilder::fuse_compare_branch() {
         code[i + 1] = static_cast<u32>(static_cast<i32>(offset));
 
         // Skip past the fused pair
-        i++;
+        i += 2;
     }
 }
 
