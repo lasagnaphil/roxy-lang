@@ -561,4 +561,46 @@ TEST_SUITE("E2E Lifetime Regressions") {
         vm_destroy(&vm);
         delete module;
     }
+
+    // Finding 10 (2026-08-08) — FIXED. Reassigning a `weak` (or `ref`) local
+    // from a `uniq` owner went through gen_assign_local's move path, which
+    // gated only on the RHS type being noncopyable. `w = u` therefore behaved
+    // as a full move of `u`: its SSA binding was nulled (a later `u.val` read
+    // dereferenced const_null — segfault) and its scope-exit Delete was
+    // skipped (the Owner leaked, caught by the teardown census). No ownership
+    // actually transfers — maybe_wrap_weak snapshots, a ref re-borrows. The
+    // move now also requires the *target* type to be noncopyable, the same
+    // gate the field/index/inout/global assignment paths already applied
+    // ("not for weak ref fields"). Both backends: the bug lived in the shared
+    // IR builder.
+    TEST_CASE_TEMPLATE("F10 weak/ref reassignment from a uniq is a snapshot, not a move",
+                       Backend, RX_E2E_BACKENDS) {
+        const char* weak_reassign = R"(
+        struct Owner { val: i32; }
+        fun main(): i32 {
+            var u: uniq Owner = uniq Owner { val = 5 };
+            var w: weak Owner = u;
+            w = u;
+            return u.val + w.val;
+        }
+        )";
+        auto weak_result = Backend::run(weak_reassign);
+        CHECK(weak_result.success);
+        CHECK(weak_result.value == 10);
+        // (The harness's teardown census covers the leak half: u's scope-exit
+        // Delete must still run.)
+
+        const char* ref_reassign = R"(
+        struct Owner { val: i32; }
+        fun main(): i32 {
+            var u: uniq Owner = uniq Owner { val = 3 };
+            var r: ref Owner = u;
+            r = u;
+            return r.val + u.val;
+        }
+        )";
+        auto ref_result = Backend::run(ref_reassign);
+        CHECK(ref_result.success);
+        CHECK(ref_result.value == 6);
+    }
 }

@@ -619,10 +619,6 @@ TEST_SUITE("E2E Heap") {
         // modification order, and a single-register param allocated above the
         // weak shields it (single-register params were always in the active
         // set), masking the bug.
-        //
-        // The reassignment `w = u` also leaks the Owner — a separate,
-        // pre-existing IR-builder bug (the assignment consumes u's cleanup).
-        ExpectedLeak _known;  // see TODO.md: reassigning a weak local from a uniq owner leaks the owner
         const char* source = R"(
         struct Owner { val: i32; }
 

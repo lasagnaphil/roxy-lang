@@ -10,19 +10,7 @@ Last updated: 2026-08-08
 
 ## High Priority
 
-- [ ] **Reassigning a `weak` local from a `uniq` owner leaks the owner**:
-  `var w: weak Owner = u; w = u;` — the *initialization* is fine, but the
-  *reassignment* consumes `u`'s cleanup (its scope-exit Delete is truncated
-  away), so the owner is never deleted: 1 object alive at teardown. A
-  loop-carried weak (`w = u;` inside a `while`) hits the same path. This is an
-  IR-builder lifetime issue (the assignment path apparently treats the uniq
-  RHS as moved), not a lowering one — it reproduces on builds predating the
-  2026-08-08 lowering fixes. Found while pinning the multi-register
-  block-param clobber; the pin ("Weak loop-carried block param survives a call
-  in the loop body" in `tests/e2e/test_heap.cpp`) opts out with an
-  `ExpectedLeak` naming this entry.
-
-*(Otherwise clear — the teardown leak check added 2026-08-02 (`roxy --check-leaks`; the
+*(empty — the teardown leak check added 2026-08-02 (`roxy --check-leaks`; the
 E2E harness asserts it on every program it runs) surfaced a family of
 exception-unwind leaks that is now fully fixed: `examples/lox/test.roxy` runs
 at **0 live objects** at teardown, from 293 on 2026-08-02. The last one — a
@@ -34,7 +22,7 @@ emitting extension records for covered runs outside the main interval; see
 `docs/internals/lifetimes.md` → "What the flip exposed in the unwind path" and
 the tail of `tests/e2e/test_exceptions.cpp`.)*
 
-*The point worth keeping from how these were found: twenty-one further bugs were
+*The point worth keeping from how these were found: twenty-two further bugs were
 fixed here — five in coroutines, three in destructor chaining, two `ref`-counting
 holes, one in operator parsing (all 2026-08-02), and on 2026-08-08 a caught
 exception leaked by a coroutine destroyed while suspended inside its `catch`, an
@@ -48,7 +36,10 @@ from the last block *created* rather than the block emission was last in, and a
 local reassigned in a branch whose record still named its pre-merge register, and
 a cleanup record whose end block the optimizer dropped as unreachable and whose
 range therefore collapsed onto the entry block, and a throwing branch laid out
-past the scope's normal exit that no single-interval record could cover —
+past the scope's normal exit that no single-interval record could cover, and a
+`weak`/`ref` local reassigned from a `uniq` owner that was wrongly treated as a
+move of the owner (later reads dereferenced null, and the skipped scope-exit
+Delete leaked it; `tests/e2e/test_lifetime_regressions.cpp` F10) —
 and every one of them was invisible to a fully green suite. Nine
 came from compiling `CLAUDE.md`'s example program, which had never been run; it
 now compiles and runs verbatim. Per-bug records are in this file's git history.*

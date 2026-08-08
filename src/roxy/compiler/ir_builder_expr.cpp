@@ -2870,10 +2870,17 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
     }
 
     // Move semantics: if value is a noncopyable identifier, mark source as moved.
+    // Only when the target type also has move semantics — the same gate the
+    // field/index/inout/global assignment paths apply. Assigning a uniq into a
+    // `weak` target snapshots it (maybe_wrap_weak above); no ownership moves, so
+    // the source must keep its SSA value and its scope-exit cleanup. Gating on
+    // the RHS type alone SSA-nulled the owner at `w = u` (a later `u.val` read
+    // dereferenced const_null) and skipped its destroy (the object leaked).
     // Unlike field assignment, we pass nullify_record=false: the target variable now
     // shares the same SSA value/register as the source, so emitting a Nullify on that
     // register would corrupt the target. The SSA null-out of the source still happens.
-    if (assign_expr.value->kind == AstKind::ExprIdentifier) {
+    bool target_takes_ownership = target_type && target_type->noncopyable();
+    if (target_takes_ownership && assign_expr.value->kind == AstKind::ExprIdentifier) {
         Type* value_type = assign_expr.value->resolved_type;
         if (value_type && value_type->noncopyable()) {
             mark_moved_from(assign_expr.value->identifier.name, /*null_ssa=*/true,
@@ -2881,7 +2888,8 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
         }
     }
     // `y = o.field`: null the moved-out source field in its root.
-    if (assign_expr.value->resolved_type && assign_expr.value->resolved_type->noncopyable()) {
+    if (target_takes_ownership &&
+        assign_expr.value->resolved_type && assign_expr.value->resolved_type->noncopyable()) {
         nullify_moved_field_source(assign_expr.value);
     }
 
