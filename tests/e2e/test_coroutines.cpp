@@ -752,20 +752,13 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output == "1\n");
     }
 
-    // VM-only: C backend: the conflated field is emitted with the first
-    // binding's type, so the second binding's store is a hard C++ type error
-    // ("assigning to 'MyErr *' from 'int32_t'"). That is the same conflation bug
-    // this case pins, caught by the C compiler instead of tolerated by the VM's
-    // untyped slots — see TODO.md, "coroutine promotion conflates same-named
-    // locals".
-    TEST_CASE("Catch param sharing a name with a later local is left alone") {
-        // Promotion keys state fields by NAME, so this `e` and the catch's `e`
-        // — disjoint scopes, different types — share one field. Freeing that
-        // field as the exception would free an i32, so the destructor leaves a
-        // name-conflated field alone and the exception leaks instead. The leak
-        // is the deliberate fallback; the crash it replaces is not.
-        ExpectedLeak known_leak;
-
+    TEST_CASE_TEMPLATE("Catch param sharing a name with a later local keeps its own field",
+                       Backend, RX_E2E_BACKENDS) {
+        // Two `e`s in disjoint scopes at different types. Promoted state fields
+        // are keyed by (name, type), so they get a field each and the
+        // destructor still knows which one holds the exception — it is reached
+        // by field name, not by source name. When the key was the name alone,
+        // the catch cleanup had to detect the conflation and skip, leaking.
         const char* source = R"(
         struct MyErr {
             val: i32;
@@ -791,9 +784,44 @@ TEST_SUITE("E2E Coroutines") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "7\n");
+    }
+
+    // The conflation with no exceptions in sight: two `x`es in disjoint scopes,
+    // an i32 and a 4-slot struct. Sharing one field sized for the first meant
+    // the struct's stores ran off its end — SIGSEGV on the VM, and a C++ type
+    // error in the generated C, which is why this now runs on both backends.
+    TEST_CASE_TEMPLATE("Same-named locals in disjoint scopes get separate state fields",
+                       Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Big { a: i32 = 0; b: i32 = 0; c: i32 = 0; d: i32 = 0; }
+
+        fun gen(): Coro<i32> {
+            if (true) {
+                var x: i32 = 1;
+                yield x;
+            }
+            if (true) {
+                var x: Big = Big { a = 10, b = 20, c = 30, d = 40 };
+                yield x.a;
+                yield x.d;
+            }
+        }
+
+        fun main(): i32 {
+            var g = gen();
+            print(g.resume());
+            print(g.resume());
+            print(g.resume());
+            return 0;
+        }
+    )";
+
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n10\n40\n");
     }
 
     TEST_CASE_TEMPLATE("Coroutine yield in try with loop", Backend, RX_E2E_BACKENDS) {

@@ -39,6 +39,11 @@ static StringView alloc_string_fmt(BumpAllocator& allocator, const char* fmt, St
     return format_to_arena(allocator, runtime(fmt), arg);
 }
 
+static StringView alloc_string_fmt(BumpAllocator& allocator, const char* fmt, u32 a,
+                                   StringView b) {
+    return format_to_arena(allocator, runtime(fmt), a, b);
+}
+
 static constexpr i32 CORO_STATE_DONE = 0x7FFFFFFF;
 
 struct YieldPoint {
@@ -49,11 +54,39 @@ struct YieldPoint {
 };
 
 struct PromotedVar {
-    StringView name;
+    StringView name;        // Source variable name (matches block params)
+    // State-struct field name. Usually the source name; disambiguated when two
+    // variables in DISJOINT scopes share a name at different types, which is
+    // legal (only shadowing is banned) and must not share one field — see
+    // `find_promoted`.
+    StringView field_name;
     Type* type;
     u32 field_slot_offset;
     u32 field_slot_count;
 };
+
+// Promoted variables are identified by (name, type), not by name alone.
+//
+// A name alone conflates two variables that share it in non-overlapping scopes:
+// they landed in one field, sized and typed for whichever the first yield point
+// reached, and the other one's stores went through it — a wild write when the
+// types differed (`var x: i32` in one scope and a struct `x` in the next
+// segfaulted), and silent aliasing when they matched.
+//
+// The type is the discriminator because it is what makes sharing unsound. Two
+// same-typed variables under one name still share a field, which is safe:
+// disjoint scopes are never live at once, so the storage is genuinely reusable.
+using PromotedVarIndex = tsl::robin_map<StringView, Vector<u32>>;
+
+static u32 find_promoted(const Vector<PromotedVar>& promoted_vars,
+                         const PromotedVarIndex& index, StringView name, Type* type) {
+    auto it = index.find(name);
+    if (it == index.end()) return UINT32_MAX;
+    for (u32 candidate : it->second) {
+        if (promoted_vars[candidate].type == type) return candidate;
+    }
+    return UINT32_MAX;
+}
 
 // get_type_slot_count is declared in types.hpp and defined in types.cpp.
 
@@ -222,7 +255,7 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
                                              StringView func_name, TypeCache& types,
                                              IRModule* module,
                                              const Vector<BlockParam>& original_params,
-                                             const tsl::robin_map<StringView, bool>& catch_names) {
+                                             const tsl::robin_map<StringView, bool>& catch_field_names) {
     IRFunction* dtor_func = allocator.emplace<IRFunction>();
     StringView dtor_name = alloc_string_fmt(allocator, "__coro_{}$$delete", func_name);
     dtor_func->name = dtor_name;
@@ -234,15 +267,10 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
     // at destroy (a ref local nulls its field when released on the resume path —
     // see the Nullify→SetField pass in coroutine_lower). The one exception is a
     // catch param `e`, which is not counted and gets an *owning* cleanup instead
-    // (see the catch arm below). `catch_names` maps those names to whether the
-    // field is unambiguously the exception; a false entry is a name-conflated
-    // field (see the caller) that must be left alone entirely.
+    // (see the catch arm below). `catch_field_names` holds those FIELD names,
+    // resolved by the caller through the (name, type) promotion index.
     auto is_catch_param_field = [&](StringView name) -> bool {
-        return catch_names.count(name) != 0;
-    };
-    auto owns_caught_exception = [&](StringView name) -> bool {
-        auto it = catch_names.find(name);
-        return it != catch_names.end() && it->second;
+        return catch_field_names.count(name) != 0;
     };
 
     // Single parameter: self: ref<__coro_*>
@@ -277,7 +305,10 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
         // type would release a count nobody took for the first, and skip the
         // object entirely for the second (its drop plan is None), which is
         // exactly how an undrained coroutine came to leak its caught exception.
-        if (is_catch_param_field(field.name) && !owns_caught_exception(field.name)) continue;
+        //
+        // Reached by FIELD name, so a local sharing the catch variable's name in
+        // a disjoint scope — a separate promoted var with a field of its own —
+        // is never mistaken for the exception.
         bool is_catch_field = is_catch_param_field(field.name);
 
         // Which fields need cleanup is otherwise the shared, non-recursive
@@ -552,8 +583,11 @@ struct BlockParamAnalysis {
 
 static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
                             const Vector<PromotedVar>& promoted_vars,
-                            const tsl::robin_map<StringView, u32>& promoted_var_index,
+                            const PromotedVarIndex& promoted_var_index,
                             ValueId self_val, Type* ref_struct_type) {
+    auto promoted_of = [&](const BlockParam& param) -> u32 {
+        return find_promoted(promoted_vars, promoted_var_index, param.name, param.type);
+    };
     // Build set of exception param (block_id, param_index) pairs.
     // These are catch block parameters set by VM exception dispatch and must NOT
     // be treated as promoted vars (even if the name collides).
@@ -592,19 +626,20 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
     // 5b. Collect ALL original ValueIds for each promoted var
     // (from function params and block params across all blocks)
     // Skip exception params — they are set by the VM, not by SSA data flow.
-    tsl::robin_map<StringView, Vector<u32>> all_promoted_value_ids;
+    // Keyed by promoted-var INDEX, not name: same-named variables at different
+    // types are different promoted vars and must not pool their value ids.
+    Vector<Vector<u32>> all_promoted_value_ids(promoted_vars.size());
     for (auto& param : old_params) {
-        if (promoted_var_index.count(param.name)) {
-            all_promoted_value_ids[param.name].push_back(param.value.id);
-        }
+        u32 pv_idx = promoted_of(param);
+        if (pv_idx != UINT32_MAX) all_promoted_value_ids[pv_idx].push_back(param.value.id);
     }
     for (u32 block_idx = 0; block_idx < func->blocks.size(); block_idx++) {
         IRBlock* block = func->blocks[block_idx];
         for (u32 param_idx = 0; param_idx < block->params.size(); param_idx++) {
             if (is_exception_param(block_idx, param_idx)) continue;
-            if (promoted_var_index.count(block->params[param_idx].name)) {
-                all_promoted_value_ids[block->params[param_idx].name].push_back(
-                    block->params[param_idx].value.id);
+            u32 pv_idx = promoted_of(block->params[param_idx]);
+            if (pv_idx != UINT32_MAX) {
+                all_promoted_value_ids[pv_idx].push_back(block->params[param_idx].value.id);
             }
         }
     }
@@ -619,7 +654,7 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
         for (u32 i = 0; i < block->params.size(); i++) {
             if (is_exception_param(block_idx, i)) {
                 analysis.non_promoted_indices.push_back(i);
-            } else if (promoted_var_index.count(block->params[i].name)) {
+            } else if (promoted_of(block->params[i]) != UINT32_MAX) {
                 analysis.promoted_indices.push_back(i);
             } else {
                 analysis.non_promoted_indices.push_back(i);
@@ -648,15 +683,15 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
 
         if (exception_param_block_ids.count(block_idx) && !block->params.empty()) {
             BlockParam& exc_param = block->params[0];
-            auto pv_it = promoted_var_index.find(exc_param.name);
-            if (pv_it != promoted_var_index.end()) {
-                const PromotedVar& pv = promoted_vars[pv_it->second];
+            u32 pv_idx = promoted_of(exc_param);
+            if (pv_idx != UINT32_MAX) {
+                const PromotedVar& pv = promoted_vars[pv_idx];
                 IRInst* store_inst = allocator.emplace<IRInst>();
                 store_inst->op = IROp::SetField;
                 store_inst->type = pv.type;
                 store_inst->result = func->new_value_for(store_inst);
                 store_inst->field.object = self_val;
-                store_inst->field.field_name = pv.name;
+                store_inst->field.field_name = pv.field_name;
                 store_inst->field.slot_offset = pv.field_slot_offset;
                 store_inst->field.slot_count = pv.field_slot_count;
                 store_inst->store_value = exc_param.value;
@@ -682,18 +717,15 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
             inst->type = pv.type;
             inst->result = func->new_value_for(inst);
             inst->field.object = self_val;
-            inst->field.field_name = pv.name;
+            inst->field.field_name = pv.field_name;
             inst->field.slot_offset = pv.field_slot_offset;
             inst->field.slot_count = pv.field_slot_count;
             prepend_insts.push_back(inst);
             block_accessors[block_idx][pv_idx] = inst->result;
 
             // Map ALL original ValueIds for this promoted var to this block's load
-            auto it = all_promoted_value_ids.find(pv.name);
-            if (it != all_promoted_value_ids.end()) {
-                for (u32 vid : it->second) {
-                    local_remap[vid] = inst->result;
-                }
+            for (u32 vid : all_promoted_value_ids[pv_idx]) {
+                local_remap[vid] = inst->result;
             }
         }
 
@@ -728,9 +760,10 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
             // Insert SetField for each promoted arg (values already remapped in 5d)
             for (u32 pi : target_analysis.promoted_indices) {
                 const BlockParam& param = target_analysis.original_params[pi];
-                auto pv_it = promoted_var_index.find(param.name);
-                assert(pv_it != promoted_var_index.end());
-                const PromotedVar& pv = promoted_vars[pv_it->second];
+                u32 pv_idx = find_promoted(promoted_vars, promoted_var_index,
+                                           param.name, param.type);
+                assert(pv_idx != UINT32_MAX);
+                const PromotedVar& pv = promoted_vars[pv_idx];
                 ValueId arg_value = target.args[pi].value;
 
                 // Nothing to write back when the value leaving this block is the
@@ -740,7 +773,7 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
                 // — without the check, every iteration re-stored the field onto
                 // itself.
                 ValueId block_accessor = block_idx < block_accessors.size()
-                                             ? block_accessors[block_idx][pv_it->second]
+                                             ? block_accessors[block_idx][pv_idx]
                                              : ValueId::invalid();
                 if (arg_value == block_accessor) continue;
 
@@ -752,12 +785,12 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
                 // so the copy is what populates the state.
                 if (is_inline_struct_var(pv.type)) {
                     emit_set_struct_field(allocator, func, block, self_val,
-                                          pv.name, pv.field_slot_offset, pv.field_slot_count,
-                                          arg_value, pv.type);
+                                          pv.field_name, pv.field_slot_offset,
+                                          pv.field_slot_count, arg_value, pv.type);
                     continue;
                 }
 
-                emit_set_field(allocator, func, block, self_val, pv.name,
+                emit_set_field(allocator, func, block, self_val, pv.field_name,
                                pv.field_slot_offset, pv.field_slot_count, arg_value, pv.type);
             }
 
@@ -945,7 +978,7 @@ static void phase2_split(IRFunction* func, BumpAllocator& allocator,
         for (const auto& pv : promoted_vars) {
             if (pv.type->is_copy()) continue;
             clear_owned_state_field(allocator, func, block, self_val, types,
-                                    pv.name, pv.type,
+                                    pv.field_name, pv.type,
                                     pv.field_slot_offset, pv.field_slot_count);
         }
 
@@ -1056,22 +1089,35 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
         }
     }
 
-    // Step 2: Identify promoted variables from resume block parameters
+    // Step 2: Identify promoted variables from resume block parameters.
+    // Keyed by (name, type) — see `find_promoted` for why the type belongs in
+    // the key. The FIRST variable under a name keeps it as its field name, so
+    // the common case reads naturally in dumps and in generated C; a later
+    // same-named variable at a different type gets a reserved-namespace field
+    // name instead (`__pv<n>_<name>`, matching the `__resume_idx`/`__state`
+    // convention), because two struct fields cannot share one name.
     Vector<PromotedVar> promoted_vars;
-    tsl::robin_map<StringView, u32> promoted_var_index;
+    PromotedVarIndex promoted_var_index;
 
     for (auto& yp : yield_points) {
         IRBlock* resume_block = original->blocks[yp.resume_block_id.id];
         for (auto& param : resume_block->params) {
-            if (promoted_var_index.find(param.name) == promoted_var_index.end()) {
-                PromotedVar pv;
-                pv.name = param.name;
-                pv.type = param.type;
-                pv.field_slot_offset = 0;
-                pv.field_slot_count = get_type_slot_count(param.type);
-                promoted_var_index[param.name] = static_cast<u32>(promoted_vars.size());
-                promoted_vars.push_back(pv);
+            if (find_promoted(promoted_vars, promoted_var_index,
+                              param.name, param.type) != UINT32_MAX) {
+                continue;
             }
+            u32 pv_idx = static_cast<u32>(promoted_vars.size());
+            Vector<u32>& same_name = promoted_var_index[param.name];
+            PromotedVar pv;
+            pv.name = param.name;
+            pv.field_name = same_name.empty()
+                ? param.name
+                : alloc_string_fmt(allocator, "__pv{}_{}", pv_idx, param.name);
+            pv.type = param.type;
+            pv.field_slot_offset = 0;
+            pv.field_slot_count = get_type_slot_count(param.type);
+            same_name.push_back(pv_idx);
+            promoted_vars.push_back(pv);
         }
     }
 
@@ -1144,12 +1190,17 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
         fields.push_back(field);
     }
 
-    // Promoted locals (skip those that share a name with a param)
+    // Promoted locals that ARE parameters reuse the parameter's field rather
+    // than getting one of their own. Matched on name AND type, like every other
+    // promoted-var lookup: a local sharing a parameter's name at a different
+    // type is a different variable and needs its own field.
     for (u32 i = 0; i < promoted_vars.size(); i++) {
         bool is_param = false;
         for (u32 p = 0; p < num_params; p++) {
-            if (original->params[p].name == promoted_vars[i].name) {
+            if (original->params[p].name == promoted_vars[i].name &&
+                original->params[p].type == promoted_vars[i].type) {
                 promoted_vars[i].field_slot_offset = fields[first_param_field + p].slot_offset;
+                promoted_vars[i].field_name = fields[first_param_field + p].name;
                 is_param = true;
                 break;
             }
@@ -1158,7 +1209,7 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
 
         promoted_vars[i].field_slot_offset = current_slot;
         FieldInfo field;
-        field.name = promoted_vars[i].name;
+        field.name = promoted_vars[i].field_name;
         field.type = promoted_vars[i].type;
         field.is_pub = false;
         field.index = static_cast<u32>(fields.size());
@@ -1297,46 +1348,30 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
     // a load of __state (fixed slot 1) compared against CORO_STATE_DONE, so it
     // needs no dispatch and works uniformly on erased Coro<T> values.
 
-    // Catch-clause variable names: a promoted catch param is a state field set by
-    // exception dispatch, not a counted borrow, so the destructor must not RefDec
-    // it (unlike ref params and ref locals) — it frees it instead, since the catch
-    // binding owns the caught object. Collect the handler blocks' exception-param
-    // names, mapped to whether that field is unambiguously the exception (below).
-    tsl::robin_map<StringView, bool> catch_names;
-    tsl::robin_map<StringView, Type*> catch_param_types;
+    // Catch-clause exception fields: a promoted catch param is a state field set
+    // by exception dispatch, not a counted borrow, so the destructor must not
+    // RefDec it (unlike ref params and ref locals) — it frees it instead, since
+    // the catch binding owns the caught object.
+    //
+    // Collected as FIELD names, resolved through the (name, type) index: a local
+    // sharing the catch variable's name in a disjoint scope is a different
+    // promoted var with a field of its own, and must not be mistaken for the
+    // exception.
+    tsl::robin_map<StringView, bool> catch_field_names;
     for (auto& handler : original->exception_handlers) {
-        if (handler.handler_block.id < original->blocks.size()) {
-            IRBlock* hb = original->blocks[handler.handler_block.id];
-            if (!hb->params.empty()) {
-                catch_names[hb->params[0].name] = true;
-                catch_param_types[hb->params[0].name] = hb->params[0].type;
-            }
-        }
-    }
-
-    // Promotion is keyed by variable NAME (Step 2 above), so a catch param and an
-    // unrelated local in a *disjoint* scope that happen to share a name land in
-    // the same state field — see TODO.md, "coroutine promotion conflates
-    // same-named locals in disjoint scopes", which is a live bug in its own right
-    // (it already crashes without any catch involved). Such a field holds
-    // whichever binding wrote last, so freeing it as the exception could free an
-    // `i32`. Detect the conflation by type disagreement — the other binding
-    // necessarily reaches some block param under the same name with a different
-    // type — and fall back to leaving the field alone, which is what this
-    // destructor did for every catch param before it learned to free them. A leak
-    // in a shape that is already miscompiled beats a wild free.
-    for (auto* block : original->blocks) {
-        for (const auto& bp : block->params) {
-            auto type_it = catch_param_types.find(bp.name);
-            if (type_it == catch_param_types.end()) continue;
-            if (bp.type != type_it->second) catch_names[bp.name] = false;
-        }
+        if (handler.handler_block.id >= original->blocks.size()) continue;
+        IRBlock* hb = original->blocks[handler.handler_block.id];
+        if (hb->params.empty()) continue;
+        u32 pv_idx = find_promoted(promoted_vars, promoted_var_index,
+                                   hb->params[0].name, hb->params[0].type);
+        catch_field_names[pv_idx != UINT32_MAX ? promoted_vars[pv_idx].field_name
+                                               : hb->params[0].name] = true;
     }
 
     // ===== Generate destructor function =====
     IRFunction* dtor_func = generate_coro_destructor(allocator, struct_type,
                                                       original->name, types, module,
-                                                      original->params, catch_names);
+                                                      original->params, catch_field_names);
 
     // ===== Transform original into resume function =====
     ValueId self_val = original->new_value();
@@ -1370,14 +1405,10 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
     {
         tsl::robin_map<StringView, IROp> clear_after;
         for (const auto& pv : promoted_vars) {
-            auto catch_it = catch_names.find(pv.name);
-            if (catch_it != catch_names.end()) {
-                // Only an unambiguously-owned exception field is cleared; a
-                // name-conflated one is not freed by `$$delete` either, so
-                // clearing it would only hide the conflation.
-                if (catch_it->second) clear_after[pv.name] = IROp::Delete;
+            if (catch_field_names.count(pv.field_name)) {
+                clear_after[pv.field_name] = IROp::Delete;
             } else if (pv.type && pv.type->kind == TypeKind::Ref) {
-                clear_after[pv.name] = IROp::RefDec;
+                clear_after[pv.field_name] = IROp::RefDec;
             }
         }
         if (!clear_after.empty()) {

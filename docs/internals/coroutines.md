@@ -62,7 +62,7 @@ Both dispatch dynamically, so a coroutine value is **first-class** — passable,
 
 `coroutine_lower()` runs after IR generation and before bytecode lowering, transforming each coroutine into three ordinary functions.
 
-It first finds every `Yield` (each block ends in a `Goto` to its resume block) and derives the **promoted variables** from the resume blocks' parameters — the locals that must survive across yields, deduplicated. It then synthesizes a struct `__coro_<func>` holding the state machine:
+It first finds every `Yield` (each block ends in a `Goto` to its resume block) and derives the **promoted variables** from the resume blocks' parameters — the locals that must survive across yields, deduplicated by **(name, type)**. It then synthesizes a struct `__coro_<func>` holding the state machine:
 
 | Field | Type | Slot | Purpose |
 |-------|------|------|---------|
@@ -170,8 +170,20 @@ remove (`StructCopy` has side effects; `GetFieldAddr` is not CSE-eligible).
 
 ### Which values a promoted variable owns
 
-Promotion finds a variable by *name*, from the resume block's parameters, and
-then redirects every SSA value that variable is spelled as onto the state field.
+Promotion finds a variable by *(name, type)*, from the resume block's parameters,
+and then redirects every SSA value that variable is spelled as onto the state
+field.
+
+The type belongs in that key. Two locals may share a name in **disjoint** scopes
+— only shadowing is banned — and keying on the name alone gave both one field,
+sized and typed for whichever the first yield point reached. An `i32` `x` in one
+scope and a four-slot struct `x` in the next therefore wrote through a one-slot
+field: SIGSEGV on the VM, and a hard type error in the generated C. Same-named
+locals at the *same* type still share a field, which is sound — disjoint scopes
+are never live at once, so the storage really is reusable — and it is only the
+type disagreement that makes sharing unsafe. The first variable under a name
+keeps it as its field name; a later one takes a reserved `__pv<n>_<name>`, since
+two struct fields cannot share a name.
 It collects those values from block parameters — and it is right to, because
 **being a block parameter is a precondition the IR builder establishes**, not
 something the pass infers.
@@ -256,12 +268,8 @@ as owning: a typed catch frees as `uniq E` so `fun delete E` runs, a catch-all
 frees type-erased. Deciding it from the type instead is why a coroutine
 suspended inside a catch used to leak its exception.
 
-One guard on that: promoted fields are keyed by *name*, so a catch param and an
-unrelated local in a disjoint scope that share a name share a field. `$$delete`
-detects the conflation (some block param binds that name at a different type) and
-falls back to leaving the field alone — the exception leaks, as it did before,
-rather than an `i32` being freed as an object. The conflation itself is a
-separate live bug; see `TODO.md`.
+The destructor reaches it by *field* name, which is what keeps it distinct from
+an unrelated local that happens to share the source name (below).
 
 `out`/`inout` parameters are second-class ([lifetimes.md](lifetimes.md), "The
 second-class family"): they flow downward and may never be stored. Since a
