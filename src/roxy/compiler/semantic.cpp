@@ -1914,6 +1914,16 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
     for (u32 i = 0; i < params.size(); i++) {
         Param& p = params[i];
         Type* ptype = resolve_type_expr(p.type);
+        // Publish the resolved type on the Param, exactly as the free-function
+        // path does (`analyze_fun_decl`). The IR builder prefers
+        // `Param::resolved_type` and falls back to `type_by_name(p.type->name)`,
+        // and that fallback cannot resolve a GENERIC annotation — the name is
+        // bare `List`/`Map`. Leaving it null therefore gave every by-value
+        // container parameter of a method an unusable type, so
+        // `param_owns_its_value` said "copyable, not owned" and the moved-in
+        // container was never destroyed. Named types resolved fine through the
+        // fallback, which is why only the generic case leaked.
+        p.resolved_type = ptype;
 
         if (m_symbols.lookup_local(p.name)) {
             error_fmt(p.loc, "duplicate parameter name '{}'", p.name);

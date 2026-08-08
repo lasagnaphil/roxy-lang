@@ -840,6 +840,21 @@ compile error:
 | `Moved` | ownership transferred — use is an error |
 | `MaybeValid` | conditionally moved (e.g. moved in one `if` branch only) |
 
+**Who destroys a `MaybeValid` value.** Rejecting every later *read* is what makes
+this answerable without a runtime drop flag: the value is dead at the merge no
+matter which path ran, so the branches that did **not** move it destroy it where
+they leave (`IRBuilder::reconcile_divergent_moves`). Its lifetime therefore ends
+at the branch construct rather than at scope exit — an early drop, never a
+missing or a doubled one.
+
+The merge cannot instead pick one answer for the shared move flag, because
+either choice is wrong for half of its predecessors: "moved" leaks on the paths
+that still hold the value, "not moved" double-frees on the paths that already
+gave it away. Both were reachable — a plain `if` took the first and leaked, an
+`if/else if` chain took the second and double-freed. Where the non-moving path
+is an implicit fall-through edge with no block of its own, one is materialized
+to hold the drop.
+
 ### The `borrowed` type modifier
 
 `borrowed T` is a **resolve-time type transform** that demotes an owning type to a

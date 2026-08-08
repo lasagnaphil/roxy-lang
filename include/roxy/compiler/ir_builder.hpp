@@ -389,6 +389,21 @@ private:
     // phis' current values.
     void goto_merge_if_open(IRBlock* merge_block, const Vector<PhiInfo>& phi_info);
 
+    // One surviving path into a merge point: the block whose terminator jumps
+    // there, and the builder state that path ended with. `end_block == nullptr`
+    // marks the implicit fall-through edge of a branch construct with no else /
+    // default — an edge with no block of its own, materialized on demand.
+    struct MergePath {
+        IRBlock* end_block;
+        ScopeSnapshot state;
+    };
+    // Reconcile owned locals that one surviving path moved and another did not.
+    // See the definition for why dropping on the non-moving paths is the whole
+    // fix. Must run AFTER the caller has picked the merge-point state; it
+    // leaves that state in place with the reconciled entries marked moved.
+    void reconcile_divergent_moves(Vector<MergePath>& paths, IRBlock* fallthrough_pred,
+                                   IRBlock* merge_block, const Vector<PhiInfo>& phi_info);
+
     // Statement generation
     void gen_stmt(Stmt* stmt);
     void gen_expr_stmt(Stmt* stmt);

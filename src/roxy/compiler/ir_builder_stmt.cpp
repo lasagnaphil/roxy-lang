@@ -206,6 +206,99 @@ void IRBuilder::goto_merge_if_open(IRBlock* merge_block, const Vector<PhiInfo>& 
     }
 }
 
+void IRBuilder::reconcile_divergent_moves(Vector<MergePath>& paths, IRBlock* fallthrough_pred,
+                                          IRBlock* merge_block,
+                                          const Vector<PhiInfo>& phi_info) {
+    // A value moved on one path into a merge and not on another is *dead* at
+    // the merge either way: semantic analysis rejects every later read of it
+    // ("use of possibly moved value"). So the only open question is who
+    // destroys it — and the answer that needs no runtime drop flag is: the
+    // paths that did NOT move it, at the point they leave.
+    //
+    // Getting this wrong is not a leak in one direction and a leak in the
+    // other. Whichever single answer a merge picks for the shared `is_moved`
+    // flag is wrong for half its predecessors: "moved" leaks on the paths that
+    // still hold the value, "not moved" double-frees on the paths that already
+    // gave it away. Both were reachable before this existed — a plain `if`
+    // leaked, an `if/else if` chain double-freed.
+    if (paths.size() < 2) return;
+
+    // Entries are pushed in declaration order and popped from the back, so a
+    // given index means the same local in every snapshot. Compare only the
+    // prefix all paths captured: anything past it was declared *inside* a
+    // branch and cannot outlive it.
+    u32 common = UINT32_MAX;
+    for (const MergePath& path : paths) {
+        if (!path.state.has_move_state) return;
+        common = std::min(common, static_cast<u32>(path.state.is_moved.size()));
+    }
+    common = std::min(common, m_ownership.count());
+    if (common == 0) return;
+
+    Vector<u32> divergent;
+    for (u32 i = 0; i < common; i++) {
+        bool any_moved = false;
+        bool all_moved = true;
+        for (const MergePath& path : paths) {
+            if (path.state.is_moved[i]) any_moved = true;
+            else all_moved = false;
+        }
+        if (any_moved && !all_moved) divergent.push_back(i);
+    }
+    if (divergent.empty()) return;
+
+    // The caller has already established the merge-point state; restore it when
+    // we're done walking back through the paths.
+    ScopeSnapshot merge_state = snapshot_scopes(/*with_move_state=*/true);
+    IRBlock* merge_state_block = m_current_block;
+
+    for (MergePath& path : paths) {
+        bool needs_drop = false;
+        for (u32 index : divergent) {
+            if (!path.state.is_moved[index]) { needs_drop = true; break; }
+        }
+        if (!needs_drop) continue;
+
+        IRBlock* block = path.end_block;
+        bool materialized = false;
+        if (!block) {
+            // The implicit fall-through edge has no block to drop in. Give it
+            // one and retarget the predecessor's false edge through it; the phi
+            // args move onto the new block's jump, so the new edge carries none.
+            if (!fallthrough_pred ||
+                fallthrough_pred->terminator.kind != TerminatorKind::Branch) {
+                continue;
+            }
+            block = create_block("else_drop");
+            fallthrough_pred->terminator.branch.else_target.block = block->id;
+            fallthrough_pred->terminator.branch.else_target.args = Span<BlockArgPair>();
+            materialized = true;
+        }
+
+        // `emit_implicit_destroy` reads the current SSA binding by name, so the
+        // path's own scope state has to be live while it runs. Instructions
+        // append after the block's terminator was set, which is fine — the
+        // terminator is a separate field, not the last instruction.
+        restore_scopes(path.state, /*restore_move_state=*/true);
+        set_current_block(block);
+        for (i32 k = static_cast<i32>(divergent.size()) - 1; k >= 0; k--) {
+            u32 index = divergent[static_cast<u32>(k)];  // LIFO, as scope cleanup runs
+            if (path.state.is_moved[index]) continue;
+            OwnedLocalInfo& info = m_ownership.entry(index);
+            info.is_moved = false;  // cleared per path; emit_implicit_destroy re-sets it
+            emit_implicit_destroy(info);
+        }
+        if (materialized) {
+            finish_block_goto(merge_block->id, phi_original_args(phi_info));
+        }
+    }
+
+    restore_scopes(merge_state, /*restore_move_state=*/true);
+    set_current_block(merge_state_block);
+    // Every path now either moved the value or just dropped it.
+    for (u32 index : divergent) m_ownership.entry(index).is_moved = true;
+}
+
 void IRBuilder::gen_if_stmt(Stmt* stmt) {
     IfStmt& is = stmt->if_stmt;
 
@@ -232,7 +325,10 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     IRBlock* merge_block = create_block("endif");
     Vector<PhiInfo> phi_info = make_merge_phis(merge_block, modified);
 
-    // Branch based on condition
+    // Branch based on condition. Keep the predecessor: if the branches turn out
+    // to move an owned local divergently, the no-else fall-through edge needs a
+    // block of its own to drop in (reconcile_divergent_moves retargets it).
+    IRBlock* cond_block = m_current_block;
     if (else_block) {
         finish_block_branch(cond, then_block->id, else_block->id);
     } else {
@@ -249,11 +345,19 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     // (Move-restored at most once: the else path and the no-else path below are
     // mutually exclusive.)
     ScopeSnapshot pre_if = snapshot_scopes(/*with_move_state=*/true);
+    // The fall-through edge's state, for move reconciliation: it leaves the if
+    // with exactly the pre-branch bindings. (`pre_if` itself gets move-restored
+    // below, so this is a separate capture rather than a copy of it.)
+    ScopeSnapshot fallthrough_state;
+    if (!else_block) fallthrough_state = snapshot_scopes(/*with_move_state=*/true);
 
     // Generate then branch
     set_current_block(then_block);
     gen_stmt(is.then_branch);
     bool then_terminated = !m_current_block || m_current_block->terminator.kind != TerminatorKind::None;
+    IRBlock* then_end = then_terminated ? nullptr : m_current_block;
+    ScopeSnapshot then_state;
+    if (!then_terminated) then_state = snapshot_scopes(/*with_move_state=*/true);
     goto_merge_if_open(merge_block, phi_info);
 
     // Snapshot post-then state in case the else branch terminates and we need to
@@ -264,6 +368,8 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     }
 
     // Generate else branch
+    IRBlock* else_end = nullptr;
+    ScopeSnapshot else_state;
     bool else_terminated = false;
     if (else_block) {
         // Restore pre-if state so the else branch sees original values
@@ -272,6 +378,8 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
         set_current_block(else_block);
         gen_stmt(is.else_branch);
         else_terminated = !m_current_block || m_current_block->terminator.kind != TerminatorKind::None;
+        else_end = else_terminated ? nullptr : m_current_block;
+        if (!else_terminated) else_state = snapshot_scopes(/*with_move_state=*/true);
         goto_merge_if_open(merge_block, phi_info);
     }
 
@@ -291,6 +399,19 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
         // Current state is post-else, which is correct.
     } else if (else_terminated && !then_terminated) {
         restore_scopes_move(std::move(post_then));
+    }
+
+    // An owned local moved on one surviving path and not another is dropped on
+    // the paths that still hold it (see reconcile_divergent_moves).
+    {
+        Vector<MergePath> paths;
+        if (then_end) paths.push_back({then_end, std::move(then_state)});
+        if (else_block) {
+            if (else_end) paths.push_back({else_end, std::move(else_state)});
+        } else {
+            paths.push_back({nullptr, std::move(fallthrough_state)});
+        }
+        reconcile_divergent_moves(paths, cond_block, merge_block, phi_info);
     }
 
     // Continue with merge block; bind variables to merge params (phi results)
@@ -331,6 +452,10 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
 
     // 3. Save variable + move state ONCE before any branch
     ScopeSnapshot saved = snapshot_scopes(/*with_move_state=*/true);
+    // The all-conditions-false edge leaves with exactly this state; captured
+    // separately (not copied from `saved`, which is restored per branch) for
+    // move reconciliation at the merge.
+    ScopeSnapshot fallthrough_state = snapshot_scopes(/*with_move_state=*/true);
 
     // 4. Create body blocks for each branch + optional default
     Vector<IRBlock*> body_blocks;
@@ -340,6 +465,7 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
     IRBlock* default_block = default_body ? create_block("else") : nullptr;
 
     // 5. Generate comparison chain: evaluate each condition, branch to body or next check
+    IRBlock* chain_fallthrough_pred = nullptr;
     for (u32 i = 0; i < branches.size(); i++) {
         // Each condition gets its own scope, so the temporaries it produces are
         // destroyed here — at the end of the full expression — rather than
@@ -371,6 +497,9 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
 
         // Branch: if condition true, go to body, else check next
         if (fallthrough_block == merge_block) {
+            // No default: this is the edge that reaches the merge without
+            // running any branch, and the one that may need a drop block.
+            chain_fallthrough_pred = m_current_block;
             finish_block_branch(cond, body_blocks[i]->id, fallthrough_block->id,
                                 {}, phi_original_args(phi_info));
         } else {
@@ -393,12 +522,16 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
     // terminates without moving it.)
     ScopeSnapshot post_surviving;
     bool any_surviving = false;
+    Vector<MergePath> paths;
     auto gen_chain_body = [&](IRBlock* block, Stmt* body) {
         restore_scopes(saved);
         set_current_block(block);
         gen_stmt(body);
         bool terminated = !m_current_block
             || m_current_block->terminator.kind != TerminatorKind::None;
+        if (!terminated) {
+            paths.push_back({m_current_block, snapshot_scopes(/*with_move_state=*/true)});
+        }
         goto_merge_if_open(merge_block, phi_info);
         if (!terminated && default_block) {
             post_surviving = snapshot_scopes(/*with_move_state=*/true);
@@ -427,6 +560,15 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
     } else {
         restore_scopes(saved, /*restore_move_state=*/false);
     }
+
+    // An owned local moved by one surviving branch and not another is dropped
+    // on the paths that still hold it (see reconcile_divergent_moves). Without
+    // a default, the all-conditions-false edge is a surviving path too — and
+    // the one that moved nothing, which is exactly the double-free this fixes.
+    if (!default_block) {
+        paths.push_back({nullptr, std::move(fallthrough_state)});
+    }
+    reconcile_divergent_moves(paths, chain_fallthrough_pred, merge_block, phi_info);
 
     set_current_block(merge_block);
     bind_merge_phis(phi_info);

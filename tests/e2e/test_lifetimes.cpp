@@ -2136,4 +2136,91 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.stdout_output == "dyn 1\n");
     }
 
+    // ── a by-value container parameter of a METHOD is owned by the callee ──
+    //
+    // The caller moves the container in, so the callee must destroy it. Methods
+    // did not: `analyze_member_body` never published the resolved parameter type
+    // onto the `Param`, and the IR builder's fallback (`type_by_name`) cannot
+    // resolve a generic annotation — the name is bare `List`. The parameter
+    // therefore reached ownership tracking with an unusable type, read as
+    // "copyable, not owned", and was never dropped. Free functions were fine,
+    // which is why every earlier repro of this leak came back clean.
+    //
+    // This was the entire "Lox leaks one List per interpreter call" bug: the
+    // per-call `args: List<LoxValue>` is a by-value parameter of a method.
+    TEST_CASE_TEMPLATE("a by-value container param of a method is destroyed by the callee",
+                       Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        struct Counter { n: i32; }
+        fun Counter.consume(items: List<i32>): i32 {
+            return items.len() + self.n;
+        }
+        fun main(): i32 {
+            var c: Counter = Counter { n = 1 };
+            var items: List<i32> = List<i32>();
+            items.push(10);
+            items.push(20);
+            return c.consume(items);
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 3);
+    }
+
+    // ── an owned value moved on one branch and not another ──
+    //
+    // Semantic analysis rejects every later *read* of such a value ("use of
+    // possibly moved value"), so it is dead at the merge and the only question
+    // is who destroys it. The answer that needs no runtime drop flag: the paths
+    // that did NOT move it, where they leave.
+    //
+    // Both directions were wrong before, and the merge's single `is_moved` flag
+    // is why — either answer is wrong for half the predecessors. A plain `if`
+    // recorded "moved" and leaked when the branch wasn't taken; an `if/else if`
+    // chain recorded "not moved" and double-freed when it was. The chain form is
+    // Lox's `call_class`, which passes its `args` onward only when the class has
+    // an `init`.
+    TEST_CASE_TEMPLATE("a container moved on one branch is dropped on the others",
+                       Backend, RX_E2E_BACKENDS) {
+        const char* source = R"(
+        fun consume(items: List<i32>): i32 { return items.len(); }
+
+        fun plain_if(items: List<i32>, take: bool): i32 {
+            var n: i32 = 0;
+            if (take) { n = consume(items); }
+            return n;
+        }
+
+        fun chain(items: List<i32>, take: bool): i32 {
+            var n: i32 = 0;
+            if (take) {
+                n = consume(items);
+            } else if (items.len() > 100) {
+                n = -1;
+            }
+            return n;
+        }
+
+        fun main(): i32 {
+            var a: List<i32> = List<i32>();
+            a.push(1);
+            var b: List<i32> = List<i32>();
+            b.push(1);
+            var c: List<i32> = List<i32>();
+            c.push(1);
+            var d: List<i32> = List<i32>();
+            d.push(1);
+            // Each of the four combinations destroys the list exactly once:
+            // twice through the moving path (the callee drops it) and twice
+            // through a non-moving path (the drop this reconciliation emits).
+            return plain_if(a, true) + plain_if(b, false)
+                 + chain(c, true) + chain(d, false);
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success == true);
+        CHECK(result.value == 2);
+    }
+
 }

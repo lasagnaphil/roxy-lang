@@ -10,9 +10,10 @@ Last updated: 2026-08-08
 
 ## High Priority
 
-*Found by the teardown leak check added 2026-08-02 (`roxy --check-leaks`; the
-E2E harness asserts it on every program it runs). It was invisible before: the
-free-trap only fires on an explicit `delete`, so nothing was looking.*
+*The leak entries here were found by the teardown leak check added 2026-08-02
+(`roxy --check-leaks`; the E2E harness asserts it on every program it runs).
+They were invisible before: the free-trap only fires on an explicit `delete`, so
+nothing was looking.*
 
 - [ ] **Coroutine promotion conflates same-named locals in disjoint scopes, and
   segfaults when their types differ**: two locals that share a name in
@@ -35,30 +36,38 @@ free-trap only fires on an explicit `delete`, so nothing was looking.*
   sharing a name with a later local is left alone" in `E2E Coroutines`, whose
   `ExpectedLeak` is the fallback the catch-param cleanup takes when it detects
   the conflation (2026-08-08); remove that opt-out when this is fixed.
-- [ ] **The Lox interpreter leaks one List per interpreter call**: running any
-  script through `examples/lox` leaks exactly one **list** per call the
-  interpreter makes (verified 2026-08-08 on `adfb20a`: a 1-call script leaks 1,
-  a 3-call script leaks 3). Nothing else leaks — the 38 strings this entry also
-  used to report were the `string`-struct-field bug, fixed 2026-08-02 by the
-  clone-glue step of the Drop/Copy separation (`lifetimes.md` →
-  "Separating Drop from Copy"), so the lists are now the only unexplained cause.
-  Ruled out 2026-08-02, each with a clean minimal repro: a by-value `List<T>`
-  parameter (with and without an enclosing try/catch + early return),
-  `List<Struct>` where the struct owns a `Map` (at 180 elements, cross-module,
-  and with a tagged-union value type), `.pop()` of a noncopyable element into a
-  local, and exceptions generally. `List<Environment>` built from Lox's own type
-  is also clean in isolation.
-  Next step is to identify the allocation site rather than keep guessing shapes —
-  a temporary alloc-site tag in the census, or bisecting `call_function`, which
-  is where the per-call `args: List<LoxValue>` lives. May yet be a leak in the
-  Lox *program's* own logic rather than a compiler bug; with no GC that is still
-  a real leak, but it changes where the fix goes.
+- [ ] **The Lox interpreter leaks one string per string concatenation**:
+  `var s = "a"; s = s + "b"; print s;` through `examples/lox` leaks 1 string,
+  `print "a" + "b";` leaks 2, and a 5-iteration append loop leaks 3 — it tracks
+  concatenations, not calls. Pre-existing and unrelated to the per-call List
+  leak fixed 2026-08-08 (that one hid it: the same programs used to report
+  hundreds of leaked lists alongside).
+  Lox's `eval_binary` builds a `LoxValue` — a tagged union with a `str_val:
+  string` variant — from a computed concatenation and returns it by value, which
+  is the shape to attack. **A likely-related bug, found while narrowing this and
+  reproduced on `adfb20a`**: returning such a union *loses* the string —
+  `fun mk(a: string): V { return V { kind = K::Str, s = a + "b" }; }` then
+  printing `v.s` prints nothing, while the same union built as a local, or
+  returned with a string *literal*, is correct. Note the two point opposite ways
+  (a leak is an under-release, a lost value an over-release), so they may be one
+  imbalance seen from both ends or two bugs; the union-return repro is the
+  smaller one to start from.
 
-*The point worth keeping from how this one was found: twelve further bugs were
+  Scale for whoever picks this up: `examples/lox/test.roxy` leaks 42 objects
+  (40 strings + 2 lists), down from 293 before the per-call List fix. The 40
+  strings are this entry. The **2 remaining lists** are a separate residual —
+  they no longer scale with interpreter calls (every `.lox` script above is now
+  list-clean), so they are specific to what `test.roxy` itself does; find their
+  allocation site the way the per-call leak was found, by tagging list
+  allocations with the VM call stack rather than guessing shapes.
+
+*The point worth keeping from how these were found: fourteen further bugs were
 fixed here — five in coroutines, three in destructor chaining, two `ref`-counting
-holes, one in operator parsing (all 2026-08-02), and a caught exception leaked by
-a coroutine destroyed while suspended inside its `catch` (2026-08-08) — and every
-one of them was invisible to a fully green suite. Nine came from compiling
+holes, one in operator parsing (all 2026-08-02), and on 2026-08-08 a caught
+exception leaked by a coroutine destroyed while suspended inside its `catch`, an
+undropped by-value container parameter of a method, and divergent conditional
+moves (which leaked in an `if` and double-freed in an `if/else if` chain) — and
+every one of them was invisible to a fully green suite. Nine came from compiling
 `CLAUDE.md`'s example program, which had never been run; it now compiles and runs
 verbatim. Per-bug records are in this file's git history.*
 
