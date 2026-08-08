@@ -2397,7 +2397,7 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
     EnumTypeInfo& eti = discrim_type->enum_info;
 
     // Track which enum variants have been covered (for duplicate detection)
-    tsl::robin_map<StringView, bool> covered_variants;
+    tsl::robin_set<StringView> covered_variants;
 
     // Save move states before branching
     MoveStateSnapshot pre_when_states = m_lifetimes.save_move_states();
@@ -2415,13 +2415,13 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
             }
 
             // Check for duplicate case
-            if (covered_variants.find(case_name) != covered_variants.end()) {
+            if (covered_variants.count(case_name)) {
                 error_fmt(wc.loc, "duplicate case '{}' in when statement",
                          case_name);
                 continue;
             }
 
-            covered_variants[case_name] = true;
+            covered_variants.insert(case_name);
         }
 
         // Restore pre-when state so each case starts fresh
@@ -4260,8 +4260,7 @@ Type* SemanticAnalyzer::analyze_index_expr(Expr* expr) {
     Type* base_type = obj_type->base_type();
 
     // Unified dispatch: look up "index" method on any type (list, struct, etc.)
-    StringView method_name("index", 5);
-    const MethodInfo* method_info = m_types.lookup_method(base_type, method_name);
+    const MethodInfo* method_info = m_types.lookup_method(base_type, "index"_sv);
     if (method_info && method_info->param_types.size() == 1) {
         if (!idx_type->is_error()) {
             m_checker.check_assignable(method_info->param_types[0], idx_type, index_expr.index->loc);
@@ -4556,8 +4555,7 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
         Type* container_type = index_target.object->resolved_type;
         if (container_type) container_type = container_type->base_type();
         if (container_type) {
-            StringView method_name("index_mut", 9);
-            const MethodInfo* method_info = m_types.lookup_method(container_type, method_name);
+            const MethodInfo* method_info = m_types.lookup_method(container_type, "index_mut"_sv);
             if (!method_info) {
                 error(assign_expr.target->loc, "type has no 'index_mut' method for index assignment");
                 return m_types.error_type();
@@ -4731,7 +4729,7 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
     Vector<bool> field_initialized(type->struct_info.fields.size(), false);
 
     // Track initialized variant fields by name
-    tsl::robin_map<StringView, bool> variant_field_initialized;
+    tsl::robin_set<StringView> variant_field_initialized;
 
     // Per when-clause discriminant selection (when it is a compile-time-known
     // enum variant) plus every initialized variant field, so a mismatch like
@@ -4812,11 +4810,11 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
 
         if (variant_field_info) {
             // Variant field
-            if (variant_field_initialized.find(fi.name) != variant_field_initialized.end()) {
+            if (variant_field_initialized.count(fi.name)) {
                 error_fmt(fi.loc, "duplicate field '{}'", fi.name);
                 continue;
             }
-            variant_field_initialized[fi.name] = true;
+            variant_field_initialized.insert(fi.name);
             variant_inits.push_back(VariantFieldInit{
                 fi.name, fi.loc,
                 static_cast<u32>(found_clause - when_clauses.data())});

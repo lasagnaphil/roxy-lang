@@ -142,8 +142,7 @@ bool LambdaLifter::try_capture_identifier(Expr* expr, Symbol* sym, Type** out) {
 
 // Helper: allocate a NUL-free StringView in the bump allocator.
 static StringView alloc_view(BumpAllocator& alloc, const char* str) {
-    u32 len = 0;
-    while (str[len]) ++len;
+    u32 len = static_cast<u32>(strlen(str));
     char* buf = reinterpret_cast<char*>(alloc.alloc_bytes(len, 1));
     memcpy(buf, str, len);
     return StringView(buf, len);
