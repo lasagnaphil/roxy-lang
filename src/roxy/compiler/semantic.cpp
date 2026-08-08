@@ -154,40 +154,45 @@ static const ConstructorInfo* find_constructor(Span<ConstructorInfo> constructor
     return nullptr;
 }
 
+static const DestructorInfo* find_destructor(Span<DestructorInfo> destructors, StringView name) {
+    for (const auto& destructor : destructors) {
+        if (destructor.name == name) {
+            return &destructor;
+        }
+    }
+    return nullptr;
+}
+
 // get_type_slot_count is declared in types.hpp and defined in types.cpp.
 
 // ===== Initialization & Passes =====
 
 SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, ModuleRegistry& modules,
                                    NativeRegistry* registry)
-    : m_allocator(allocator)
-    , m_type_env(type_env)
-    , m_types(type_env.types())
-    , m_modules(modules)
-    , m_registry(registry)
-    , m_owned_symbols(new SymbolTable(allocator))
-    , m_symbols(*m_owned_symbols)
-    , m_reporter(allocator)
-    , m_checker(m_reporter)
-    , m_context{m_allocator, m_type_env, m_types, m_modules, m_symbols, m_reporter, m_checker,
-                this, &SemanticAnalyzer::resolve_type_expr_thunk,
-                &SemanticAnalyzer::analyze_expr_thunk, &SemanticAnalyzer::analyze_stmt_thunk}
-    , m_lifetimes(m_context)
-    , m_traits(m_context, m_synthetic_decls)
-    , m_generic_calls(m_context, m_lifetimes, m_function_context, m_synthetic_decls)
-    , m_program(nullptr)
+    : SemanticAnalyzer(allocator, type_env, modules,
+                       /*owned_symbols=*/new SymbolTable(allocator),
+                       /*external_symbols=*/nullptr, registry)
 {
 }
 
 SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, ModuleRegistry& modules,
                                    SymbolTable& external_symbols, NativeRegistry* registry)
+    : SemanticAnalyzer(allocator, type_env, modules,
+                       /*owned_symbols=*/nullptr,
+                       /*external_symbols=*/&external_symbols, registry)
+{
+}
+
+SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, ModuleRegistry& modules,
+                                   SymbolTable* owned_symbols, SymbolTable* external_symbols,
+                                   NativeRegistry* registry)
     : m_allocator(allocator)
     , m_type_env(type_env)
     , m_types(type_env.types())
     , m_modules(modules)
     , m_registry(registry)
-    , m_owned_symbols(nullptr)
-    , m_symbols(external_symbols)
+    , m_owned_symbols(owned_symbols)
+    , m_symbols(external_symbols ? *external_symbols : *m_owned_symbols)
     , m_reporter(allocator)
     , m_checker(m_reporter)
     , m_context{m_allocator, m_type_env, m_types, m_modules, m_symbols, m_reporter, m_checker,
@@ -2086,16 +2091,18 @@ void SemanticAnalyzer::analyze_expr_stmt(Stmt* stmt) {
 }
 
 void SemanticAnalyzer::analyze_block_stmt(Stmt* stmt) {
+    analyze_decl_list_in_scope(stmt->block.declarations, stmt->loc);
+}
+
+void SemanticAnalyzer::analyze_decl_list_in_scope(Span<Decl*> decls, SourceLocation loc) {
     m_symbols.push_scope(ScopeKind::Block);
 
-    BlockStmt& block = stmt->block;
-    for (auto* decl : block.declarations) {
+    for (auto* decl : decls) {
         if (!decl) continue;
 
         if (decl->kind == AstKind::DeclVar) {
             analyze_var_decl(decl);
         } else if (decl->kind == AstKind::DeclFun) {
-            // Local functions (if supported)
             error(decl->loc, "local function declarations are not supported; move this function to module scope");
         } else {
             // Statement wrapped in a Decl
@@ -2103,7 +2110,7 @@ void SemanticAnalyzer::analyze_block_stmt(Stmt* stmt) {
         }
     }
 
-    m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
+    m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), loc);
     m_symbols.pop_scope();
 }
 
@@ -2262,17 +2269,7 @@ void SemanticAnalyzer::analyze_return_stmt(Stmt* stmt) {
 
     if (rs.value) {
         Type* actual = analyze_expr(rs.value);
-        if (expected && m_generic_calls.coerce_generic_template_ref(rs.value, expected)) {
-            actual = rs.value->resolved_type;
-        }
-        if (expected && coerce_overloaded_fun_ref(rs.value, expected)) {
-            actual = rs.value->resolved_type;
-        }
-        if (!m_checker.check_assignable(expected, actual, stmt->loc)) {
-            // Error already reported
-        } else {
-            m_checker.coerce_numeric_literal(rs.value, expected);
-        }
+        coerce_and_check_value(rs.value, expected, actual, stmt->loc);
 
         // Consume noncopyable return value (field-move check + mark source as
         // moved) — but only when the function actually takes ownership of it.
@@ -2339,13 +2336,7 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
         StructTypeInfo& struct_type_info = inner_type->struct_info;
 
         // Look up destructor by name
-        const DestructorInfo* dtor = nullptr;
-        for (const auto& destructor : struct_type_info.destructors) {
-            if (destructor.name == ds.destructor_name) {
-                dtor = &destructor;
-                break;
-            }
-        }
+        const DestructorInfo* dtor = find_destructor(struct_type_info.destructors, ds.destructor_name);
 
         // If a destructor name was specified but not found
         if (!ds.destructor_name.empty() && !dtor) {
@@ -2434,17 +2425,7 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
         m_lifetimes.set_branch_terminates(false);
 
         // Analyze case body in a new scope
-        m_symbols.push_scope(ScopeKind::Block);
-        for (auto& decl : wc.body) {
-            if (!decl) continue;
-            if (decl->kind == AstKind::DeclVar) {
-                analyze_var_decl(decl);
-            } else {
-                analyze_stmt(&decl->stmt);
-            }
-        }
-        m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
-        m_symbols.pop_scope();
+        analyze_decl_list_in_scope(wc.body, stmt->loc);
 
         case_snapshots.push_back(m_lifetimes.save_move_states());
         case_terminates.push_back(m_lifetimes.branch_terminates());
@@ -2463,17 +2444,7 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
         m_lifetimes.restore_move_states(pre_when_states);
         m_lifetimes.set_branch_terminates(false);
 
-        m_symbols.push_scope(ScopeKind::Block);
-        for (auto& decl : ws.else_body) {
-            if (!decl) continue;
-            if (decl->kind == AstKind::DeclVar) {
-                analyze_var_decl(decl);
-            } else {
-                analyze_stmt(&decl->stmt);
-            }
-        }
-        m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
-        m_symbols.pop_scope();
+        analyze_decl_list_in_scope(ws.else_body, stmt->loc);
 
         case_snapshots.push_back(m_lifetimes.save_move_states());
         case_terminates.push_back(m_lifetimes.branch_terminates());
@@ -3829,6 +3800,44 @@ Type* SemanticAnalyzer::analyze_ternary_expr(Expr* expr) {
     return m_types.error_type();
 }
 
+void SemanticAnalyzer::retype_out_inout_index_arg(CallArg& arg, Type*& arg_type) {
+    // See the header comment: an `out`/`inout` container subscript is an
+    // lvalue on the element *slot*, so it carries the raw element/value type,
+    // not the `borrowed` view the `index` method returns for reads.
+    if (arg.modifier != ParamModifier::Inout && arg.modifier != ParamModifier::Out) return;
+    if (arg.expr->kind != AstKind::ExprIndex) return;
+
+    Type* cont = arg.expr->index.object->resolved_type;
+    Type* base = cont ? cont->base_type() : nullptr;
+    Type* elem = nullptr;
+    if (base && base->is_list()) elem = base->list_info.element_type;
+    else if (base && base->is_map()) elem = base->map_info.value_type;
+    if (elem && !elem->is_error()) {
+        arg.expr->resolved_type = elem;
+        arg_type = elem;
+    }
+}
+
+Type* SemanticAnalyzer::coerce_and_check_value(Expr* value, Type* expected, Type* value_type,
+                                               SourceLocation loc, bool skip_type_check) {
+    // Resolve generic-template-ref / overloaded-ref values against the
+    // expected type before assignability checking.
+    if (expected && m_generic_calls.coerce_generic_template_ref(value, expected)) {
+        value_type = value->resolved_type;
+    }
+    if (expected && coerce_overloaded_fun_ref(value, expected)) {
+        value_type = value->resolved_type;
+    }
+    if (!skip_type_check) {
+        if (m_checker.check_assignable(expected, value_type, loc)) {
+            // Settle unsuffixed literals on the expected type. (A no-op
+            // whenever check_assignable failed, so gating loses nothing.)
+            m_checker.coerce_numeric_literal(value, expected);
+        }
+    }
+    return value_type;
+}
+
 void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_types,
                                        Span<Param> params, SourceLocation loc) {
     for (u32 i = 0; i < args.size(); i++) {
@@ -3860,40 +3869,12 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
 
         // Analyze argument expression
         Type* arg_type = analyze_expr(arg.expr);
+        retype_out_inout_index_arg(arg, arg_type);
 
-        // An `out`/`inout` container subscript is an lvalue on the element *slot*,
-        // not a read: re-type it to the raw element/value type (the `index`
-        // method returns the `borrowed` view — `ref T` for an owning `uniq T`
-        // element — which is right for reads but wrong here, since `inout` gives
-        // reassignable access to the owning slot). Copyable elements are
-        // unaffected (`borrowed T` == `T`). See lifetimes.md "Container element lvalues".
-        if ((arg.modifier == ParamModifier::Inout || arg.modifier == ParamModifier::Out)
-            && arg.expr->kind == AstKind::ExprIndex) {
-            Type* cont = arg.expr->index.object->resolved_type;
-            Type* base = cont ? cont->base_type() : nullptr;
-            Type* elem = nullptr;
-            if (base && base->is_list()) elem = base->list_info.element_type;
-            else if (base && base->is_map()) elem = base->map_info.value_type;
-            if (elem && !elem->is_error()) {
-                arg.expr->resolved_type = elem;
-                arg_type = elem;
-            }
-        }
-
-        // Resolve generic-template-ref / overloaded-ref args against the param
-        // type before assignability checking. Updates arg_type via resolved_type.
-        if (param_types[i] && m_generic_calls.coerce_generic_template_ref(arg.expr, param_types[i])) {
-            arg_type = arg.expr->resolved_type;
-        }
-        if (param_types[i] && coerce_overloaded_fun_ref(arg.expr, param_types[i])) {
-            arg_type = arg.expr->resolved_type;
-        }
-
-        // Type check (skip for 'out' since it's write-only)
-        if (arg.modifier != ParamModifier::Out) {
-            m_checker.check_assignable(param_types[i], arg_type, arg.expr->loc);
-            m_checker.coerce_numeric_literal(arg.expr, param_types[i]);
-        }
+        // Deferred-ref coercion, assignability, literal settling. 'out' args
+        // are write-only: no type check.
+        coerce_and_check_value(arg.expr, param_types[i], arg_type, arg.expr->loc,
+                               /*skip_type_check=*/arg.modifier == ParamModifier::Out);
 
         // Move semantics: passing owned arg to owned param transfers ownership —
         // but only for by-value arguments. `inout` and `out` borrow through a
@@ -4520,20 +4501,7 @@ Type* SemanticAnalyzer::analyze_overloaded_call(Expr* expr, CallExpr& ce, Symbol
             }
         }
         Type* arg_type = analyze_expr(arg.expr);
-        // Same element re-typing check_call_args applies for inout/out
-        // container subscripts (see that function for the rationale).
-        if ((arg.modifier == ParamModifier::Inout || arg.modifier == ParamModifier::Out)
-            && arg.expr->kind == AstKind::ExprIndex) {
-            Type* cont = arg.expr->index.object->resolved_type;
-            Type* base = cont ? cont->base_type() : nullptr;
-            Type* elem = nullptr;
-            if (base && base->is_list()) elem = base->list_info.element_type;
-            else if (base && base->is_map()) elem = base->map_info.value_type;
-            if (elem && !elem->is_error()) {
-                arg.expr->resolved_type = elem;
-                arg_type = elem;
-            }
-        }
+        retype_out_inout_index_arg(arg, arg_type);
         arg_types.push_back(arg_type);
     }
 
@@ -4641,19 +4609,13 @@ Type* SemanticAnalyzer::analyze_overloaded_call(Expr* expr, CallExpr& ce, Symbol
     Span<Type*> param_types = winner->type->func_info.param_types;
     for (u32 i = 0; i < args.size(); i++) {
         CallArg& arg = args[i];
-        // Deferred function-ref args coerce against the winner's param type.
-        if (param_types[i] && m_generic_calls.coerce_generic_template_ref(arg.expr, param_types[i])) {
-            arg_types[i] = arg.expr->resolved_type;
-        }
-        if (param_types[i] && coerce_overloaded_fun_ref(arg.expr, param_types[i])) {
-            arg_types[i] = arg.expr->resolved_type;
-        }
-        if (arg.modifier != ParamModifier::Out) {
-            m_checker.check_assignable(param_types[i], arg_types[i], arg.expr->loc);
-            m_checker.coerce_numeric_literal(arg.expr, param_types[i]);
-        }
-        // No modifier re-check here: the shape filter already guaranteed
-        // per-position modifier equality for the winner.
+        // Deferred function-ref args coerce against the winner's param type;
+        // 'out' args are write-only (no type check). No modifier re-check
+        // here: the shape filter already guaranteed per-position modifier
+        // equality for the winner.
+        arg_types[i] = coerce_and_check_value(arg.expr, param_types[i], arg_types[i],
+                                              arg.expr->loc,
+                                              /*skip_type_check=*/arg.modifier == ParamModifier::Out);
         if (param_types[i] && param_types[i]->noncopyable()
             && arg.modifier == ParamModifier::None) {
             m_lifetimes.consume_noncopyable(arg.expr, arg.expr->loc);
@@ -5568,14 +5530,7 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
             // Type-check field value
             Type* value_type = analyze_expr(fi.value);
             Type* field_type = type->struct_info.fields[field_idx].type;
-            if (field_type && m_generic_calls.coerce_generic_template_ref(fi.value, field_type)) {
-                value_type = fi.value->resolved_type;
-            }
-            if (field_type && coerce_overloaded_fun_ref(fi.value, field_type)) {
-                value_type = fi.value->resolved_type;
-            }
-            m_checker.check_assignable(field_type, value_type, fi.loc);
-            m_checker.coerce_numeric_literal(fi.value, field_type);
+            coerce_and_check_value(fi.value, field_type, value_type, fi.loc);
 
             // Consume noncopyable source (field-move check + mark source as moved)
             if (field_type && field_type->noncopyable()) {

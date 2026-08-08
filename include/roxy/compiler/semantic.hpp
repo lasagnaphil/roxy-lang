@@ -81,6 +81,13 @@ public:
     SymbolTable& symbols() { return m_symbols; }
 
 private:
+    // Shared body of the two public constructors. Exactly one of
+    // owned_symbols/external_symbols is non-null: owned_symbols transfers
+    // ownership into m_owned_symbols, external_symbols is borrowed.
+    SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, ModuleRegistry& modules,
+                     SymbolTable* owned_symbols, SymbolTable* external_symbols,
+                     NativeRegistry* registry);
+
     // Error reporting — thin forwarders to m_reporter so the many internal call
     // sites stay unchanged while the machinery lives in ErrorReporter.
     void error(SourceLocation loc, const char* message) { m_reporter.error(loc, message); }
@@ -206,6 +213,10 @@ private:
     void analyze_stmt(Stmt* stmt);
     void analyze_expr_stmt(Stmt* stmt);
     void analyze_block_stmt(Stmt* stmt);
+    // Analyze a declaration list forming a statement body — block statements
+    // and when-case/else bodies — in its own block scope, running the
+    // scope-exit uniq-destructor check before the scope pops.
+    void analyze_decl_list_in_scope(Span<Decl*> decls, SourceLocation loc);
     void analyze_if_stmt(Stmt* stmt);
     void analyze_while_stmt(Stmt* stmt);
     void analyze_for_stmt(Stmt* stmt);
@@ -279,6 +290,28 @@ private:
     // Shared argument checking for method/function calls
     void check_call_args(Span<CallArg> args, Span<Type*> param_types,
                          Span<Param> params, SourceLocation loc);
+
+    // An `out`/`inout` container subscript is an lvalue on the element *slot*,
+    // not a read: re-type it to the raw element/value type (the `index` method
+    // returns the `borrowed` view — `ref T` for an owning `uniq T` element —
+    // which is right for reads but wrong here, since `inout` gives
+    // reassignable access to the owning slot). Copyable elements are
+    // unaffected (`borrowed T` == `T`). No-op for by-value or non-subscript
+    // args. Updates `arg_type` (and the expr's resolved_type) on a re-type.
+    // See lifetimes.md "Container element lvalues".
+    void retype_out_inout_index_arg(CallArg& arg, Type*& arg_type);
+
+    // The shared value-against-expected-type sequence: resolve a deferred
+    // generic-template/overloaded function reference in `value` against
+    // `expected`, then check assignability and settle numeric literals
+    // (skipped for write-only `out` args via `skip_type_check`). Returns the
+    // final value type. Used by return values, call arguments (plain and
+    // overloaded), and struct-literal fields; var-decl initializers compose
+    // the pieces themselves (inference has no expected type, and their
+    // overloaded-ref coercion deliberately runs without one to report
+    // ambiguity — see analyze_var_initializer).
+    Type* coerce_and_check_value(Expr* value, Type* expected, Type* value_type,
+                                 SourceLocation loc, bool skip_type_check = false);
 
     // The per-argument type check shared by analyze_super_call's three arms
     // (default ctor / named ctor / method): analyze each arg, check
