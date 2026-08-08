@@ -47,17 +47,6 @@ static bool is_comparison_op(IROp op) {
     }
 }
 
-BytecodeBuilder::BytecodeBuilder()
-    : m_current_func(nullptr)
-    , m_current_ir_func(nullptr)
-    , m_next_reg(0)
-    , m_next_stack_slot(0)
-    , m_module(nullptr)
-    , m_ir_module(nullptr)
-    , m_has_error(false)
-    , m_error(nullptr)
-{}
-
 void BytecodeBuilder::report_error(const char* message) {
     if (!m_has_error) {
         m_has_error = true;
@@ -99,11 +88,7 @@ BCModule* BytecodeBuilder::build(IRModule* ir_module) {
     return module.release();  // Transfer ownership to caller
 }
 
-// Helper to compute the number of contiguous arg registers needed for a call instruction
-template <typename F>
-static u32 compute_call_arg_reg_count(IRInst* inst, IRFunction* callee_func,
-                                       const Vector<Type*>& value_types,
-                                       F get_struct_slot_count_fn) {
+u32 BytecodeBuilder::compute_call_arg_reg_count(IRInst* inst, IRFunction* callee_func) const {
     u32 arg_reg_count = 0;
     bool is_external = (inst->op == IROp::CallExternal);
     u32 num_args = is_external ? inst->call_external.args.size() : inst->call.args.size();
@@ -115,12 +100,12 @@ static u32 compute_call_arg_reg_count(IRInst* inst, IRFunction* callee_func,
         if (param_is_ptr) {
             arg_reg_count += 1;
         } else {
-            Type* arg_type = arg_val.id < value_types.size() ? value_types[arg_val.id] : nullptr;
+            Type* arg_type = value_type_of(arg_val.id);
             // Weak refs need 2 registers (pointer + generation)
             if (arg_type && arg_type->kind == TypeKind::Weak) {
                 arg_reg_count += 2;
             } else {
-                u32 arg_slot_count = get_struct_slot_count_fn(arg_type);
+                u32 arg_slot_count = get_struct_slot_count(arg_type);
                 if (arg_slot_count > 0 && arg_slot_count <= 4) {
                     arg_reg_count += (arg_slot_count + 1) / 2;
                 } else {
@@ -142,9 +127,42 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     // slot-pair count for register-resident small structs, else 1.
     m_current_func->ret_reg_count = static_cast<u8>(get_value_reg_count(ir_func->return_type));
 
-    // Reset state.
-    // Dense ValueId-indexed side tables: refill with sentinels, keeping the
-    // buffer (a direct-indexed vector reset, not a hashed clear — see profiling.md).
+    reset_function_state(ir_func);
+
+    // Analysis. Unwind coverage for cleanup records (which blocks each tracked
+    // value is owned in) must precede compute_liveness — its Pass 5b pins each
+    // tracked register across the whole coverage, so a covered block laid out
+    // past the scope's normal exit cannot recycle it. Blocks are already in
+    // RPO order from IR building.
+    compute_cleanup_coverage(ir_func);
+    compute_liveness(ir_func);
+    compute_const_use_modes(ir_func);
+
+    // Register assignment: pre-color the parameter registers, then walk the
+    // function in program order assigning every other SSA value its register.
+    precolor_parameters(ir_func);
+    preallocate_registers(ir_func);
+
+    // Emission over the RPO block layout, then jump resolution and
+    // compare-branch fusion over the finished code.
+    emit_prologue(ir_func);
+    emit_blocks(ir_func);
+    patch_jumps();
+    fuse_compare_branch();
+
+    // PC-range metadata over the final layout.
+    build_exception_handler_table(ir_func);
+    build_cleanup_records(ir_func);
+
+    m_current_func->register_count = m_next_reg;
+    m_current_func->local_stack_slots = m_next_stack_slot;
+    return m_current_func;
+}
+
+// Refill the per-function state: dense ValueId/BlockId-indexed side tables to
+// their sentinels (buffer-keeping resets, not hashed clears — see
+// profiling.md), register allocator and spill state to empty.
+void BytecodeBuilder::reset_function_state(IRFunction* ir_func) {
     u32 num_values = ir_func->next_value_id;
     m_value_to_reg.clear_keep_capacity();
     m_value_to_reg.reserve(num_values);
@@ -179,24 +197,11 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     m_scratch_regs[0] = m_scratch_regs[1] = 0xFF;
     m_next_reg = 0;
     m_next_stack_slot = 0;
+}
 
-    // Step 0: Compute unwind coverage for cleanup records (which blocks each
-    // tracked value is owned in). Must precede compute_liveness — its Pass 5b
-    // pins each tracked register across the whole coverage, so a covered block
-    // laid out past the scope's normal exit cannot recycle it.
-    compute_cleanup_coverage(ir_func);
-
-    // Step 1: Compute liveness intervals for all SSA values
-    // (blocks are already in RPO order from IR building)
-    compute_liveness(ir_func);
-
-    // Step 1b: Identify constants whose every use is RK-eligible. These don't
-    // need a register or LOAD_INT/LOAD_CONST — the RK opcode reads them
-    // directly from the constant pool. Skipping their LOAD removes one dispatch
-    // per inner-loop constant (e.g. `2.0`, `4.0`, `1` in mandelbrot).
-    compute_const_use_modes(ir_func);
-
-    // Step 2: Allocate registers for function parameters (pre-colored)
+// Pre-color function parameters: the calling convention delivers them in
+// registers 0..n at fixed offsets, so they are mapped rather than allocated.
+void BytecodeBuilder::precolor_parameters(IRFunction* ir_func) {
     u8 param_reg_offset = 0;
     for (u32 i = 0; i < ir_func->params.size(); i++) {
         const auto& param = ir_func->params[i];
@@ -230,15 +235,109 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
     }
     m_next_reg = param_reg_offset;
     m_current_func->param_register_count = param_reg_offset;
+}
 
-    // Step 3: Liveness-aware pre-allocation of all SSA values
-    {
-        u32 alloc_point = 0;
-        for (IRBlock* block : ir_func->blocks) {
+// Liveness-aware pre-allocation of all SSA values: walk the function in
+// program order assigning every value a register before any code is emitted,
+// expiring dead values back to the free set as the walk advances. Call
+// results get their whole dst + argument window here (reserve_call_window).
+void BytecodeBuilder::preallocate_registers(IRFunction* ir_func) {
+    u32 alloc_point = 0;
+    for (IRBlock* block : ir_func->blocks) {
 
-            // Block parameters
-            for (const auto& param : block->params) {
-                expire_before(alloc_point);
+        // Block parameters
+        for (const auto& param : block->params) {
+            expire_before(alloc_point);
+            if (!has_register(param.value)) {
+                u32 reg_count = get_value_reg_count(param.type);
+                if (reg_count > 1) {
+                    allocate_multi_register_value(param.value, reg_count);
+                } else {
+                    allocate_register(param.value);
+                }
+            }
+            if (param.type) {
+                m_value_types[param.value.id] = param.type;
+            }
+            alloc_point++;
+        }
+
+        // Instructions
+        for (IRInst* inst : block->instructions) {
+            expire_before(alloc_point);
+
+            bool is_call = (inst->op == IROp::Call || inst->op == IROp::CallNative ||
+                            inst->op == IROp::CallExternal || inst->op == IROp::CallIndirect);
+
+            if (inst->result.is_valid() && !has_register(inst->result)) {
+                // Skip register allocation for RK-only constants: the LOAD
+                // is also skipped in lower_instruction, and try_emit_rk_binary
+                // reads the value directly from the constant pool.
+                if (!is_skip_load_const(inst)) {
+                    u32 reg_count = get_value_reg_count(inst->type);
+                    if (is_call) {
+                        // Calls allocate dst + their contiguous arg window
+                        // together in reserve_call_window below (needs the
+                        // per-op arg register count).
+                    } else if (reg_count > 1) {
+                        allocate_multi_register_value(inst->result, reg_count);
+                    } else {
+                        allocate_register(inst->result);
+                    }
+                }
+            }
+            if (inst->result.is_valid() && inst->type) {
+                m_value_types[inst->result.id] = inst->type;
+            }
+
+            // For calls, reserve dst + contiguous registers for args and
+            // struct/weak returns together (reserve_call_window).
+            if (is_call && inst->op != IROp::CallIndirect && inst->result.is_valid()) {
+                // Compute actual arg register count based on types
+                StringView func_name = (inst->op == IROp::CallExternal)
+                    ? inst->call_external.func_name : inst->call.func_name;
+                IRFunction* callee_func = nullptr;
+                auto func_it = m_func_indices.find(func_name);
+                if (func_it != m_func_indices.end()) {
+                    callee_func = m_ir_module->functions[func_it->second];
+                }
+                u32 total_arg_regs = compute_call_arg_reg_count(inst, callee_func);
+
+                reserve_call_window(inst, call_return_extra_regs(inst->type), total_arg_regs);
+            }
+
+            // CallIndirect (closure dispatch): callee resolved at runtime, but the
+            // arg register block uses the same convention as direct CALL.
+            if (inst->op == IROp::CallIndirect && inst->result.is_valid()) {
+                // No callee_func at IR time — sum register counts from explicit-arg types.
+                u32 total_arg_regs = 0;
+                for (auto arg_id : inst->call_indirect.args) {
+                    Type* arg_type = value_type_of(arg_id.id);
+                    u32 arg_slot_count = get_struct_slot_count(arg_type);
+                    if (arg_slot_count > 0 && arg_slot_count <= 4) {
+                        total_arg_regs += (arg_slot_count + 1) / 2;
+                    } else {
+                        total_arg_regs += get_value_reg_count(arg_type);
+                    }
+                }
+
+                reserve_call_window(inst, call_return_extra_regs(inst->type), total_arg_regs);
+            }
+
+            alloc_point++;
+        }
+
+        // Pre-allocate registers for forward-target block params at the terminator.
+        // In RPO, forward-edge predecessors come before targets. The predecessor's
+        // MOV writes to the target's block param register. If the param is only
+        // allocated at its def point (in the target block), another value could
+        // grab the same register between the MOV and the param's definition.
+        expire_before(alloc_point);
+        const Terminator& term = block->terminator;
+        auto pre_alloc_target_params = [&](const JumpTarget& target) {
+            if (!target.block.is_valid() || target.block.id >= ir_func->blocks.size()) return;
+            IRBlock* target_block = ir_func->blocks[target.block.id];
+            for (const auto& param : target_block->params) {
                 if (!has_register(param.value)) {
                     u32 reg_count = get_value_reg_count(param.type);
                     if (reg_count > 1) {
@@ -250,118 +349,30 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
                 if (param.type) {
                     m_value_types[param.value.id] = param.type;
                 }
-                alloc_point++;
             }
-
-            // Instructions
-            for (IRInst* inst : block->instructions) {
-                expire_before(alloc_point);
-
-                bool is_call = (inst->op == IROp::Call || inst->op == IROp::CallNative ||
-                                inst->op == IROp::CallExternal || inst->op == IROp::CallIndirect);
-
-                if (inst->result.is_valid() && !has_register(inst->result)) {
-                    // Skip register allocation for RK-only constants: the LOAD
-                    // is also skipped in lower_instruction, and try_emit_rk_binary
-                    // reads the value directly from the constant pool.
-                    if (!is_skip_load_const(inst)) {
-                        u32 reg_count = get_value_reg_count(inst->type);
-                        if (is_call) {
-                            // Calls allocate dst + their contiguous arg window
-                            // together in reserve_call_window below (needs the
-                            // per-op arg register count).
-                        } else if (reg_count > 1) {
-                            allocate_multi_register_value(inst->result, reg_count);
-                        } else {
-                            allocate_register(inst->result);
-                        }
-                    }
-                }
-                if (inst->result.is_valid() && inst->type) {
-                    m_value_types[inst->result.id] = inst->type;
-                }
-
-                // For calls, reserve dst + contiguous registers for args and
-                // struct/weak returns together (reserve_call_window).
-                if (is_call && inst->op != IROp::CallIndirect && inst->result.is_valid()) {
-                    // Compute actual arg register count based on types
-                    StringView func_name = (inst->op == IROp::CallExternal)
-                        ? inst->call_external.func_name : inst->call.func_name;
-                    IRFunction* callee_func = nullptr;
-                    auto func_it = m_func_indices.find(func_name);
-                    if (func_it != m_func_indices.end()) {
-                        callee_func = m_ir_module->functions[func_it->second];
-                    }
-                    u32 total_arg_regs = compute_call_arg_reg_count(inst, callee_func, m_value_types,
-                        [this](Type* t) { return get_struct_slot_count(t); });
-
-                    reserve_call_window(inst, call_return_extra_regs(inst->type), total_arg_regs);
-                }
-
-                // CallIndirect (closure dispatch): callee resolved at runtime, but the
-                // arg register block uses the same convention as direct CALL.
-                if (inst->op == IROp::CallIndirect && inst->result.is_valid()) {
-                    // No callee_func at IR time — sum register counts from explicit-arg types.
-                    u32 total_arg_regs = 0;
-                    for (auto arg_id : inst->call_indirect.args) {
-                        Type* arg_type = value_type_of(arg_id.id);
-                        u32 arg_slot_count = get_struct_slot_count(arg_type);
-                        if (arg_slot_count > 0 && arg_slot_count <= 4) {
-                            total_arg_regs += (arg_slot_count + 1) / 2;
-                        } else {
-                            total_arg_regs += get_value_reg_count(arg_type);
-                        }
-                    }
-
-                    reserve_call_window(inst, call_return_extra_regs(inst->type), total_arg_regs);
-                }
-
-                alloc_point++;
-            }
-
-            // Pre-allocate registers for forward-target block params at the terminator.
-            // In RPO, forward-edge predecessors come before targets. The predecessor's
-            // MOV writes to the target's block param register. If the param is only
-            // allocated at its def point (in the target block), another value could
-            // grab the same register between the MOV and the param's definition.
-            expire_before(alloc_point);
-            const Terminator& term = block->terminator;
-            auto pre_alloc_target_params = [&](const JumpTarget& target) {
-                if (!target.block.is_valid() || target.block.id >= ir_func->blocks.size()) return;
-                IRBlock* target_block = ir_func->blocks[target.block.id];
-                for (const auto& param : target_block->params) {
-                    if (!has_register(param.value)) {
-                        u32 reg_count = get_value_reg_count(param.type);
-                        if (reg_count > 1) {
-                            allocate_multi_register_value(param.value, reg_count);
-                        } else {
-                            allocate_register(param.value);
-                        }
-                    }
-                    if (param.type) {
-                        m_value_types[param.value.id] = param.type;
-                    }
-                }
-            };
-            switch (term.kind) {
-                case TerminatorKind::Goto:
-                    pre_alloc_target_params(term.goto_target);
-                    break;
-                case TerminatorKind::Branch:
-                    pre_alloc_target_params(term.branch.then_target);
-                    pre_alloc_target_params(term.branch.else_target);
-                    break;
-                default:
-                    break;
-            }
-
-            // Terminator slot
-            alloc_point++;
+        };
+        switch (term.kind) {
+            case TerminatorKind::Goto:
+                pre_alloc_target_params(term.goto_target);
+                break;
+            case TerminatorKind::Branch:
+                pre_alloc_target_params(term.branch.then_target);
+                pre_alloc_target_params(term.branch.else_target);
+                break;
+            default:
+                break;
         }
-    }
 
-    // Emit function prologue: unpack struct parameters from registers to local stack
-    // Track cumulative register offset to match the parameter allocation above
+        // Terminator slot
+        alloc_point++;
+    }
+}
+
+// Emit the function prologue: unpack struct parameters from registers to
+// local stack storage, and deep-copy copyable container value-params via
+// their native copy constructor.
+void BytecodeBuilder::emit_prologue(IRFunction* ir_func) {
+    // Track cumulative register offset to match the parameter pre-coloring
     u8 prologue_param_reg_offset = 0;
     for (u32 i = 0; i < ir_func->params.size(); i++) {
         const auto& param = ir_func->params[i];
@@ -454,8 +465,11 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
 
         prologue_param_reg_offset += reg_count;
     }
+}
 
-    // Second pass: emit bytecode
+// Emit bytecode for every block in layout (RPO) order, recording each block's
+// code offset and each value's ready PC as it goes.
+void BytecodeBuilder::emit_blocks(IRFunction* ir_func) {
     for (IRBlock* block : ir_func->blocks) {
 
         // Record block offset
@@ -484,24 +498,20 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
         // Lower terminator
         lower_terminator(block);
     }
+}
 
-    // Patch jump offsets
-    patch_jumps();
-
-    // Fuse compare + conditional branch pairs into single two-word instructions
-    fuse_compare_branch();
-
-    // Build exception handler table from IR exception handlers.
-    //
-    // Blocks in the try body are not guaranteed to be contiguous in the final
-    // bytecode layout after reorder_blocks_rpo — e.g. a `while`'s body block
-    // sits AFTER the loop's fall-through when the loop lives inside a try, so
-    // a single `[try_start_pc, try_end_pc)` window would either miss the body
-    // or over-approximate and accidentally catch past the try. Instead, group
-    // the try-body blocks (from handler.try_body_blocks, which was populated
-    // in creation order by gen_try_stmt and remapped by reorder_blocks_rpo)
-    // into contiguous runs of layout positions, and emit one BCExceptionHandler
-    // per run that shares the same handler_pc / type_id.
+// Build the exception handler table from IR exception handlers.
+//
+// Blocks in the try body are not guaranteed to be contiguous in the final
+// bytecode layout after reorder_blocks_rpo — e.g. a `while`'s body block
+// sits AFTER the loop's fall-through when the loop lives inside a try, so
+// a single `[try_start_pc, try_end_pc)` window would either miss the body
+// or over-approximate and accidentally catch past the try. Instead, group
+// the try-body blocks (from handler.try_body_blocks, which was populated
+// in creation order by gen_try_stmt and remapped by reorder_blocks_rpo)
+// into contiguous runs of layout positions, and emit one BCExceptionHandler
+// per run that shares the same handler_pc / type_id.
+void BytecodeBuilder::build_exception_handler_table(IRFunction* ir_func) {
     for (const auto& ir_handler : ir_func->exception_handlers) {
         u32 handler_offset = block_offset(ir_handler.handler_block.id);
         if (handler_offset == NO_OFFSET) continue;
@@ -590,8 +600,13 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
         }
         emit_range(run_start, run_end);
     }
+}
 
-    // Build cleanup records from IR cleanup info
+// Build cleanup records from IR cleanup info: one head record per tracked
+// value (block-derived scope, narrowed by Nullify / RefInc / ready-PC), plus
+// extension records for unwind-covered layout runs outside the main interval
+// (compute_cleanup_coverage).
+void BytecodeBuilder::build_cleanup_records(IRFunction* ir_func) {
     for (u32 ci_index = 0; ci_index < ir_func->cleanup_info.size(); ci_index++) {
         const auto& ir_cleanup = ir_func->cleanup_info[ci_index];
         u32 start_offset = block_offset(ir_cleanup.start_block.id);
@@ -795,10 +810,6 @@ BCFunction* BytecodeBuilder::build_function(IRFunction* ir_func) {
         }
         flush_run();
     }
-
-    m_current_func->register_count = m_next_reg;
-    m_current_func->local_stack_slots = m_next_stack_slot;
-    return m_current_func;
 }
 
 u8 BytecodeBuilder::bump_register() {
@@ -1412,8 +1423,8 @@ void BytecodeBuilder::compute_cleanup_coverage(IRFunction* ir_func) {
         return !saw_return;
     };
 
-    for (u32 ci = 0; ci < record_count; ci++) {
-        const IRCleanupInfo& info = ir_func->cleanup_info[ci];
+    for (u32 record_index = 0; record_index < record_count; record_index++) {
+        const IRCleanupInfo& info = ir_func->cleanup_info[record_index];
         if (!record_eligible(info)) continue;
         if (info.start_block.id >= num_blocks) continue;
 
@@ -1421,7 +1432,7 @@ void BytecodeBuilder::compute_cleanup_coverage(IRFunction* ir_func) {
         visited.reserve(num_blocks);
         for (u32 i = 0; i < num_blocks; i++) visited.push_back(false);
 
-        Vector<u32>& covered = m_cleanup_covered_blocks[ci];
+        Vector<u32>& covered = m_cleanup_covered_blocks[record_index];
         Vector<u32> pending;
         pending.push_back(info.start_block.id);
         // Memoized handler decisions for this record (handler index -> covered).
@@ -1559,13 +1570,13 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
     };
     Vector<BlockPointInfo> block_points;
     {
-        u32 bp = 0;
-        for (IRBlock* blk : ir_func->blocks) {
-            u32 first = bp;
-            bp += blk->params.size();
-            bp += blk->instructions.size();
-            u32 term = bp;
-            bp++;
+        u32 point_cursor = 0;
+        for (IRBlock* block : ir_func->blocks) {
+            u32 first = point_cursor;
+            point_cursor += block->params.size();
+            point_cursor += block->instructions.size();
+            u32 term = point_cursor;
+            point_cursor++;
             block_points.push_back({first, term});
         }
     }
@@ -1582,28 +1593,28 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
     // still compose: an inner loop's extension raises last_use into an enclosing
     // loop's range, and the enclosing loop (larger loop_end, processed later)
     // then extends it further.
-    for (u32 bi = 0; bi < ir_func->blocks.size(); bi++) {
-        IRBlock* blk = ir_func->blocks[bi];
-        u32 loop_end = block_points[bi].term_point;
+    for (u32 block_index = 0; block_index < ir_func->blocks.size(); block_index++) {
+        IRBlock* block = ir_func->blocks[block_index];
+        u32 loop_end = block_points[block_index].term_point;
 
         auto extend_for_back_edge = [&](BlockId target_id) {
             if (!target_id.is_valid() || target_id.id >= ir_func->blocks.size()) return;
-            if (target_id.id >= bi) return;  // Not a back edge
+            if (target_id.id >= block_index) return;  // Not a back edge
 
-            // Back edge from bi to target_idx: extend values defined before the
+            // Back edge from block_index to target_idx: extend values defined before the
             // loop but last-used inside it out to the loop's end.
             u32 loop_start = block_points[target_id.id].first_point;
-            for (u32 vi = 0; vi < num_values; vi++) {
-                auto& lr = m_live_ranges[vi];
-                if (lr.def_point < loop_start &&
-                    lr.last_use_point >= loop_start &&
-                    lr.last_use_point < loop_end) {
-                    lr.last_use_point = loop_end;
+            for (u32 value_index = 0; value_index < num_values; value_index++) {
+                auto& live_range = m_live_ranges[value_index];
+                if (live_range.def_point < loop_start &&
+                    live_range.last_use_point >= loop_start &&
+                    live_range.last_use_point < loop_end) {
+                    live_range.last_use_point = loop_end;
                 }
             }
         };
 
-        const Terminator& term = blk->terminator;
+        const Terminator& term = block->terminator;
         switch (term.kind) {
             case TerminatorKind::Goto:
                 extend_for_back_edge(term.goto_target.block);
@@ -1630,22 +1641,22 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
     //     here would under-extend (functions whose paths all return/throw have
     //     no end block at the max PC), leaving the register reused past it and
     //     the unwind RefDec reading garbage.
-    for (const auto& ci : ir_func->cleanup_info) {
-        if (!ci.value.is_valid() || ci.value.id >= num_values) continue;
+    for (const auto& cleanup_record : ir_func->cleanup_info) {
+        if (!cleanup_record.value.is_valid() || cleanup_record.value.id >= num_values) continue;
         u32 scope_end_point;
-        if (ci.whole_function_scope) {
+        if (cleanup_record.whole_function_scope) {
             // Ref params: pinned to the final point so the register holds the
             // borrow at every throw site (the record spans the whole body).
             if (block_points.empty()) continue;
             scope_end_point = block_points.back().term_point;
         } else {
             // Owned locals and ref locals: live to their block-derived scope end.
-            if (!ci.end_block.is_valid() || ci.end_block.id >= block_points.size()) continue;
-            scope_end_point = block_points[ci.end_block.id].term_point;
+            if (!cleanup_record.end_block.is_valid() || cleanup_record.end_block.id >= block_points.size()) continue;
+            scope_end_point = block_points[cleanup_record.end_block.id].term_point;
         }
-        auto& lr = m_live_ranges[ci.value.id];
-        if (scope_end_point > lr.last_use_point) {
-            lr.last_use_point = scope_end_point;
+        auto& live_range = m_live_ranges[cleanup_record.value.id];
+        if (scope_end_point > live_range.last_use_point) {
+            live_range.last_use_point = scope_end_point;
         }
     }
 
@@ -1655,18 +1666,18 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
     // *after* that block; the extension records emitted for such blocks read
     // the value's register at the throw, so it must not be recycled there —
     // SSA liveness alone considers the value dead in a block with no use.
-    for (u32 ci_idx = 0; ci_idx < ir_func->cleanup_info.size() &&
-                         ci_idx < m_cleanup_covered_blocks.size(); ci_idx++) {
-        const Vector<u32>& covered = m_cleanup_covered_blocks[ci_idx];
+    for (u32 cleanup_index = 0; cleanup_index < ir_func->cleanup_info.size() &&
+                         cleanup_index < m_cleanup_covered_blocks.size(); cleanup_index++) {
+        const Vector<u32>& covered = m_cleanup_covered_blocks[cleanup_index];
         if (covered.empty()) continue;
-        const auto& info = ir_func->cleanup_info[ci_idx];
+        const auto& info = ir_func->cleanup_info[cleanup_index];
         if (!info.value.is_valid() || info.value.id >= num_values) continue;
         u32 max_block = covered.back();  // sorted, so back() is the layout-last
         if (max_block >= block_points.size()) continue;
         u32 end_point = block_points[max_block].term_point;
-        auto& lr = m_live_ranges[info.value.id];
-        if (end_point > lr.last_use_point) {
-            lr.last_use_point = end_point;
+        auto& live_range = m_live_ranges[info.value.id];
+        if (end_point > live_range.last_use_point) {
+            live_range.last_use_point = end_point;
         }
     }
 
@@ -1679,7 +1690,7 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
     // by the VM, preserving correct behavior for such patterns.
     m_value_same_block.clear_keep_capacity();
     m_value_same_block.reserve(num_values);
-    for (u32 vi = 0; vi < num_values; vi++) {
+    for (u32 value_index = 0; value_index < num_values; value_index++) {
         m_value_same_block.push_back(false);
     }
     // A value is same-block iff its def_point and last_use_point fall in one
@@ -1689,18 +1700,18 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
     // that contains def_point? Binary-search that block per value — O(values *
     // log blocks) instead of the former O(blocks * values) scan, which was the
     // dominant cost of compute_liveness on functions with many blocks.
-    for (u32 vi = 0; vi < num_values; vi++) {
-        const auto& lr = m_live_ranges[vi];
+    for (u32 value_index = 0; value_index < num_values; value_index++) {
+        const auto& live_range = m_live_ranges[value_index];
         // Last block whose first_point <= def_point == the block containing it
         // (ranges are contiguous, so the next block starts past def_point).
         u32 lo = 0, hi = block_points.size();
         while (lo < hi) {
             u32 mid = lo + (hi - lo) / 2;
-            if (block_points[mid].first_point <= lr.def_point) lo = mid + 1;
+            if (block_points[mid].first_point <= live_range.def_point) lo = mid + 1;
             else hi = mid;
         }
-        if (lo != 0 && lr.last_use_point <= block_points[lo - 1].term_point) {
-            m_value_same_block[vi] = true;
+        if (lo != 0 && live_range.last_use_point <= block_points[lo - 1].term_point) {
+            m_value_same_block[value_index] = true;
         }
     }
 
@@ -2905,19 +2916,19 @@ void BytecodeBuilder::fuse_compare_branch() {
     }
 }
 
-u32 BytecodeBuilder::get_struct_slot_count(Type* type) const {
+u32 BytecodeBuilder::get_struct_slot_count(Type* type) {
     if (!type || !type->is_struct()) return 0;
     return type->struct_info.slot_count;
 }
 
-u32 BytecodeBuilder::get_value_reg_count(Type* type) const {
+u32 BytecodeBuilder::get_value_reg_count(Type* type) {
     if (!type) return 1;
     if (type->kind == TypeKind::Weak) return 2;  // 128-bit: pointer + generation
     u32 slot_count = get_struct_slot_count(type);
     return (slot_count > 0 && slot_count <= 4) ? (slot_count + 1) / 2 : 1;
 }
 
-u32 BytecodeBuilder::call_return_extra_regs(Type* type) const {
+u32 BytecodeBuilder::call_return_extra_regs(Type* type) {
     if (!type) return 0;
     if (type->kind == TypeKind::Weak) return 2;
     u32 slot_count = get_struct_slot_count(type);

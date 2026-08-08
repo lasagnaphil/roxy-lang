@@ -35,8 +35,6 @@ struct ActiveAlloc {
 // BytecodeBuilder lowers SSA IR to bytecode
 class BytecodeBuilder {
 public:
-    BytecodeBuilder();
-
     // Set native registry (needed for copy constructor emission)
     void set_registry(NativeRegistry* registry) { m_registry = registry; }
 
@@ -57,6 +55,20 @@ public:
 private:
     // Report an internal compiler error
     void report_error(const char* message);
+
+    // build_function phases, in call order. Each phase communicates with the
+    // next only through member state; build_function is the orchestrator.
+    void reset_function_state(IRFunction* ir_func);
+    void precolor_parameters(IRFunction* ir_func);
+    void preallocate_registers(IRFunction* ir_func);
+    void emit_prologue(IRFunction* ir_func);
+    void emit_blocks(IRFunction* ir_func);
+    void build_exception_handler_table(IRFunction* ir_func);
+    void build_cleanup_records(IRFunction* ir_func);
+
+    // Number of contiguous argument registers a call needs, from the callee's
+    // pointer-parameter info (nullptr = none) and the argument types.
+    u32 compute_call_arg_reg_count(IRInst* inst, IRFunction* callee_func) const;
     // Register allocation - maps ValueId to register number
     u8 allocate_register(ValueId value);
     u8 get_register(ValueId value);
@@ -322,22 +334,23 @@ private:
     // self-referential structs reference their own (in-progress) descriptor.
     tsl::robin_map<Type*, u16> m_delete_desc_cache;
 
+    // Type-shape helpers — pure functions of the type, so static.
     // Get slot count for a struct type, or 0 if not a struct
-    u32 get_struct_slot_count(Type* type) const;
+    static u32 get_struct_slot_count(Type* type);
 
     // Get the number of registers needed for a value of the given type
     // Returns 2 for weak refs (128-bit), struct-based counts for structs, 1 for everything else
-    u32 get_value_reg_count(Type* type) const;
+    static u32 get_value_reg_count(Type* type);
 
     // Registers a call window reserves above dst for a multi-register return:
     // 2 for weak refs, the packed slot-pair count for small structs (1-4
     // slots), 0 when the return fits in dst alone (scalars, and large structs
     // returned through a hidden pointer).
-    u32 call_return_extra_regs(Type* type) const;
+    static u32 call_return_extra_regs(Type* type);
 
     // Current function being built
-    BCFunction* m_current_func;
-    IRFunction* m_current_ir_func;
+    BCFunction* m_current_func = nullptr;
+    IRFunction* m_current_ir_func = nullptr;
 
     // ValueId.id -> register, as a dense side table (NO_REG = not in a register).
     // ValueIds are contiguous in [0, next_value_id), so a flat vector is a direct
@@ -346,7 +359,7 @@ private:
     // as u16 so registers 0..255 all fit alongside the out-of-band NO_REG sentinel.
     static constexpr u16 NO_REG = 0xFFFF;
     Vector<u16> m_value_to_reg;
-    u16 m_next_reg;  // u16 to prevent silent wraparound; capped at 255
+    u16 m_next_reg = 0;  // u16 to prevent silent wraparound; capped at 255
 
     // Liveness data (computed per function)
     Vector<LiveRange> m_live_ranges;
@@ -379,7 +392,7 @@ private:
     // a count-trailing-zeros over 4 words instead of a full scan, and freeing a
     // register is a single bit-set. See §4.2. No duplicates possible (set
     // semantics), matching the old invariant that a free register appears once.
-    u64 m_free_mask[4];
+    u64 m_free_mask[4] = {};
 
     void free_regs_reset() { m_free_mask[0] = m_free_mask[1] = m_free_mask[2] = m_free_mask[3] = 0; }
     void free_reg_add(u8 r) { m_free_mask[r >> 6] |= (u64(1) << (r & 63)); }
@@ -410,11 +423,11 @@ private:
     // Reverse map register -> ValueId.id, as a fixed 256-entry table (NO_VALUE =
     // register free). Only 256 possible register keys, so an array beats a map.
     static constexpr u32 NO_VALUE = UINT32_MAX;  // == ValueId::invalid().id
-    u32 m_reg_to_value[256];
-    bool m_has_spilling;
-    u8 m_scratch_regs[2];                     // two scratch registers for reload/spill
+    u32 m_reg_to_value[256] = {};
+    bool m_has_spilling = false;
+    u8 m_scratch_regs[2] = {0xFF, 0xFF};      // two scratch registers for reload/spill
 
-    u32 m_next_stack_slot;
+    u32 m_next_stack_slot = 0;
 
     // ValueId.id -> Type*, as a dense side table (nullptr = unknown). ValueIds are
     // contiguous, so a flat vector replaces the robin_map here too.
@@ -426,8 +439,8 @@ private:
     }
 
     // Current module
-    BCModule* m_module;
-    IRModule* m_ir_module;
+    BCModule* m_module = nullptr;
+    IRModule* m_ir_module = nullptr;
 
     // Function name to index mapping
     tsl::robin_map<StringView, u32> m_func_indices;
@@ -442,8 +455,8 @@ private:
     TypeEnv* m_type_env = nullptr;
 
     // Error state
-    bool m_has_error;
-    const char* m_error;
+    bool m_has_error = false;
+    const char* m_error = nullptr;
 };
 
 }
