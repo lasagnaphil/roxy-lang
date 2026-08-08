@@ -4,7 +4,7 @@ This document tracks known technical debt, incomplete implementations, and plann
 improvements. Completed items are removed as they land — the per-item records
 (measurements, rationale, regression-test pointers) live in this file's git history.
 
-Last updated: 2026-08-02
+Last updated: 2026-08-08
 
 ---
 
@@ -32,57 +32,31 @@ the free-trap only fires on an explicit `delete`, so nothing was looking.*
   inside the catch and an undrained coroutine — yield outside the catch, a fully
   drained coroutine, and a throw/catch in a callee are all clean. Pinned by
   `ExpectedLeak` in the two `E2E Coroutines` cases; remove those when fixed.
-- [ ] **The Lox interpreter leaks one List per interpreter call**:
-  `fun f(n) {...} print f(10);` leaks 177 **lists** alongside 38 strings, and the
-  count tracks the interpreter's call count exactly (1 call → 1 list, 3 → 3,
-  178 envs → 177). The strings are the `string`-field bug above; the lists are a
-  separate, unresolved cause. Ruled out 2026-08-02, each with a clean minimal
-  repro: a by-value `List<T>` parameter (with and without an enclosing
-  try/catch + early return), `List<Struct>` where the struct owns a `Map`
-  (at 180 elements, cross-module, and with a tagged-union value type),
-  `.pop()` of a noncopyable element into a local, and exceptions generally.
-  `List<Environment>` built from Lox's own type is also clean in isolation.
+- [ ] **The Lox interpreter leaks one List per interpreter call**: running any
+  script through `examples/lox` leaks exactly one **list** per call the
+  interpreter makes (verified 2026-08-08 on `adfb20a`: a 1-call script leaks 1,
+  a 3-call script leaks 3). Nothing else leaks — the 38 strings this entry also
+  used to report were the `string`-struct-field bug, fixed 2026-08-02 by the
+  clone-glue step of the Drop/Copy separation (`lifetimes.md` →
+  "Separating Drop from Copy"), so the lists are now the only unexplained cause.
+  Ruled out 2026-08-02, each with a clean minimal repro: a by-value `List<T>`
+  parameter (with and without an enclosing try/catch + early return),
+  `List<Struct>` where the struct owns a `Map` (at 180 elements, cross-module,
+  and with a tagged-union value type), `.pop()` of a noncopyable element into a
+  local, and exceptions generally. `List<Environment>` built from Lox's own type
+  is also clean in isolation.
   Next step is to identify the allocation site rather than keep guessing shapes —
   a temporary alloc-site tag in the census, or bisecting `call_function`, which
   is where the per-call `args: List<LoxValue>` lives. May yet be a leak in the
   Lox *program's* own logic rather than a compiler bug; with no GC that is still
   a real leak, but it changes where the fix goes.
 
-*Two `ref`-counting holes were fixed here on 2026-08-02 (both pre-existing,
-both verified against an unmodified tree before the fix): a discarded
-`ref`-returning call result leaked its handed-off count, and returning a `weak`
-from any function segfaulted. Records in git history; the residual narrowing
-question from the first is below.*
-
-*Nine bugs were found and fixed here on 2026-08-02, all traced back to compiling
-`CLAUDE.md`'s example program — which had never been run. Kept as a record of
-what the test suite was not covering:*
-
-*Five coroutine bugs, each unreachable until the one before it was fixed: the
-DCE null-deref that made compiling any coroutine segfault (`values_by_id` left
-null by `new_value()`, now `new_value_for(inst)` plus an `IRValidator`
-invariant); an init function that hardcoded `param_is_ptr` to `false`, passing a
-method receiver by value while the callee read a pointer; a stack receiver
-reaching the state struct as a counted borrow, whose `RefInc` wrote through
-`data - 8` into a neighbouring local (now `IROp::AssertHeap`, as closures do);
-value structs in coroutine state storing an address into a field sized for the
-struct (now inline, read by address with a `StructCopy` write-back); and
-`out`/`inout` coroutine parameters, now a compile error rather than a pointer
-into a dead frame.*
-
-*Three destructor-chaining bugs: a child destructor failing to link when the
-parent had none (chaining now targets the nearest ancestor that has one); an
-inherited `uniq` field destroyed twice, once by the child and again by the
-parent (each level now cleans only its own fields); and an inherited destructor
-never running when the child declared none and had nothing to drop
-(`struct_needs_synthetic_dtor` now treats an ancestor's destructor as an
-obligation to carry the chain).*
-
-*And one operator bug: an operator result was rejected as the left operand of
-another operator, so `(a + b) * 2.0f` did not compile while `a.add(b).mul(2.0f)`
-did.*
-
-*`CLAUDE.md`'s example now compiles and runs verbatim.*
+*The point worth keeping from how these two were found: eleven further bugs were
+fixed here on 2026-08-02 — five in coroutines, three in destructor chaining, two
+`ref`-counting holes, one in operator parsing — and every one of them was
+invisible to a fully green suite. Nine came from compiling `CLAUDE.md`'s example
+program, which had never been run; it now compiles and runs verbatim. Per-bug
+records are in this file's git history.*
 
 ---
 
@@ -91,10 +65,11 @@ did.*
 - [ ] **A discarded borrow is held to the end of its enclosing scope, not its
   statement**: `print(f"{box.borrow_item().v}"); delete box;` trips the
   free-trap, because the temporary borrow that the first statement created is
-  only released when the scope closes. The count is no longer *leaked* (that was
-  the High Priority item fixed 2026-08-02 — it is released, and per-iteration
-  inside a loop body), so this is a lifetime-narrowing question rather than a
-  leak, and it is the same rule every temporary follows: wrapping the use in an
+  only released when the scope closes. The count is no longer *leaked* — the
+  discarded `ref`-call borrow that leaked its handed-off count was fixed
+  2026-08-02, so the count is released, and per-iteration inside a loop body — so
+  this is a lifetime-narrowing question rather than a leak, and it is the same
+  rule every temporary follows: wrapping the use in an
   inner block, or binding the borrow to a `ref` local, both work today. Pinned by
   "deleting an owner in the same scope as a discarded borrow still traps" in
   `tests/e2e/test_lifetimes.cpp`. Narrowing a temporary to its statement needs a
@@ -150,6 +125,7 @@ did.*
   Found 2026-07-14; do **not** add the reproducer to `tests/fuzz/corpus/` — the
   `Fuzz Regression` doctest replays it with no memory cap. Reproduce with
   `./build-fuzz/fuzz_lsp_parser -rss_limit_mb=2048 <repro>`.
+
 ---
 
 ## Planned Features
@@ -170,6 +146,18 @@ did.*
 
 ## Documentation Needed
 
+- [ ] **`lifetimes.md`'s status table contradicts the sections below it**:
+  "What is actually implemented" (§ *Lifecycle implementation and status*) still
+  reports all three rows as they stood *before* the Drop/Copy separation landed
+  on 2026-08-02 — Drop "complete except `StrRelease` on a struct field, gated
+  off", Retain "derived but unwired", Move-only "mis-derived". All three are
+  superseded ~40 lines later by *Separating Drop from Copy* ✅, and the code
+  agrees with the later text: `member_needs_drop` (`types.hpp`) has no
+  `StrRelease` carve-out, `member_needs_retain` consumes `compute_retain_plan`,
+  and `noncopyable()` reads the structural `is_move_only` flag. That table is the
+  first thing a reader touching lifecycle code will find, so it is the worst
+  place in the tree for stale status. `CLAUDE.md`'s one-line `lifetimes.md`
+  blurb repeats the same three stale claims and needs the same fix.
 - [ ] Document thread-safety limitations (single VM per thread assumed)
 
 ---
