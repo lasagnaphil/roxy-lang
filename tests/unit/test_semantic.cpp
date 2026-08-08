@@ -1545,4 +1545,143 @@ TEST_SUITE("Semantic") {
         CHECK(ok);
     }
 
+    // ============================================================================
+    // Robustness Regressions
+    // ============================================================================
+
+    TEST_CASE("Semantic Error: enum duplicating a struct name does not corrupt the struct type") {
+        // The duplicate enum is skipped at collection, so member resolution's
+        // name lookup returns the STRUCT's type; writing enum_info through it
+        // would corrupt the shared union. Must error cleanly instead.
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            struct Foo { x: i32; }
+            enum Foo { A, B }
+            fun main() {
+                var f = Foo { x = 1 };
+                var y: i32 = f.x;
+            }
+        )"));
+        CHECK(t.has_error_containing("duplicate type declaration"));
+        // The struct must still work as a struct (union not clobbered).
+        CHECK(!t.has_error_containing("has no field 'x'"));
+    }
+
+    TEST_CASE("Semantic Error: enum variant value of INT64_MIN / -1 is rejected, not a crash") {
+        // INT64_MIN / -1 (and % -1) overflows i64 — previously a hardware trap
+        // inside eval_const_int. Treated as non-constant now.
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            enum E {
+                A = (-9223372036854775807l - 1l) / -1l,
+                B = (-9223372036854775807l - 1l) % -1l
+            }
+        )"));
+        CHECK(t.has_error_containing("compile-time integer constant"));
+    }
+
+    TEST_CASE("Semantic Error: named-destructor uniq must be deleted before when-case exit") {
+        // when-case bodies hold their decls directly in a Block scope; the
+        // scope-exit destructor check must run there like any other block.
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            struct Res { x: i32; }
+            fun delete Res.cleanup() { }
+            enum E { A, B }
+            fun test(e: E) {
+                when e {
+                    case A:
+                        var r: uniq Res = uniq Res();
+                    case B:
+                        var y: i32 = 0;
+                }
+            }
+        )"));
+        CHECK(t.has_error_containing("must be explicitly deleted"));
+    }
+
+    TEST_CASE("Semantic: named-destructor uniq deleted inside when case is accepted") {
+        SemanticTestHelper t;
+        bool ok = t.run(R"(
+            struct Res { x: i32; }
+            fun delete Res.cleanup() { }
+            enum E { A, B }
+            fun test(e: E) {
+                when e {
+                    case A: {
+                        var r: uniq Res = uniq Res();
+                        delete r.cleanup();
+                    }
+                    case B:
+                        var y: i32 = 0;
+                }
+            }
+        )");
+        CHECK(ok);
+    }
+
+    TEST_CASE("Semantic Error: variant field must belong to the selected variant") {
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            enum Element { Fire, Ice }
+            struct Skill {
+                id: i32;
+                when element: Element {
+                    case Fire:
+                        burn: i32;
+                    case Ice:
+                        slow: f32;
+                }
+            }
+            fun test() {
+                var s = Skill { id = 1, element = Element::Ice, burn = 3 };
+            }
+        )"));
+        CHECK(t.has_error_containing("does not belong to variant 'Ice'"));
+    }
+
+    TEST_CASE("Semantic Error: variant/discriminant mismatch caught regardless of field order") {
+        // The variant field appears BEFORE the discriminant in the literal;
+        // the check runs after the whole field list is seen. Also uses the
+        // bare variant name (symbol path) instead of Enum::Variant.
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            enum Element { Fire, Ice }
+            struct Skill {
+                id: i32;
+                when element: Element {
+                    case Fire:
+                        burn: i32;
+                    case Ice:
+                        slow: f32;
+                }
+            }
+            fun test() {
+                var s = Skill { id = 1, slow = 0.5f, element = Fire };
+            }
+        )"));
+        CHECK(t.has_error_containing("does not belong to variant 'Fire'"));
+    }
+
+    TEST_CASE("Semantic: variant field matching the selected variant is accepted") {
+        SemanticTestHelper t;
+        bool ok = t.run(R"(
+            enum Element { Fire, Ice }
+            struct Skill {
+                id: i32;
+                when element: Element {
+                    case Fire:
+                        burn: i32;
+                    case Ice:
+                        slow: f32;
+                }
+            }
+            fun test() {
+                var a = Skill { id = 1, element = Element::Fire, burn = 3 };
+                var b = Skill { id = 2, element = Ice, slow = 0.5f };
+            }
+        )");
+        CHECK(ok);
+    }
+
 }  // TEST_SUITE("Semantic")

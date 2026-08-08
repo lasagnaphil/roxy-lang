@@ -642,7 +642,7 @@ namespace {
 // Handles integer literals, grouping, unary -/~, and binary arithmetic/bitwise
 // ops over constants. Writes the result to `out` and returns true on success;
 // returns false (out untouched) for anything non-constant, a division by zero,
-// or an out-of-range shift.
+// an overflowing INT64_MIN / -1, or an out-of-range shift.
 bool eval_const_int(Expr* e, i64& out) {
     if (!e) return false;
     switch (e->kind) {
@@ -677,8 +677,14 @@ bool eval_const_int(Expr* e, i64& out) {
                 case BinaryOp::Add: out = l + r; return true;
                 case BinaryOp::Sub: out = l - r; return true;
                 case BinaryOp::Mul: out = l * r; return true;
-                case BinaryOp::Div: if (r == 0) return false; out = l / r; return true;
-                case BinaryOp::Mod: if (r == 0) return false; out = l % r; return true;
+                // INT64_MIN / -1 (and % -1) overflows i64 — UB and a hardware
+                // trap on x86 — so treat it as non-constant like division by zero.
+                case BinaryOp::Div:
+                    if (r == 0 || (l == INT64_MIN && r == -1)) return false;
+                    out = l / r; return true;
+                case BinaryOp::Mod:
+                    if (r == 0 || (l == INT64_MIN && r == -1)) return false;
+                    out = l % r; return true;
                 case BinaryOp::BitAnd: out = l & r; return true;
                 case BinaryOp::BitOr:  out = l | r; return true;
                 case BinaryOp::BitXor: out = l ^ r; return true;
@@ -696,6 +702,12 @@ bool eval_const_int(Expr* e, i64& out) {
 void SemanticAnalyzer::resolve_enum_members(Decl* decl) {
     EnumDecl& ed = decl->enum_decl;
     Type* type = m_type_env.named_type_by_name(ed.name);
+
+    // A duplicate-name declaration was skipped in collect_type_declarations
+    // (error already reported), so this lookup can return the OTHER
+    // declaration's type — possibly a struct. Type's info members share a
+    // union, so writing enum_info through it would corrupt that type.
+    if (!type || !type->is_enum()) return;
 
     Vector<EnumVariantInfo> variants;
     i64 next_value = 0;
@@ -993,15 +1005,11 @@ void SemanticAnalyzer::resolve_when_clauses(Span<WhenFieldDecl> when_decls,
             // table — collision-proof, and rejects other enums' variants. If
             // the discriminant type already failed to resolve as an enum, the
             // error was reported above; skip per-case noise.
-            i64 discriminant_value = 0;
             if (disc_type->is_enum()) {
                 for (const auto& case_name : case_decl.case_names) {
-                    const EnumVariantInfo* variant = disc_type->enum_info.find_variant(case_name);
-                    if (!variant) {
+                    if (!disc_type->enum_info.find_variant(case_name)) {
                         error_fmt(case_decl.loc, "'{}' is not a variant of enum '{}'",
                                   case_name, disc_type->enum_info.name);
-                    } else {
-                        discriminant_value = variant->value;
                     }
                 }
             }
@@ -2361,14 +2369,8 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
                 check_call_args(ds.arguments, dtor->param_types, dtor_decl->params, stmt->loc);
             }
         } else {
-            // No destructor defined with this name
-            if (!ds.destructor_name.empty()) {
-                error_fmt(stmt->loc, "struct '{}' has no destructor '{}'",
-                         struct_type_info.name, ds.destructor_name);
-                return;
-            }
-
-            // Named destructor arguments without a destructor is an error
+            // No destructor here means an unnamed delete (the named-but-missing
+            // case already errored above); arguments without one is an error.
             if (ds.arguments.size() > 0) {
                 error_fmt(stmt->loc, "struct '{}' has no destructor to call",
                          struct_type_info.name);
@@ -2441,6 +2443,7 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
                 analyze_stmt(&decl->stmt);
             }
         }
+        m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
         m_symbols.pop_scope();
 
         case_snapshots.push_back(m_lifetimes.save_move_states());
@@ -2469,6 +2472,7 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
                 analyze_stmt(&decl->stmt);
             }
         }
+        m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), stmt->loc);
         m_symbols.pop_scope();
 
         case_snapshots.push_back(m_lifetimes.save_move_states());
@@ -4635,8 +4639,6 @@ Type* SemanticAnalyzer::analyze_overloaded_call(Expr* expr, CallExpr& ce, Symbol
 
     // ---- Phase C: commit to the winner ----
     Span<Type*> param_types = winner->type->func_info.param_types;
-    Span<Param> params = (winner->decl && winner->decl->kind == AstKind::DeclFun)
-        ? winner->decl->fun_decl.params : Span<Param>();
     for (u32 i = 0; i < args.size(); i++) {
         CallArg& arg = args[i];
         // Deferred function-ref args coerce against the winner's param type.
@@ -4650,9 +4652,8 @@ Type* SemanticAnalyzer::analyze_overloaded_call(Expr* expr, CallExpr& ce, Symbol
             m_checker.check_assignable(param_types[i], arg_types[i], arg.expr->loc);
             m_checker.coerce_numeric_literal(arg.expr, param_types[i]);
         }
-        ParamModifier expected_mod = (params.data() && i < params.size())
-            ? params[i].modifier : ParamModifier::None;
-        (void)expected_mod;  // shape filter already guaranteed modifier equality
+        // No modifier re-check here: the shape filter already guaranteed
+        // per-position modifier equality for the winner.
         if (param_types[i] && param_types[i]->noncopyable()
             && arg.modifier == ParamModifier::None) {
             m_lifetimes.consume_noncopyable(arg.expr, arg.expr->loc);
@@ -5527,7 +5528,21 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
 
     // Track initialized variant fields by name
     tsl::robin_map<StringView, bool> variant_field_initialized;
-    i64 discriminant_value = -1;  // Track which variant is selected
+
+    // Per when-clause discriminant selection (when it is a compile-time-known
+    // enum variant) plus every initialized variant field, so a mismatch like
+    // `Skill { element = Element::Ice, burn_duration = 3 }` (a Fire-only
+    // field) is rejected after the loop — regardless of field order in the
+    // literal.
+    Span<WhenClauseInfo> when_clauses = type->struct_info.when_clauses;
+    Vector<i64> selected_values(when_clauses.size(), 0);
+    Vector<bool> selected_known(when_clauses.size(), false);
+    struct VariantFieldInit {
+        StringView name;
+        SourceLocation loc;
+        u32 clause_index;
+    };
+    Vector<VariantFieldInit> variant_inits;
 
     // Validate each field initializer
     for (auto& fi : sl.fields) {
@@ -5567,15 +5582,26 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
                 m_lifetimes.consume_noncopyable(fi.value, fi.loc);
             }
 
-            // Track discriminant value if this is a discriminant field
-            for (const auto& clause : type->struct_info.when_clauses) {
-                if (clause.discriminant_name == fi.name) {
-                    // Check if value is a static get (e.g., Attack from enum)
-                    if (fi.value->kind == AstKind::ExprIdentifier) {
-                        Symbol* sym = m_symbols.lookup(fi.value->identifier.name);
-                        if (sym && sym->kind == SymbolKind::EnumVariant) {
-                            discriminant_value = sym->enum_variant.value;
-                        }
+            // Track the selected variant when this is a discriminant field
+            // initialized with a compile-time-known variant — a bare variant
+            // name (`element = Fire`) or a qualified one (`Element::Fire`).
+            // A runtime-valued discriminant stays unknown (check skipped).
+            for (u32 ci = 0; ci < when_clauses.size(); ci++) {
+                if (when_clauses[ci].discriminant_name != fi.name) continue;
+                if (fi.value->kind == AstKind::ExprIdentifier) {
+                    Symbol* sym = fi.value->identifier.resolved_sym;
+                    if (sym && sym->kind == SymbolKind::EnumVariant) {
+                        selected_values[ci] = sym->enum_variant.value;
+                        selected_known[ci] = true;
+                    }
+                } else if (fi.value->kind == AstKind::ExprStaticGet) {
+                    Type* disc_type = fi.value->resolved_type;
+                    const EnumVariantInfo* variant = disc_type && disc_type->is_enum()
+                        ? disc_type->enum_info.find_variant(fi.value->static_get.member_name)
+                        : nullptr;
+                    if (variant) {
+                        selected_values[ci] = variant->value;
+                        selected_known[ci] = true;
                     }
                 }
             }
@@ -5594,6 +5620,9 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
                 continue;
             }
             variant_field_initialized[fi.name] = true;
+            variant_inits.push_back(VariantFieldInit{
+                fi.name, fi.loc,
+                static_cast<u32>(found_clause - when_clauses.data())});
 
             bool same_module = type->struct_info.module_name.empty() || m_program->module_name.empty() ||
                                type->struct_info.module_name == m_program->module_name;
@@ -5627,6 +5656,36 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
                 error_fmt(expr->loc, "missing field '{}' (no default value)", field_info.name);
             }
         }
+    }
+
+    // Reject variant fields that don't belong to the selected variant. Only
+    // enforceable when the discriminant was given as a compile-time-known
+    // variant; membership is checked against every case carrying the selected
+    // value, so grouped cases (`case A, B:`) accept fields under either name.
+    for (const auto& init : variant_inits) {
+        if (!selected_known[init.clause_index]) continue;
+        const WhenClauseInfo& clause = when_clauses[init.clause_index];
+        i64 selected = selected_values[init.clause_index];
+        bool belongs = false;
+        for (const VariantInfo& variant : clause.variants) {
+            if (variant.discriminant_value != selected) continue;
+            for (const VariantFieldInfo& field : variant.fields) {
+                if (field.name == init.name) { belongs = true; break; }
+            }
+            if (belongs) break;
+        }
+        if (belongs) continue;
+        // Name the selected variant through the discriminant enum's table
+        // (the selected value may not have a case in this clause at all).
+        StringView selected_name;
+        if (clause.discriminant_type && clause.discriminant_type->is_enum()) {
+            for (const auto& variant : clause.discriminant_type->enum_info.variants) {
+                if (variant.value == selected) { selected_name = variant.name; break; }
+            }
+        }
+        error_fmt(init.loc,
+                  "variant field '{}' does not belong to variant '{}' selected by discriminant '{}'",
+                  init.name, selected_name, clause.discriminant_name);
     }
 }
 
