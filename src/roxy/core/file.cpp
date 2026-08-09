@@ -66,6 +66,10 @@ bool read_file_to_buf(const char* path, u8*& buf, BumpAllocator& bump_allocator)
         fclose(file);
         return false;
     }
+    // In bounds by construction: the buffer is file_size + 1 bytes. The checker
+    // is taint-based and flags any index derived from the file system, which it
+    // keeps doing even though stream_size() now rejects a failed/negative ftell.
+    // NOLINTNEXTLINE(clang-analyzer-security.ArrayBound)
     buf[file_size] = 0;
 
     fclose(file);

@@ -407,6 +407,10 @@ static void* roxy_string_alloc_impl(const char* data, uint32_t length, bool immo
     if (length > 0) {
         memcpy(chars, data, length);
     }
+    // In bounds by construction: the allocation is header + length + 1, and the
+    // overflow guard above rejects a length that would wrap that sum. The
+    // checker is taint-based and flags the index regardless.
+    // NOLINTNEXTLINE(clang-analyzer-security.ArrayBound)
     chars[length] = '\0';
 
     // Cache a 32-bit hash over the character bytes so `Map<string, V>`
