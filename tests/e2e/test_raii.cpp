@@ -3236,32 +3236,48 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("borrowed uniq T resolves to ref T (a borrow)", Backend, RX_E2E_BACKENDS) {
-        // The `borrowed` type modifier demotes `uniq T` to `ref T`: the source is
-        // borrowed, not moved, so `owner` stays usable afterward.
+    // `borrowed` is not user-facing syntax — it is a native-signature-only
+    // modifier (Parser::set_native_signature_mode) that lets the built-in
+    // container accessors return a view of an element type that isn't known
+    // until monomorphization. The transform itself is covered above, through the
+    // signatures that actually use it: `List<uniq T>.index`, `Map<K, uniq V>.index`,
+    // and `Map.get` all yield `ref` and reject the move-out. The two cases below
+    // pin the parser gate.
+
+    TEST_CASE("the 'borrowed' type modifier is rejected in user source") {
+        // It used to parse here, which made it a language feature in the
+        // compiler front end and a syntax error in the LSP one (the
+        // error-recovering parser never recognized it).
         const char* source = R"(
         struct Point { x: i32; y: i32; }
         fun main(): i32 {
             var owner: uniq Point = uniq Point { x = 42, y = 0 };
-            var b: borrowed uniq Point = owner;   // -> ref Point (borrow)
-            return b.x + owner.x;                 // owner not moved: 42 + 42 == 84
+            var b: borrowed uniq Point = owner;
+            return b.x;
         }
     )";
-        auto result = Backend::run(source);
-        CHECK(result.success);
-        CHECK(result.value == 84);
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
     }
 
-    TEST_CASE_TEMPLATE("borrowed copyable T resolves to T (a copy)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("'borrowed' is an ordinary identifier in user source", Backend, RX_E2E_BACKENDS) {
+        // Including in *type* position: while the modifier was recognized here,
+        // a leading `borrowed` was swallowed and the parser then demanded a
+        // second type name, so a type could not be named `borrowed` at all.
         const char* source = R"(
+        struct borrowed { v: i32; }
+        fun borrowed.get_v(): i32 { return self.v; }
         fun main(): i32 {
-            var b: borrowed i32 = 5;   // copyable -> i32 (copy out)
-            return b;
+            var borrowed: i32 = 2;
+            var b: borrowed = borrowed { v = 40 };
+            return b.get_v() + borrowed;
         }
     )";
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 5);
+        CHECK(result.value == 42);
     }
 
     TEST_CASE_TEMPLATE("moving a pointer field out destroys it exactly once", Backend, RX_E2E_BACKENDS) {

@@ -159,6 +159,9 @@ struct TypeExpr {
     //   borrowed (copyable T) -> T,  borrowed (uniq T) -> ref T,  ref/weak idempotent.
     // Composes with ref_kind (e.g. `borrowed uniq T` sets both). Never persists as
     // a Type — resolution maps it to a concrete type.
+    // Settable only from a native binding signature (Parser::set_native_signature_mode);
+    // `borrowed` is not user-facing syntax, so in a TypeExpr parsed from user
+    // source this is always false.
     bool is_borrowed = false;
     Span<TypeExpr*> type_args;
     TypeExpr* return_type = nullptr;  // Function only

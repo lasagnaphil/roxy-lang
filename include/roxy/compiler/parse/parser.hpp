@@ -19,6 +19,16 @@ public:
 
     Program* parse();
 
+    // Native-signature mode: accept the `borrowed T` type modifier in type
+    // position. It is not language syntax — it exists so the built-in container
+    // accessors can say "I return a view, not ownership" in a signature whose
+    // element type isn't known until monomorphization
+    // (`fun Map<K, V>.get(key: K): borrowed V`). Only NativeRegistry sets this;
+    // user source has no use for the modifier and the LSP parser never
+    // recognized it, so leaving it on would be a front-end divergence.
+    // See lifetimes.md → "The `borrowed` type modifier".
+    void set_native_signature_mode(bool enable) { m_native_signature_mode = enable; }
+
     bool has_error() const { return m_has_error; }
     const ParseError& error() const { return m_error; }
 
@@ -29,6 +39,7 @@ private:
     Token m_previous;
     bool m_has_error;
     bool m_suppress_struct_literal = false;  // Suppresses identifier { } struct literal parsing
+    bool m_native_signature_mode = false;    // Enables the `borrowed T` type modifier
     ParseError m_error;
 
     // Token operations

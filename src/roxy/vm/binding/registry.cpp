@@ -82,6 +82,9 @@ Decl* NativeRegistry::parse_signature(const char* signature) {
 
     Lexer lexer(buf, total_len);
     Parser parser(lexer, m_allocator);
+    // Native signatures may use the `borrowed T` return modifier; user source
+    // may not (see Parser::set_native_signature_mode).
+    parser.set_native_signature_mode(true);
     Program* program = parser.parse();
     assert(!parser.has_error() && "Failed to parse native signature");
     assert(program->declarations.size() == 1);

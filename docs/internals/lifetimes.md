@@ -880,9 +880,20 @@ job to reject, not the IR builder's to repair.
 ### The `borrowed` type modifier
 
 `borrowed T` is a **resolve-time type transform** that demotes an owning type to a
-borrow — it lets a function or method express "I return a *view*, not ownership",
-most importantly the container subscript, where returning an owning `uniq T` by alias
-would double-free.
+borrow — it lets a built-in container accessor express "I return a *view*, not
+ownership" in a signature whose element type is not known until monomorphization,
+where returning an owning `uniq T` by alias would double-free.
+
+> **Not user-facing syntax.** `borrowed` is recognized **only while parsing a
+> native binding signature** (`Parser::set_native_signature_mode`, set by
+> `NativeRegistry::parse_signature`); in user source it is an ordinary
+> identifier, usable as a variable, function, or type name. It was briefly
+> accepted in any type position, which made it a front-end divergence — the
+> LSP's error-recovering parser never recognized it, so a program using it
+> compiled but did not analyze in the IDE — and no program ever had a reason to
+> write it, since `borrowed uniq T` is just `ref T` spelled longer. Its three
+> consumers are the whole surface: `List<T>.index`, `Map<K, V>.index`, and
+> `Map<K, V>.get`.
 
 | `borrowed X` | → | rationale |
 |---|---|---|
@@ -892,9 +903,9 @@ would double-free.
 | `ref T` / `weak T` | unchanged | already a borrow |
 | other noncopyable (value struct, coro, `List`/`Map`) | unchanged | identity (see below) |
 
-`borrowed` is a **soft keyword** (type position only; usable as an identifier
-elsewhere); it never persists as a `Type` — resolution maps it to a concrete type and
-rides on `TypeExpr` through generic substitution, so `borrowed T` resolves per
+Within a native signature `borrowed` is a **contextual keyword**, never reserved;
+it never persists as a `Type` — resolution maps it to a concrete type and rides on
+`TypeExpr::is_borrowed` through generic substitution, so `borrowed T` resolves per
 monomorphization. The native `List`/`Map` `index` (and `Map.get`) are typed
 `borrowed T` / `borrowed V`, so `var x: uniq Point = list[i]` is a plain `ref → uniq`
 type error.

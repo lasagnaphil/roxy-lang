@@ -2326,11 +2326,12 @@ TypeExpr* Parser::type_expression() {
     type->type_args = Span<TypeExpr*>();
     type->return_type = nullptr;
 
-    // `borrowed T`: a leading soft keyword in type position. Recognized
-    // contextually (not a reserved keyword) so `borrowed` stays usable as an
-    // ordinary identifier elsewhere; a type never begins with two identifiers,
-    // so a leading `borrowed` here is unambiguously the modifier.
-    if (check(TokenKind::Identifier) && m_current.text() == "borrowed") {
+    // `borrowed T`: a leading soft keyword in type position, recognized only
+    // while parsing a native binding signature (see set_native_signature_mode).
+    // It is not language syntax — in user source `borrowed` stays an ordinary
+    // identifier. Contextual rather than reserved; a type never begins with two
+    // identifiers, so a leading `borrowed` here is unambiguously the modifier.
+    if (m_native_signature_mode && check(TokenKind::Identifier) && m_current.text() == "borrowed") {
         advance();
         type->is_borrowed = true;
     }
