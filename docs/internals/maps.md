@@ -160,7 +160,7 @@ When a noncopyable map goes out of scope, the compiler emits cleanup IR:
 | `src/roxy/rt/roxy_rt.cpp` | Robin Hood hash table impl shared between VM and AOT |
 | `src/roxy/vm/map.cpp` | Thin shims around `roxy_map_*` that push/pop dispatch frames |
 | `src/roxy/vm/map_dispatch.cpp` | Thread-local dispatch stack + `vm_hash_trampoline` / `vm_eq_trampoline` |
-| `src/roxy/compiler/semantic.cpp` | Hash trait, Map type resolution, methods |
-| `src/roxy/compiler/ir_builder.cpp` | Map constructor + method call generation |
+| `src/roxy/compiler/sema/semantic.cpp` | Hash trait, Map type resolution, methods |
+| `src/roxy/compiler/ir/ir_builder.cpp` | Map constructor + method call generation |
 | `src/roxy/vm/natives.cpp` | Hash + Map native function implementations |
 | `tests/e2e/test_maps.cpp` | E2E tests |

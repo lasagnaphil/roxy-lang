@@ -2,7 +2,7 @@
 
 #include "roxy/core/types.hpp"
 #include "roxy/core/bump_allocator.hpp"
-#include "roxy/compiler/ast.hpp"
+#include "roxy/compiler/parse/ast.hpp"
 #include "roxy/lsp/syntax_tree.hpp"
 
 namespace rx {

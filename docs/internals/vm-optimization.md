@@ -34,7 +34,7 @@ A `#if defined(__GNUC__) || defined(__clang__)` guard keeps the switch version f
 
 **Gain: ~5–15%.** The compiler emits separate compare + branch (`LE_I r5,…; JMP_IF_NOT r5,…`); fusing halves dispatch overhead for the most common loop pattern. Adds `JMP_IF_{LT,LE,GT,GE,EQ,NE}_I b, c, offset`. Encoding is two words — `[opcode:8][_:8][src1:8][src2:8]` + `[offset:32]` — keeping the full 8-bit register range and a 32-bit offset. A post-lowering peephole pass scans for `CMP + JMP_IF/JMP_IF_NOT` pairs and fuses them, skipping the fusion when the comparison result is used elsewhere.
 
-**Files:** `include/roxy/vm/bytecode.hpp`, `src/roxy/compiler/lowering.cpp`, `src/roxy/vm/interpreter.cpp`.
+**Files:** `include/roxy/vm/bytecode.hpp`, `src/roxy/compiler/codegen/lowering.cpp`, `src/roxy/vm/interpreter.cpp`.
 
 ## Phase 4: List Indexing Fast Path — Done
 
@@ -59,7 +59,7 @@ The goal — stop materializing `LOAD_INT tmp, 1` before `ADD_I i, i, tmp` — w
 
 **Gain: ~5–10% for list/map-heavy code.** `list_len()`, `list_cap()`, `string_length()` are field loads wrapped in `CALL_NATIVE` (function-pointer lookup + indirect call + return path). Dedicated opcodes (`LIST_LEN`, `LIST_CAP`, `STR_LEN dst, reg`) compile to a single pointer deref + field load. Lowering substitutes them for known-trivial natives (marked "inlineable" in the native registry), eliminating the call overhead in loops like `i < scores.len()`.
 
-**Files:** `include/roxy/vm/bytecode.hpp`, `src/roxy/compiler/lowering.cpp`, `src/roxy/vm/interpreter.cpp`.
+**Files:** `include/roxy/vm/bytecode.hpp`, `src/roxy/compiler/codegen/lowering.cpp`, `src/roxy/vm/interpreter.cpp`.
 
 ## Phase 8: String Constant Interning — Done
 
@@ -71,7 +71,7 @@ Every `LOAD_CONST` of a String used to call `string_alloc()` (heap alloc + memcp
 
 `JMP_IF_{LT,LE,GT,GE,EQ,NE}_D` and their RK variants exist (0xA6–0xAF, 0xDB–0xDC) and `fuse_compare_branch()` matches `EQ_D`–`GE_D`. The f32 half is still unimplemented — f32 comparisons emit a separate compare + branch.
 
-**Files:** `include/roxy/vm/bytecode.hpp`, `src/roxy/compiler/lowering.cpp`, `src/roxy/vm/interpreter.cpp`.
+**Files:** `include/roxy/vm/bytecode.hpp`, `src/roxy/compiler/codegen/lowering.cpp`, `src/roxy/vm/interpreter.cpp`.
 
 ## Phase 10: Tail Call Optimization — Not started
 
@@ -79,7 +79,7 @@ Every `LOAD_CONST` of a String used to call `string_alloc()` (heap alloc + memcp
 
 **Constraints:** callee `register_count <= current` and `local_stack_slots <= current`; not applicable when cleanup records (e.g. `uniq` destructors) are active at the call site.
 
-**Files:** `include/roxy/vm/bytecode.hpp`, `src/roxy/compiler/lowering.cpp`, `src/roxy/vm/interpreter.cpp`.
+**Files:** `include/roxy/vm/bytecode.hpp`, `src/roxy/compiler/codegen/lowering.cpp`, `src/roxy/vm/interpreter.cpp`.
 
 ## Phase 11: Branch Prediction Hints — Not started
 
@@ -95,7 +95,7 @@ Every `LOAD_CONST` of a String used to call `string_alloc()` (heap alloc + memcp
 
 ## Phase 13: Constant Folding — Done (in the IR, not at lowering)
 
-Done as an SSA IR pass rather than at emission: constant folding, algebraic simplification, and cast folding are applied eagerly during IR building (`compiler/ir_fold.cpp`), so lowering never sees a constant-to-constant op. See [optimization.md](optimization.md) → Phase 1.
+Done as an SSA IR pass rather than at emission: constant folding, algebraic simplification, and cast folding are applied eagerly during IR building (`compiler/ir/ir_fold.cpp`), so lowering never sees a constant-to-constant op. See [optimization.md](optimization.md) → Phase 1.
 
 ## Phase 14: Specialized small-struct copy — Done (as opcodes, not memcpy)
 

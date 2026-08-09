@@ -1,0 +1,199 @@
+#pragma once
+
+#include "roxy/core/types.hpp"
+#include "roxy/core/span.hpp"
+#include "roxy/core/string_view.hpp"
+#include "roxy/core/vector.hpp"
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/shared/token.hpp"
+#include "roxy/compiler/types/types.hpp"
+
+#include "roxy/core/tsl/robin_map.h"
+
+namespace rx {
+
+// Forward declarations
+struct Decl;
+struct Scope;
+
+enum class SymbolKind : u8 {
+    Variable,
+    Parameter,
+    Function,
+    Struct,
+    Enum,
+    Field,
+    EnumVariant,
+    Trait,
+    Module,              // Imported module namespace
+    ImportedFunction,    // Function imported from another module
+};
+
+inline bool is_function_symbol_kind(SymbolKind kind) {
+    return kind == SymbolKind::Function || kind == SymbolKind::ImportedFunction;
+}
+
+// A symbol represents a named entity in the program
+struct Symbol {
+    SymbolKind kind;
+    StringView name;
+    Type* type;
+    SourceLocation loc;
+    Decl* decl;           // AST node that declared this symbol (may be null for built-ins)
+    bool is_pub;          // Public visibility
+    bool is_out_inout;    // For Parameter symbols: declared `out` or `inout` (second-class)
+    Scope* defining_scope;  // Scope where this symbol was defined; used for capture detection
+    // The lookup-cache entry this symbol displaced when it was defined (null if
+    // the name was previously unbound). pop_scope restores it, so leaving a
+    // scope costs O(symbols in that scope) instead of a full cache rebuild.
+    Symbol* shadowed;
+    // Overload chain (function-kind symbols at global scope only). Only the
+    // HEAD symbol lives in the lookup cache and the scope's symbol vector;
+    // chain members are linked here via append_overload and never enter
+    // either, so define/pop_scope/shadow-restore and every existing
+    // first-match lookup are untouched.
+    Symbol* next_overload;
+
+    Symbol()
+        : kind(SymbolKind::Variable)
+        , name(nullptr, 0)  // Explicitly initialize StringView
+        , type(nullptr)
+        , loc{0, 0, 0}
+        , decl(nullptr)
+        , is_pub(false)
+        , is_out_inout(false)
+        , defining_scope(nullptr)
+        , shadowed(nullptr)
+        , next_overload(nullptr)
+    {
+        // Zero-initialize the union
+        param.index = 0;
+    }
+
+    // Kind-specific data
+    union {
+        struct {
+            u32 index;    // Parameter index in function signature
+        } param;
+
+        struct {
+            u32 index;    // Field index in struct layout
+        } field;
+
+        struct {
+            i64 value;    // Enum variant value
+        } enum_variant;
+
+        struct {
+            void* module_info;  // ModuleInfo* (avoid circular include)
+        } module;
+
+        struct {
+            StringView module_name;  // Source module name
+            StringView original_name;  // Original function name in the module
+            u32 native_index;        // Index in module's native_functions
+            bool is_native;          // True if from native module
+        } imported_func;
+    };
+};
+
+// Scope types for semantic analysis
+enum class ScopeKind : u8 {
+    Global,       // Top-level scope
+    Function,     // Function body scope
+    Block,        // Block scope (if, while, for, etc.)
+    Loop,         // Loop scope (while, for) - for break/continue validation
+    Struct,       // Struct scope - for 'this' validation
+    Lambda,       // Lambda body boundary - any name resolved across this scope is captured
+};
+
+// A scope contains symbols and tracks context
+struct Scope {
+    ScopeKind kind;
+    Scope* parent;
+    Vector<Symbol*> symbols;
+
+    // Scope-specific data
+    union {
+        struct {
+            Type* return_type;    // Expected return type
+        } function;
+
+        struct {
+            Type* struct_type;    // The struct type for 'this'
+        } struct_scope;
+    };
+};
+
+// Symbol table manages scopes and symbol lookup
+class SymbolTable {
+public:
+    explicit SymbolTable(BumpAllocator& allocator);
+
+    // Scope management
+    void push_scope(ScopeKind kind);
+    void push_function_scope(Type* return_type);
+    void push_loop_scope();
+    void push_struct_scope(Type* struct_type);
+    void pop_scope();
+
+    // Symbol definition
+    Symbol* define(SymbolKind kind, StringView name, Type* type, SourceLocation loc, Decl* decl = nullptr);
+    Symbol* define_parameter(StringView name, Type* type, SourceLocation loc, u32 index,
+                             bool is_out_inout = false);
+    Symbol* define_field(StringView name, Type* type, SourceLocation loc, u32 index, bool is_pub);
+    Symbol* define_enum_variant(StringView name, Type* type, SourceLocation loc, i64 value);
+    Symbol* define_module(StringView name, void* module_info, SourceLocation loc);
+    Symbol* define_imported_function(StringView name, Type* type, SourceLocation loc,
+                                     StringView module_name, StringView original_name,
+                                     u32 native_index, bool is_native);
+
+    // Append a new overload to `head`'s chain (definition order preserved).
+    // The new symbol shares head's name/defining_scope but never enters the
+    // lookup cache or the scope's symbol vector — chain members are reachable
+    // only through head->next_overload.
+    Symbol* append_overload(Symbol* head, SymbolKind kind, Type* type,
+                            SourceLocation loc, Decl* decl = nullptr);
+
+    // Symbol lookup
+    Symbol* lookup(StringView name) const;           // Look up in all scopes
+    Symbol* lookup_local(StringView name) const;     // Look up in current scope only
+
+    // Innermost visible binding of `name` IF it is a variable or parameter of
+    // the function currently being analyzed — i.e. defined between the current
+    // scope and the enclosing function boundary. A lambda's Function scope
+    // (always parented by its Lambda boundary scope) does not end the walk, so
+    // enclosing-function locals are still found from inside a lambda body.
+    // Returns null when the name is unbound or resolves outside the current
+    // function (module globals / functions / types / struct fields — all of
+    // which may be shadowed). Used by the local-shadowing ban.
+    Symbol* lookup_function_local(StringView name) const;
+
+    // Scope queries
+    bool is_in_loop() const;
+    bool is_in_function() const;
+    bool is_in_struct() const;
+    Type* current_return_type() const;
+    Type* current_struct_type() const;
+    Scope* current_struct_scope() const;  // innermost enclosing ScopeKind::Struct, or null
+    Scope* current_scope() const { return m_current; }
+    Scope* global_scope() const { return m_global; }
+
+private:
+    BumpAllocator& m_allocator;
+    Scope* m_global;
+    Scope* m_current;
+
+    // Fast lookup map for the current scope chain: name -> innermost visible
+    // symbol. Maintained incrementally — define() records the displaced entry
+    // in Symbol::shadowed and pop_scope() restores the scope's entries in
+    // reverse definition order. Invariant: a name defined in the current scope
+    // always maps to that local symbol (nothing inside the scope can displace
+    // it except a same-scope redefinition), which is what lets lookup_local
+    // answer from the cache via a defining_scope check.
+    tsl::robin_map<StringView, Symbol*> m_lookup_cache;
+
+    Scope* create_scope(ScopeKind kind);
+};
+
+}

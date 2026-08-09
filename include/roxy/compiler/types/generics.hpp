@@ -1,0 +1,232 @@
+#pragma once
+
+#include "roxy/core/types.hpp"
+#include "roxy/core/span.hpp"
+#include "roxy/core/string_view.hpp"
+#include "roxy/core/vector.hpp"
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/compiler/parse/ast.hpp"
+#include "roxy/compiler/types/types.hpp"
+
+#include "roxy/core/tsl/robin_map.h"
+
+namespace rx {
+
+// Resolved bounds for all type params of one generic template
+struct ResolvedTypeParams {
+    Span<Span<TraitBound>> param_bounds;  // param_bounds[i] = bounds for i-th type param
+};
+
+// Maps type parameter names to concrete types for substitution
+struct TypeSubstitution {
+    Span<StringView> param_names;    // ["T", "U"]
+    Span<Type*> concrete_types;      // [i32_type, string_type]
+
+    Type* lookup(StringView name) const;
+};
+
+// A concrete instantiation of a generic function
+struct GenericFunInstance {
+    StringView mangled_name;         // "identity$i32"
+    Decl* original_decl;             // Original generic FunDecl
+    TypeSubstitution substitution;
+    Decl* instantiated_decl;         // Cloned + substituted AST
+    bool is_analyzed;
+    // True when any type argument is itself a TypeParam — an abstract instance
+    // (e.g. "identity$$T") created while Phase B checks a bounded template body
+    // whose body calls this generic function with a type-param argument. Like
+    // the abstract GenericStructInstance, it exists only so the Phase B call
+    // type-checks; its body names the bare type param and cannot be analyzed
+    // outside the bounds context, so it is quarantined from the pending-fun
+    // drains and from the IR builder.
+    bool is_abstract = false;
+    // Module that defined the template. Owns body analysis and IR emission
+    // for this instance — references inside the body resolve against this
+    // module's symbol table, not the module that triggered the
+    // instantiation.
+    StringView template_module;
+};
+
+// A concrete instantiation of a generic struct
+struct GenericStructInstance {
+    StringView mangled_name;         // "Box$i32"
+    Decl* original_decl;             // Original generic StructDecl
+    TypeSubstitution substitution;
+    Decl* instantiated_decl;         // Cloned + substituted StructDecl
+    Type* concrete_type;             // The concrete struct Type*
+    bool is_analyzed;
+    // True when any type argument is itself a TypeParam — an abstract
+    // instance (e.g. "Box$$T") created while Phase B checks a bounded
+    // template body that names Box<T>. Abstract instances exist only to give
+    // the Phase B walk field/method types to check against: they are
+    // quarantined from codegen (the IR builder skips them) and from the
+    // member-body analysis worklist. Their mangled names carry a reserved
+    // '$'-prefixed argument segment so they can never collide with a
+    // concrete instance.
+    bool is_abstract;
+    // Module that defined the template. Owns IR emission for this instance's
+    // constructors/destructors/methods, so each is built once (from the
+    // defining module) instead of once per module — mirrors
+    // GenericFunInstance::template_module. Empty in single-module compilations
+    // (the IR builder then falls through and emits from the current module).
+    StringView template_module;
+    Vector<Decl*> instantiated_methods;       // Cloned external method DeclMethod nodes
+    Vector<Decl*> instantiated_constructors;  // Cloned external constructor DeclConstructor nodes
+    Vector<Decl*> instantiated_destructors;   // Cloned external destructor DeclDestructor nodes
+};
+
+// Manages generic templates and their instantiations
+class GenericInstantiator {
+public:
+    explicit GenericInstantiator(BumpAllocator& allocator, TypeCache& types);
+
+    // Register generic templates
+    void register_generic_fun(StringView name, Decl* decl, StringView module_name = {});
+    void register_generic_struct(StringView name, Decl* decl, StringView module_name = {});
+
+    // Look up the module that registered this template (empty if unknown).
+    StringView get_fun_template_module(StringView name) const;
+    StringView get_struct_template_module(StringView name) const;
+
+    // Register/query external method templates for generic structs
+    void register_generic_struct_method(StringView struct_name, Decl* method_decl);
+    const Vector<Decl*>* get_generic_struct_methods(StringView struct_name) const;
+
+    // Register/query external constructor/destructor templates for generic structs
+    void register_generic_struct_constructor(StringView struct_name, Decl* ctor_decl);
+    void register_generic_struct_destructor(StringView struct_name, Decl* dtor_decl);
+    const Vector<Decl*>* get_generic_struct_constructors(StringView struct_name) const;
+    const Vector<Decl*>* get_generic_struct_destructors(StringView struct_name) const;
+
+    // Query
+    bool is_generic_fun(StringView name) const;
+    bool is_generic_struct(StringView name) const;
+    Decl* get_generic_fun_decl(StringView name) const;
+    Decl* get_generic_struct_decl(StringView name) const;
+
+    // Instantiate a generic function with concrete type arguments
+    // Returns the mangled name for the instantiation
+    StringView instantiate_fun(StringView name, Span<Type*> type_args);
+
+    // Instantiate a generic struct with concrete type arguments
+    // Returns the mangled name for the instantiation
+    StringView instantiate_struct(StringView name, Span<Type*> type_args);
+
+    // Pending instances that need semantic analysis
+    bool has_pending_funs() const;
+    Vector<GenericFunInstance*> take_pending_funs();
+
+    // Sideline an instance whose template lives in another module — the
+    // current analyzer's per-module worklist would loop forever on it. The
+    // compiler's post-pass calls promote_cross_module_funs to move them back
+    // into the pending queue, then runs each module's analyzer to drain its
+    // own.
+    void sideline_cross_module_fun(GenericFunInstance* inst);
+    void promote_cross_module_funs();
+    bool has_cross_module_funs() const;
+
+    bool has_pending_structs() const;
+    Vector<GenericStructInstance*> take_pending_structs();
+
+    // Access all instances (for IR builder)
+    const Vector<GenericFunInstance*>& all_fun_instances() const { return m_all_fun_instances; }
+    const Vector<GenericStructInstance*>& all_struct_instances() const { return m_all_struct_instances; }
+
+    // Look up existing instances by mangled name
+    GenericFunInstance* find_fun_instance(StringView mangled_name) const;
+    GenericStructInstance* find_struct_instance(StringView mangled_name) const;
+
+    // Look up a struct instance by its concrete Type* pointer
+    GenericStructInstance* find_struct_instance_by_type(Type* concrete_type) const;
+
+    // Name mangling
+    StringView mangle_name(StringView base_name, Span<Type*> type_args);
+
+    // True if `type` is or contains a TypeParam (recursing through refs,
+    // containers, function types, and abstract struct instances). A generic
+    // instantiated with such an argument is an abstract Phase-B artifact.
+    bool type_contains_type_param(Type* type) const;
+
+    // Trait bounds storage for generic templates
+    void set_fun_bounds(StringView name, ResolvedTypeParams bounds);
+    void set_struct_bounds(StringView name, ResolvedTypeParams bounds);
+    const ResolvedTypeParams* get_fun_bounds(StringView name) const;
+    const ResolvedTypeParams* get_struct_bounds(StringView name) const;
+
+    // Accessors for iterating all generic templates
+    const tsl::robin_map<StringView, Decl*>& generic_funs_map() const { return m_generic_funs; }
+    const tsl::robin_map<StringView, Decl*>& generic_structs_map() const { return m_generic_structs; }
+
+    // Public AST cloning with type substitution (used by trait default method injection)
+    Stmt* clone_stmt(Stmt* stmt, const TypeSubstitution& subst);
+    TypeExpr* substitute_type_expr(TypeExpr* type_expr, const TypeSubstitution& subst);
+
+private:
+    // Clone AST with type substitution
+    Decl* clone_fun_decl(Decl* original, const TypeSubstitution& subst, StringView new_name);
+    Decl* clone_struct_decl(Decl* original, const TypeSubstitution& subst, StringView new_name);
+    Decl* clone_method_decl(Decl* original, const TypeSubstitution& subst, StringView mangled_struct_name);
+    Decl* clone_constructor_decl(Decl* original, const TypeSubstitution& subst, StringView mangled_struct_name);
+    Decl* clone_destructor_decl(Decl* original, const TypeSubstitution& subst, StringView mangled_struct_name);
+    Expr* clone_expr(Expr* expr, const TypeSubstitution& subst);
+    Decl* clone_decl(Decl* decl, const TypeSubstitution& subst);
+    Span<Decl*> clone_decl_list(Span<Decl*> decls, const TypeSubstitution& subst);
+    Span<CallArg> clone_call_args(Span<CallArg> args, const TypeSubstitution& subst);
+    Span<FieldInit> clone_field_inits(Span<FieldInit> fields, const TypeSubstitution& subst);
+
+    // Get the type name string for mangling
+    StringView type_name_for_mangling(Type* type);
+
+    // Convert a resolved Type* back into a TypeExpr for AST substitution
+    TypeExpr* type_to_type_expr(Type* type, SourceLocation loc);
+
+    BumpAllocator& m_allocator;
+    TypeCache& m_types;
+
+    // Generic function templates
+    tsl::robin_map<StringView, Decl*> m_generic_funs;
+
+    // Defining module for each generic function template (cross-module
+    // ownership — body analysis and IR emission belong to this module).
+    tsl::robin_map<StringView, StringView> m_fun_template_modules;
+
+    // Generic struct templates
+    tsl::robin_map<StringView, Decl*> m_generic_structs;
+
+    // Defining module for each generic struct template (cross-module
+    // ownership — IR emission of the instance's ctors/dtors/methods belongs to
+    // this module, so they are built once rather than once per module).
+    tsl::robin_map<StringView, StringView> m_struct_template_modules;
+
+    // External method templates for generic structs (struct_name -> list of DeclMethod)
+    tsl::robin_map<StringView, Vector<Decl*>> m_generic_struct_methods;
+
+    // External constructor/destructor templates for generic structs
+    tsl::robin_map<StringView, Vector<Decl*>> m_generic_struct_constructors;
+    tsl::robin_map<StringView, Vector<Decl*>> m_generic_struct_destructors;
+
+    // All function instances (including already analyzed ones)
+    Vector<GenericFunInstance*> m_all_fun_instances;
+
+    // All struct instances
+    Vector<GenericStructInstance*> m_all_struct_instances;
+
+    // Pending instances that need analysis
+    Vector<GenericFunInstance*> m_pending_funs;
+    Vector<GenericStructInstance*> m_pending_structs;
+
+    // Sidelined instances whose template belongs to a different module than
+    // the analyzer that drained them. The compiler's post-pass moves these
+    // back into m_pending_funs once the per-module worklists finish.
+    Vector<GenericFunInstance*> m_cross_module_funs;
+
+    // Cache: mangled_name -> instance (to avoid duplicate instantiation)
+    tsl::robin_map<StringView, GenericFunInstance*> m_fun_instance_cache;
+    tsl::robin_map<StringView, GenericStructInstance*> m_struct_instance_cache;
+
+    // Resolved trait bounds for generic templates
+    tsl::robin_map<StringView, ResolvedTypeParams> m_fun_bounds;
+    tsl::robin_map<StringView, ResolvedTypeParams> m_struct_bounds;
+};
+
+}

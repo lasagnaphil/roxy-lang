@@ -1,7 +1,7 @@
 #pragma once
 
 #include "roxy/core/types.hpp"
-#include "roxy/compiler/types.hpp"
+#include "roxy/compiler/types/types.hpp"
 #include "roxy/vm/value.hpp"
 
 #include <cstring>

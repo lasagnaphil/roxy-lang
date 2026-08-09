@@ -169,14 +169,14 @@ Which primitive types carry which operators:
 | `bool` | — | — | `eq ne` | — | — |
 | `List<T>` | — | — | — | — | `index` / `index_mut` |
 
-The shared operator→method-name mappings live in `include/roxy/compiler/operator_traits.hpp` (`binary_op_to_trait_method()`, `unary_op_to_trait_method()`, `assign_op_to_trait_method()`), used by both semantic analysis and IR generation. The header also carries the REVERSE maps (`trait_method_to_binary_op()`, `trait_method_to_unary_op()`), which power **explicit operator-named method calls on primitive receivers**: `a.lt(b)` / `(10).add(5)` on a primitive lowers to the same raw IR op the operator expression would emit (so `u64.lt` is `LtU`, `f64.add` is `AddD`), `"a".eq(b)` routes to the string natives, and enums compare as i32 discriminants. Compound-assign methods have no reverse mapping and are rejected as explicit calls. This is what makes generic bodies calling bound trait methods (`<T: Ord>` with `a.lt(b)`) work when instantiated at primitives.
+The shared operator→method-name mappings live in `include/roxy/compiler/support/operator_traits.hpp` (`binary_op_to_trait_method()`, `unary_op_to_trait_method()`, `assign_op_to_trait_method()`), used by both semantic analysis and IR generation. The header also carries the REVERSE maps (`trait_method_to_binary_op()`, `trait_method_to_unary_op()`), which power **explicit operator-named method calls on primitive receivers**: `a.lt(b)` / `(10).add(5)` on a primitive lowers to the same raw IR op the operator expression would emit (so `u64.lt` is `LtU`, `f64.add` is `AddD`), `"a".eq(b)` routes to the string natives, and enums compare as i32 discriminants. Compound-assign methods have no reverse mapping and are rejected as explicit calls. This is what makes generic bodies calling bound trait methods (`<T: Ord>` with `a.lt(b)`) work when instantiated at primitives.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `include/roxy/compiler/operator_traits.hpp` | operator → method-name mappings |
-| `src/roxy/compiler/trait_system.cpp` | trait/primitive operator-method registration (`TraitSystem`) |
-| `src/roxy/compiler/semantic.cpp` | operator resolution (`try_resolve_binary_op`/`try_resolve_unary_op`, trait-bound dispatch) |
-| `src/roxy/compiler/ir_builder.cpp` | direct IR ops for primitives, trait calls for structs |
+| `include/roxy/compiler/support/operator_traits.hpp` | operator → method-name mappings |
+| `src/roxy/compiler/sema/trait_system.cpp` | trait/primitive operator-method registration (`TraitSystem`) |
+| `src/roxy/compiler/sema/semantic.cpp` | operator resolution (`try_resolve_binary_op`/`try_resolve_unary_op`, trait-bound dispatch) |
+| `src/roxy/compiler/ir/ir_builder.cpp` | direct IR ops for primitives, trait calls for structs |
 | `tests/e2e/test_traits.cpp` | operator-overloading E2E tests |

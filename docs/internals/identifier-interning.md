@@ -57,7 +57,7 @@ negative-results register and §8 for where compile-time effort should go instea
 Interning was only *sound* if the `$$` mangling scheme had one byte-producing
 definition — it was previously re-`format()`'d at eight sites across five files,
 each with its own literal that had to byte-match the others. That unification
-landed as a standalone refactor (`compiler/mangling.{hpp,cpp}`) and was kept: it
+landed as a standalone refactor (`compiler/support/mangling.{hpp,cpp}`) and was kept: it
 is perf-neutral and removes a real drift hazard independent of interning.
 
 All mangled names now come from one module — `mangle_method`,

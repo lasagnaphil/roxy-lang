@@ -57,7 +57,7 @@ fun main(): i32 {
 
 ## Architecture
 
-The module layer is built from a few data structures in `compiler/module_registry.hpp`:
+The module layer is built from a few data structures in `compiler/driver/module_registry.hpp`:
 
 - **`ModuleExport`** — a single export entry: name, `ExportKind` (Function / Struct / Enum), `Type*`, plus `is_native` / `is_pub` flags, export index, and the AST `Decl*` (null for natives).
 - **`ModuleInfo`** — module metadata: name, the list of `ModuleExport`s, and (for native modules) the backing `NativeRegistry*`.
@@ -67,7 +67,7 @@ C++ binding via `NativeRegistry` (`vm/binding/registry.hpp`) is a separate conce
 
 ## Multi-Module Compilation
 
-The `Compiler` class (`compiler/compiler.hpp`) drives multi-file compilation. Callers register native registries and add named sources, then call `compile()`, which returns a linked `BCModule*` (null on failure, with errors available via `errors()`):
+The `Compiler` class (`compiler/driver/compiler.hpp`) drives multi-file compilation. Callers register native registries and add named sources, then call `compile()`, which returns a linked `BCModule*` (null on failure, with errors available via `errors()`):
 
 ```cpp
 Compiler compiler(allocator);
@@ -128,12 +128,12 @@ modules.register_native_module("math", &math_registry, types);
 
 | File | Purpose |
 |------|---------|
-| `include/roxy/compiler/module_registry.hpp` | `ModuleInfo`, `ModuleExport`, `ModuleRegistry` |
-| `src/roxy/compiler/module_registry.cpp` | module registration, native-module conversion |
-| `include/roxy/compiler/compiler.hpp` | `Compiler` class declaration |
-| `src/roxy/compiler/compiler.cpp` | multi-module compilation, topological sort, linking |
+| `include/roxy/compiler/driver/module_registry.hpp` | `ModuleInfo`, `ModuleExport`, `ModuleRegistry` |
+| `src/roxy/compiler/driver/module_registry.cpp` | module registration, native-module conversion |
+| `include/roxy/compiler/driver/compiler.hpp` | `Compiler` class declaration |
+| `src/roxy/compiler/driver/compiler.cpp` | multi-module compilation, topological sort, linking |
 | `include/roxy/vm/natives.hpp` | `BUILTIN_MODULE_NAME` constant |
-| `src/roxy/compiler/semantic.cpp` | import analysis, prelude auto-import, qualified access |
-| `src/roxy/compiler/ir_builder.cpp` | `CallExternal` IR emission |
-| `src/roxy/compiler/lowering.cpp` | static linking (`CallExternal` → `CALL`) |
+| `src/roxy/compiler/sema/semantic.cpp` | import analysis, prelude auto-import, qualified access |
+| `src/roxy/compiler/ir/ir_builder.cpp` | `CallExternal` IR emission |
+| `src/roxy/compiler/codegen/lowering.cpp` | static linking (`CallExternal` → `CALL`) |
 | `tests/e2e/test_modules.cpp` | module system E2E tests |

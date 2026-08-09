@@ -1,8 +1,8 @@
 #include "roxy/core/doctest/doctest.h"
 
-#include "roxy/compiler/ir_validator.hpp"
-#include "roxy/compiler/ssa_ir.hpp"
-#include "roxy/compiler/types.hpp"
+#include "roxy/compiler/ir/ir_validator.hpp"
+#include "roxy/compiler/ir/ssa_ir.hpp"
+#include "roxy/compiler/types/types.hpp"
 #include "roxy/core/bump_allocator.hpp"
 
 using namespace rx;

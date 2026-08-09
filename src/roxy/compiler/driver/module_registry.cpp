@@ -1,0 +1,96 @@
+#include "roxy/compiler/driver/module_registry.hpp"
+#include "roxy/compiler/parse/ast.hpp"
+#include "roxy/vm/binding/registry.hpp"
+
+namespace rx {
+
+void ModuleRegistry::register_native_module(StringView name, NativeRegistry* natives, TypeCache& types) {
+    // Create module info
+    ModuleInfo* module = m_allocator.emplace<ModuleInfo>();
+    module->name = name;
+    module->natives = natives;
+    module->is_native = true;
+
+    // Add all non-method native functions as exports
+    // Methods (is_method=true) are accessed via method dispatch, not as module exports
+    for (u32 i = 0; i < natives->size(); i++) {
+        const NativeFunctionEntry& entry = natives->get_entry(i);
+        if (entry.is_method) continue;
+
+        ModuleExport exp;
+        // Overloaded natives export under their source-visible name; the
+        // registry key travels in symbol_name.
+        exp.name = entry.source_name.empty() ? entry.name : entry.source_name;
+        exp.symbol_name = entry.source_name.empty() ? StringView{} : entry.name;
+        exp.kind = ExportKind::Function;
+        exp.is_native = true;
+        exp.is_pub = true;  // All native functions are public
+        exp.index = i;
+        exp.decl = nullptr;
+
+        // Build function type from the native entry's type info
+        Type* ret_type = entry.resolve_return_type(types);
+        Type** param_array = nullptr;
+        if (entry.param_count > 0) {
+            param_array = reinterpret_cast<Type**>(
+                m_allocator.alloc_bytes(sizeof(Type*) * entry.param_count, alignof(Type*)));
+            entry.resolve_param_types(types, param_array);
+        }
+        exp.type = types.function_type(Span<Type*>(param_array, entry.param_count), ret_type);
+
+        module->exports.push_back(exp);
+    }
+
+    m_modules[name] = module;
+}
+
+ModuleInfo* ModuleRegistry::register_script_module(StringView name) {
+    ModuleInfo* module = m_allocator.emplace<ModuleInfo>();
+    module->name = name;
+    module->natives = nullptr;
+    module->is_native = false;
+
+    m_modules[name] = module;
+    return module;
+}
+
+void ModuleRegistry::add_export(ModuleInfo* module, StringView name, ExportKind kind,
+                                Type* type, bool is_pub, u32 index, Decl* decl) {
+    ModuleExport exp;
+    exp.name = name;
+    exp.kind = kind;
+    exp.type = type;
+    exp.is_native = false;
+    exp.is_pub = is_pub;
+    exp.index = index;
+    exp.decl = decl;
+    // Script overloads carry their signature-suffixed flat name so importers
+    // can call the right member.
+    if (decl && decl->kind == AstKind::DeclFun && kind == ExportKind::Function) {
+        exp.symbol_name = decl->fun_decl.overload_mangled_name;
+    }
+
+    module->exports.push_back(exp);
+}
+
+// Helper function to convert NativeTypeKind to Type*
+Type* type_from_kind(NativeTypeKind kind, TypeCache& types) {
+    switch (kind) {
+        case NativeTypeKind::Void: return types.void_type();
+        case NativeTypeKind::Bool: return types.bool_type();
+        case NativeTypeKind::I8: return types.i8_type();
+        case NativeTypeKind::I16: return types.i16_type();
+        case NativeTypeKind::I32: return types.i32_type();
+        case NativeTypeKind::I64: return types.i64_type();
+        case NativeTypeKind::U8: return types.u8_type();
+        case NativeTypeKind::U16: return types.u16_type();
+        case NativeTypeKind::U32: return types.u32_type();
+        case NativeTypeKind::U64: return types.u64_type();
+        case NativeTypeKind::F32: return types.f32_type();
+        case NativeTypeKind::F64: return types.f64_type();
+        case NativeTypeKind::String: return types.string_type();
+        default: return types.error_type();
+    }
+}
+
+}

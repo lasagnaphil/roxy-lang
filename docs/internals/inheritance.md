@@ -150,7 +150,7 @@ Two invariants make that split work, and both were bugs before:
 
 | File | Purpose |
 |---|---|
-| `src/roxy/compiler/types.cpp` | `StructTypeInfo.parent`, field layout, `is_subtype_of()` |
-| `src/roxy/compiler/semantic.cpp` | inheritance resolution, `check_assignable()`, method lookup, `super` resolution, constructor/destructor chaining |
-| `src/roxy/compiler/ir_builder.cpp` | static method dispatch, value slicing, covariant reference conversions |
+| `src/roxy/compiler/types/types.cpp` | `StructTypeInfo.parent`, field layout, `is_subtype_of()` |
+| `src/roxy/compiler/sema/semantic.cpp` | inheritance resolution, `check_assignable()`, method lookup, `super` resolution, constructor/destructor chaining |
+| `src/roxy/compiler/ir/ir_builder.cpp` | static method dispatch, value slicing, covariant reference conversions |
 | `tests/e2e/test_inheritance.cpp` | E2E tests |

@@ -1,7 +1,7 @@
 /**
  * Tree-sitter grammar for Roxy.
  *
- * Modelled on src/roxy/compiler/parser.cpp, which is the ground truth —
+ * Modelled on src/roxy/compiler/parse/parser.cpp, which is the ground truth —
  * docs/grammar.md lags the implementation in several places (it omits the
  * bitwise/shift precedence levels, claims `import *`, and gives destructors an
  * empty parameter list).

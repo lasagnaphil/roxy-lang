@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
 
-#include "roxy/compiler/parser.hpp"
+#include "roxy/compiler/parse/parser.hpp"
 #include "roxy/core/bump_allocator.hpp"
 
 #include <cstring>

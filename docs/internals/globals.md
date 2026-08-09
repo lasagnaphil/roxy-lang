@@ -119,13 +119,13 @@ The VM drives them around the module lifecycle:
 
 | File | Change |
 |------|--------|
-| `include/roxy/compiler/ssa_ir.hpp` | `IROp::GlobalAddr`, `GlobalData`, `IRGlobal`, `IRModule::globals` / `global_slot_count` |
-| `src/roxy/compiler/ir_builder.{hpp,cpp}` | `collect_globals`; `emit_global_addr` / `gen_global_read`; global read in `gen_identifier_expr`, global write in `gen_assign_local`; `build_module_init` / `build_module_shutdown` (incl. finding-8 `ref`-global RefInc/RefDec); `gen_delete_stmt` nulls a deleted `uniq` global's slot (finding 8b); `m_global_indices` |
-| `src/roxy/compiler/lowering.cpp` | `GlobalAddr` → `GLOBAL_ADDR`; `BCModule::global_slot_count`; liveness no-operand classification |
-| `src/roxy/compiler/compiler.cpp` | `link_modules` merges globals with offset re-basing + `GlobalAddr` rewrite |
-| `src/roxy/compiler/ssa_ir.cpp`, `ir_validator.cpp`, `ir_optimize.hpp` | `GlobalAddr` in printers / validator / `for_each_operand` |
+| `include/roxy/compiler/ir/ssa_ir.hpp` | `IROp::GlobalAddr`, `GlobalData`, `IRGlobal`, `IRModule::globals` / `global_slot_count` |
+| `src/roxy/compiler/ir/ir_builder.{hpp,cpp}` | `collect_globals`; `emit_global_addr` / `gen_global_read`; global read in `gen_identifier_expr`, global write in `gen_assign_local`; `build_module_init` / `build_module_shutdown` (incl. finding-8 `ref`-global RefInc/RefDec); `gen_delete_stmt` nulls a deleted `uniq` global's slot (finding 8b); `m_global_indices` |
+| `src/roxy/compiler/codegen/lowering.cpp` | `GlobalAddr` → `GLOBAL_ADDR`; `BCModule::global_slot_count`; liveness no-operand classification |
+| `src/roxy/compiler/driver/compiler.cpp` | `link_modules` merges globals with offset re-basing + `GlobalAddr` rewrite |
+| `src/roxy/compiler/ir/ssa_ir.cpp`, `ir_validator.cpp`, `ir_optimize.hpp` | `GlobalAddr` in printers / validator / `for_each_operand` |
 | `include/roxy/vm/bytecode.hpp` | `GLOBAL_ADDR` (0xBE), `BCModule::global_slot_count` |
 | `src/roxy/vm/interpreter.cpp` | `GLOBAL_ADDR` handler + dispatch entry |
 | `include/roxy/vm/vm.hpp`, `src/roxy/vm/vm.cpp` | `RoxyVM::global_slots`; alloc + `__module_init` at load; `__module_shutdown` + free at destroy |
-| `include/roxy/compiler/c_emitter.{hpp,cpp}` | `emit_global_definitions` / `emit_global_symbol` / `find_global_by_offset`; `GlobalAddr` → `&g_<name>`; `uniq`/`ref`-of-struct pointer tracking; recursive typed `Delete` (`emit_typed_delete` / `emit_delete_slot`: destructors + container element/key/value teardown + buffer free); `main()` drives init/shutdown |
+| `include/roxy/compiler/codegen/c_emitter.{hpp,cpp}` | `emit_global_definitions` / `emit_global_symbol` / `find_global_by_offset`; `GlobalAddr` → `&g_<name>`; `uniq`/`ref`-of-struct pointer tracking; recursive typed `Delete` (`emit_typed_delete` / `emit_delete_slot`: destructors + container element/key/value teardown + buffer free); `main()` drives init/shutdown |
 | `tests/e2e/test_globals.cpp`, `tests/e2e/test_c_backend.cpp` | VM + C-backend E2E tests |

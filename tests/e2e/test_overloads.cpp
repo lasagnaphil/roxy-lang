@@ -2,7 +2,7 @@
 #include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
 
-#include "roxy/compiler/compiler.hpp"
+#include "roxy/compiler/driver/compiler.hpp"
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
 

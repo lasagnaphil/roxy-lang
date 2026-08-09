@@ -104,37 +104,46 @@ add_library(roxy_shared
 )
 target_link_libraries(roxy_shared roxy_core)
 
-# Compiler library (parser, AST, semantic analysis, SSA IR)
+# Compiler library (parser, AST, semantic analysis, SSA IR, codegen).
+# Grouped by pipeline phase: types/ and support/ are the cross-cutting
+# foundation, then parse/ -> sema/ -> ir/ -> codegen/, with driver/ on top.
 add_library(roxy_compiler
-    src/roxy/compiler/parser.cpp
-    src/roxy/compiler/types.cpp
-    src/roxy/compiler/symbol_table.cpp
-    src/roxy/compiler/semantic.cpp
-    src/roxy/compiler/type_checker.cpp
-    src/roxy/compiler/lifetime_checker.cpp
-    src/roxy/compiler/trait_system.cpp
-    src/roxy/compiler/generic_call_resolver.cpp
-    src/roxy/compiler/lambda_lifter.cpp
-    src/roxy/compiler/ssa_ir.cpp
-    src/roxy/compiler/ir_fold.cpp
-    src/roxy/compiler/ownership_tracker.cpp
-    src/roxy/compiler/ir_builder.cpp
-    src/roxy/compiler/ir_builder_stmt.cpp
-    src/roxy/compiler/ir_builder_expr.cpp
-    src/roxy/compiler/ir_builder_lifetime.cpp
-    src/roxy/compiler/ir_validator.cpp
-    src/roxy/compiler/ir_optimize.cpp
-    src/roxy/compiler/generics.cpp
-    src/roxy/compiler/mangling.cpp
-    src/roxy/compiler/module_registry.cpp
-    src/roxy/compiler/compiler.cpp
-    src/roxy/compiler/type_env.cpp
-    src/roxy/compiler/coroutine_lowering.cpp
-    src/roxy/compiler/c_emitter.cpp
+    src/roxy/compiler/types/types.cpp
+    src/roxy/compiler/types/type_env.cpp
+    src/roxy/compiler/types/symbol_table.cpp
+    src/roxy/compiler/types/generics.cpp
+
+    src/roxy/compiler/support/mangling.cpp
+
+    src/roxy/compiler/parse/parser.cpp
+
+    src/roxy/compiler/sema/semantic.cpp
+    src/roxy/compiler/sema/type_checker.cpp
+    src/roxy/compiler/sema/lifetime_checker.cpp
+    src/roxy/compiler/sema/trait_system.cpp
+    src/roxy/compiler/sema/generic_call_resolver.cpp
+    src/roxy/compiler/sema/lambda_lifter.cpp
+
+    src/roxy/compiler/ir/ssa_ir.cpp
+    src/roxy/compiler/ir/ir_fold.cpp
+    src/roxy/compiler/ir/ownership_tracker.cpp
+    src/roxy/compiler/ir/ir_builder.cpp
+    src/roxy/compiler/ir/ir_builder_stmt.cpp
+    src/roxy/compiler/ir/ir_builder_expr.cpp
+    src/roxy/compiler/ir/ir_builder_lifetime.cpp
+    src/roxy/compiler/ir/ir_validator.cpp
+    src/roxy/compiler/ir/ir_optimize.cpp
+    src/roxy/compiler/ir/coroutine_lowering.cpp
+
+    src/roxy/compiler/codegen/lowering.cpp
+    src/roxy/compiler/codegen/c_emitter.cpp
+
+    src/roxy/compiler/driver/module_registry.cpp
+    src/roxy/compiler/driver/compiler.cpp
 )
 target_link_libraries(roxy_compiler roxy_shared)
 
-# VM library (bytecode, value, object, vm, interpreter, lowering, list, string, natives)
+# VM library (bytecode, value, object, vm, interpreter, list, string, natives)
 add_library(roxy_vm
     src/roxy/vm/bytecode.cpp
     src/roxy/vm/value.cpp
@@ -147,7 +156,6 @@ add_library(roxy_vm
     src/roxy/vm/string.cpp
     src/roxy/vm/natives.cpp
     src/roxy/vm/binding/registry.cpp
-    src/roxy/compiler/lowering.cpp
 )
 
 target_link_libraries(roxy_vm roxy_compiler roxy_rt)

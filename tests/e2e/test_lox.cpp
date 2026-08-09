@@ -7,7 +7,7 @@
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/file.hpp"
 #include "roxy/core/vector.hpp"
-#include "roxy/compiler/compiler.hpp"
+#include "roxy/compiler/driver/compiler.hpp"
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/value.hpp"
 

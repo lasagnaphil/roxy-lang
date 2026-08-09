@@ -65,7 +65,7 @@ Constructors and destructors are compiled as regular functions with mangled name
 
 ## How It Works
 
-Constructor calls are parsed as `CallExpr`s carrying the (possibly empty) constructor name and an `is_heap` flag (`uniq Type(...)`); `delete` is a `DeleteStmt` carrying the destructor name and arguments. Per-struct constructor and destructor metadata (name, parameter types, declaring `Decl`, `is_pub`) lives in `StructTypeInfo`. See `compiler/ast.hpp` and `compiler/types.hpp`.
+Constructor calls are parsed as `CallExpr`s carrying the (possibly empty) constructor name and an `is_heap` flag (`uniq Type(...)`); `delete` is a `DeleteStmt` carrying the destructor name and arguments. Per-struct constructor and destructor metadata (name, parameter types, declaring `Decl`, `is_pub`) lives in `StructTypeInfo`. See `compiler/parse/ast.hpp` and `compiler/types/types.hpp`.
 
 Each constructor and destructor receives `self` as an implicit first parameter — the IR builder prepends a `ref<struct_type>` block parameter named `self` and binds it in the local scope before generating the body (`ir_builder.cpp`).
 
@@ -165,9 +165,9 @@ fun main(): i32 {
 
 | File | Purpose |
 |------|---------|
-| `include/roxy/compiler/ast.hpp` | `ConstructorDecl` / `DestructorDecl` / `CallExpr` / `DeleteStmt` |
-| `include/roxy/compiler/types.hpp` | `ConstructorInfo` / `DestructorInfo` in `StructTypeInfo` |
-| `src/roxy/compiler/parser.cpp` | constructor/destructor syntax and call parsing |
-| `src/roxy/compiler/semantic.cpp` | semantic analysis and type checking |
-| `src/roxy/compiler/ir_builder.cpp` | IR generation, implicit `self`, scope-exit cleanup |
+| `include/roxy/compiler/parse/ast.hpp` | `ConstructorDecl` / `DestructorDecl` / `CallExpr` / `DeleteStmt` |
+| `include/roxy/compiler/types/types.hpp` | `ConstructorInfo` / `DestructorInfo` in `StructTypeInfo` |
+| `src/roxy/compiler/parse/parser.cpp` | constructor/destructor syntax and call parsing |
+| `src/roxy/compiler/sema/semantic.cpp` | semantic analysis and type checking |
+| `src/roxy/compiler/ir/ir_builder.cpp` | IR generation, implicit `self`, scope-exit cleanup |
 | `tests/e2e/test_constructors.cpp` | E2E tests |

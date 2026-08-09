@@ -1,6 +1,6 @@
 #include "roxy/lsp/lsp_analysis_context.hpp"
 #include "roxy/lsp/cst_lowering.hpp"
-#include "roxy/compiler/semantic.hpp"
+#include "roxy/compiler/sema/semantic.hpp"
 #include "roxy/vm/binding/registry.hpp"
 #include "roxy/vm/natives.hpp"
 

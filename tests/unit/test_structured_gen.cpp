@@ -2,7 +2,7 @@
 
 #include "generator.hpp"
 
-#include "roxy/compiler/compiler.hpp"
+#include "roxy/compiler/driver/compiler.hpp"
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/vm/vm.hpp"
 

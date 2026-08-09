@@ -344,7 +344,7 @@ It also provides thin typed facades over the type-erased C container functions �
 
 ## Emitter Architecture
 
-`CEmitter(BumpAllocator&, const CEmitterConfig&)` exposes `emit_source()` and `emit_header()`. `CEmitterConfig` carries `native_include_paths`, `native_registry`, and an `emit_main_entry` toggle. Per-function state tracks `m_value_types`, the set of `StackAlloc` result values, and `m_pointer_values` (StackAlloc, struct/ref/uniq/out/inout params, and `GetFieldAddr` results) — the last decides whether `emit_field_access` uses `->` or `.`. See `compiler/c_emitter.hpp`.
+`CEmitter(BumpAllocator&, const CEmitterConfig&)` exposes `emit_source()` and `emit_header()`. `CEmitterConfig` carries `native_include_paths`, `native_registry`, and an `emit_main_entry` toggle. Per-function state tracks `m_value_types`, the set of `StackAlloc` result values, and `m_pointer_values` (StackAlloc, struct/ref/uniq/out/inout params, and `GetFieldAddr` results) — the last decides whether `emit_field_access` uses `->` or `.`. See `compiler/codegen/c_emitter.hpp`.
 
 `emit_source()` produces one `.cpp` with: standard includes, native include paths, enum typedefs, struct forward declarations, dependency-sorted struct definitions, function forward declarations, then function bodies. `emit_header()` produces a `.hpp` with `pub` enums, `pub` structs (with inline method wrappers), `make_<T>` / `make_<T>__<ctor>` factories returning `roxy::uniq<T>`, and `pub` function declarations.
 
@@ -568,10 +568,10 @@ backend, plus the string/utility natives.
 
 | File | Purpose |
 |------|---------|
-| `include/roxy/compiler/c_emitter.hpp` | `CEmitter` + `CEmitterConfig` declarations |
-| `src/roxy/compiler/c_emitter.cpp` | C/header emission (`emit_source`, `emit_header`, native-call/extern-decl logic) |
-| `include/roxy/compiler/ssa_ir.hpp` | `IRModule::struct_types` / `enum_types`, `IRFunction/IRInst::source_line` |
-| `src/roxy/compiler/ir_builder.cpp` | Populates `struct_types` / `enum_types`; per-inst `source_line` |
+| `include/roxy/compiler/codegen/c_emitter.hpp` | `CEmitter` + `CEmitterConfig` declarations |
+| `src/roxy/compiler/codegen/c_emitter.cpp` | C/header emission (`emit_source`, `emit_header`, native-call/extern-decl logic) |
+| `include/roxy/compiler/ir/ssa_ir.hpp` | `IRModule::struct_types` / `enum_types`, `IRFunction/IRInst::source_line` |
+| `src/roxy/compiler/ir/ir_builder.cpp` | Populates `struct_types` / `enum_types`; per-inst `source_line` |
 | `include/roxy/rt/roxy_rt.h` | C runtime header + C++ RAII templates / container wrappers |
 | `src/roxy/rt/roxy_rt.cpp` | C runtime implementation |
 | `include/roxy/rt/slab_allocator.{hpp}`, `src/roxy/rt/slab_allocator.cpp` | Slab allocator + `make_slab_allocator_vtable` (moved from `vm/`) |

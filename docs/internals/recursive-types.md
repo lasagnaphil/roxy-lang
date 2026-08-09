@@ -144,9 +144,9 @@ Assigning to a `uniq` field that already holds a value (`node.next = uniq Node {
 
 | File | Purpose |
 |---|---|
-| `src/roxy/compiler/semantic.cpp` | Self-reference resolution, direct value-cycle detection |
-| `src/roxy/compiler/lowering.cpp` | `BCDeleteDesc` construction, `m_delete_desc_cache` memoization |
-| `include/roxy/compiler/lowering.hpp` | `BCDeleteDesc` definition |
+| `src/roxy/compiler/sema/semantic.cpp` | Self-reference resolution, direct value-cycle detection |
+| `src/roxy/compiler/codegen/lowering.cpp` | `BCDeleteDesc` construction, `m_delete_desc_cache` memoization |
+| `include/roxy/compiler/codegen/lowering.hpp` | `BCDeleteDesc` definition |
 | `include/roxy/vm/bytecode.hpp` | `BCDeleteDesc` kinds (`STRUCT_FIELDS`, `STRUCT_FIELDS+DEL_OBJ`) |
 | `src/roxy/vm/interpreter.cpp` | `delete_value` descriptor-driven cleanup |
 | `tests/e2e/test_recursive_types.cpp` | E2E tests |

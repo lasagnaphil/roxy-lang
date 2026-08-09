@@ -1,0 +1,909 @@
+#include "roxy/compiler/types/generics.hpp"
+
+#include "roxy/compiler/support/mangling.hpp"
+
+#include <cassert>
+#include <cstring>
+
+namespace rx {
+
+// TypeSubstitution
+
+Type* TypeSubstitution::lookup(StringView name) const {
+    for (u32 i = 0; i < param_names.size(); i++) {
+        if (param_names[i] == name) {
+            return concrete_types[i];
+        }
+    }
+    return nullptr;
+}
+
+// GenericInstantiator
+
+GenericInstantiator::GenericInstantiator(BumpAllocator& allocator, TypeCache& types)
+    : m_allocator(allocator)
+    , m_types(types)
+{
+}
+
+void GenericInstantiator::register_generic_fun(StringView name, Decl* decl, StringView module_name) {
+    m_generic_funs[name] = decl;
+    if (!module_name.empty()) {
+        m_fun_template_modules[name] = module_name;
+    }
+}
+
+StringView GenericInstantiator::get_fun_template_module(StringView name) const {
+    auto it = m_fun_template_modules.find(name);
+    return it != m_fun_template_modules.end() ? it->second : StringView{};
+}
+
+void GenericInstantiator::register_generic_struct(StringView name, Decl* decl, StringView module_name) {
+    m_generic_structs[name] = decl;
+    if (!module_name.empty()) {
+        m_struct_template_modules[name] = module_name;
+    }
+}
+
+StringView GenericInstantiator::get_struct_template_module(StringView name) const {
+    auto it = m_struct_template_modules.find(name);
+    return it != m_struct_template_modules.end() ? it->second : StringView{};
+}
+
+void GenericInstantiator::register_generic_struct_method(StringView struct_name, Decl* method_decl) {
+    m_generic_struct_methods[struct_name].push_back(method_decl);
+}
+
+const Vector<Decl*>* GenericInstantiator::get_generic_struct_methods(StringView struct_name) const {
+    auto it = m_generic_struct_methods.find(struct_name);
+    if (it != m_generic_struct_methods.end()) return &it->second;
+    return nullptr;
+}
+
+void GenericInstantiator::register_generic_struct_constructor(StringView struct_name, Decl* ctor_decl) {
+    m_generic_struct_constructors[struct_name].push_back(ctor_decl);
+}
+
+void GenericInstantiator::register_generic_struct_destructor(StringView struct_name, Decl* dtor_decl) {
+    m_generic_struct_destructors[struct_name].push_back(dtor_decl);
+}
+
+const Vector<Decl*>* GenericInstantiator::get_generic_struct_constructors(StringView struct_name) const {
+    auto it = m_generic_struct_constructors.find(struct_name);
+    if (it != m_generic_struct_constructors.end()) return &it->second;
+    return nullptr;
+}
+
+const Vector<Decl*>* GenericInstantiator::get_generic_struct_destructors(StringView struct_name) const {
+    auto it = m_generic_struct_destructors.find(struct_name);
+    if (it != m_generic_struct_destructors.end()) return &it->second;
+    return nullptr;
+}
+
+bool GenericInstantiator::is_generic_fun(StringView name) const {
+    return m_generic_funs.find(name) != m_generic_funs.end();
+}
+
+bool GenericInstantiator::is_generic_struct(StringView name) const {
+    return m_generic_structs.find(name) != m_generic_structs.end();
+}
+
+Decl* GenericInstantiator::get_generic_fun_decl(StringView name) const {
+    auto it = m_generic_funs.find(name);
+    if (it != m_generic_funs.end()) return it->second;
+    return nullptr;
+}
+
+Decl* GenericInstantiator::get_generic_struct_decl(StringView name) const {
+    auto it = m_generic_structs.find(name);
+    if (it != m_generic_structs.end()) return it->second;
+    return nullptr;
+}
+
+StringView GenericInstantiator::type_name_for_mangling(Type* type) {
+    // Canonical logic lives in mangling.cpp (mangle_type_name) so non-generic
+    // consumers (synthesized container methods, overload mangles) share it.
+    return mangle_type_name(m_allocator, type);
+}
+
+bool GenericInstantiator::type_contains_type_param(Type* type) const {
+    if (!type) return false;
+    switch (type->kind) {
+        case TypeKind::TypeParam:
+            return true;
+        case TypeKind::Uniq:
+        case TypeKind::Ref:
+        case TypeKind::Weak:
+            return type_contains_type_param(type->ref_info.inner_type);
+        case TypeKind::List:
+            return type_contains_type_param(type->list_info.element_type);
+        case TypeKind::Map:
+            return type_contains_type_param(type->map_info.key_type)
+                || type_contains_type_param(type->map_info.value_type);
+        case TypeKind::Coroutine:
+            return type_contains_type_param(type->coro_info.yield_type);
+        case TypeKind::Function: {
+            for (auto* param_type : type->func_info.param_types) {
+                if (type_contains_type_param(param_type)) return true;
+            }
+            return type_contains_type_param(type->func_info.return_type);
+        }
+        case TypeKind::Struct: {
+            // The only structs containing TypeParams are abstract instances
+            // themselves (e.g. Box<Holder$$T>).
+            GenericStructInstance* instance = find_struct_instance_by_type(type);
+            return instance && instance->is_abstract;
+        }
+        default:
+            return false;
+    }
+}
+
+StringView GenericInstantiator::mangle_name(StringView base_name, Span<Type*> type_args) {
+    // Calculate total length: base$arg1$arg2
+    u32 total_len = base_name.size();
+    for (auto* type_arg : type_args) {
+        StringView arg_name = type_name_for_mangling(type_arg);
+        total_len += 1 + arg_name.size(); // '$' + name
+    }
+
+    char* buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(total_len + 1, 1));
+    u32 pos = 0;
+    memcpy(buf + pos, base_name.data(), base_name.size());
+    pos += base_name.size();
+
+    for (auto* type_arg : type_args) {
+        buf[pos++] = '$';
+        StringView arg_name = type_name_for_mangling(type_arg);
+        memcpy(buf + pos, arg_name.data(), arg_name.size());
+        pos += arg_name.size();
+    }
+    buf[pos] = '\0';
+
+    return StringView(buf, total_len);
+}
+
+StringView GenericInstantiator::instantiate_fun(StringView name, Span<Type*> type_args) {
+    StringView mangled = mangle_name(name, type_args);
+
+    // Check if already instantiated
+    auto it = m_fun_instance_cache.find(mangled);
+    if (it != m_fun_instance_cache.end()) {
+        return mangled;
+    }
+
+    // Get the template
+    Decl* original = get_generic_fun_decl(name);
+    assert(original && "Generic function template not found");
+
+    FunDecl& fun_decl = original->fun_decl;
+    assert(fun_decl.type_params.size() == type_args.size());
+
+    // Build substitution
+    TypeSubstitution subst;
+    StringView* param_names = reinterpret_cast<StringView*>(
+        m_allocator.alloc_bytes(sizeof(StringView) * type_args.size(), alignof(StringView)));
+    Type** concrete_types = reinterpret_cast<Type**>(
+        m_allocator.alloc_bytes(sizeof(Type*) * type_args.size(), alignof(Type*)));
+
+    for (u32 i = 0; i < fun_decl.type_params.size(); i++) {
+        param_names[i] = fun_decl.type_params[i].name;
+        concrete_types[i] = type_args[i];
+    }
+    subst.param_names = Span<StringView>(param_names, type_args.size());
+    subst.concrete_types = Span<Type*>(concrete_types, type_args.size());
+
+    // Clone and substitute
+    Decl* instantiated = clone_fun_decl(original, subst, mangled);
+
+    // Create instance
+    GenericFunInstance* instance = m_allocator.emplace<GenericFunInstance>();
+    instance->mangled_name = mangled;
+    instance->original_decl = original;
+    instance->substitution = subst;
+    instance->instantiated_decl = instantiated;
+    instance->is_analyzed = false;
+    instance->template_module = get_fun_template_module(name);
+
+    // A type argument containing a TypeParam (e.g. identity<T> called from a
+    // bounded template body) marks this as an abstract Phase-B checking
+    // artifact, not a real monomorphization — quarantined from the drains and
+    // the IR builder (see GenericFunInstance::is_abstract).
+    instance->is_abstract = false;
+    for (auto* type_arg : type_args) {
+        if (type_contains_type_param(type_arg)) {
+            instance->is_abstract = true;
+            break;
+        }
+    }
+
+    m_all_fun_instances.push_back(instance);
+    m_pending_funs.push_back(instance);
+    m_fun_instance_cache[mangled] = instance;
+
+    return mangled;
+}
+
+StringView GenericInstantiator::instantiate_struct(StringView name, Span<Type*> type_args) {
+    StringView mangled = mangle_name(name, type_args);
+
+    // Check if already instantiated
+    auto it = m_struct_instance_cache.find(mangled);
+    if (it != m_struct_instance_cache.end()) {
+        return mangled;
+    }
+
+    // Get the template
+    Decl* original = get_generic_struct_decl(name);
+    assert(original && "Generic struct template not found");
+
+    StructDecl& struct_decl = original->struct_decl;
+    assert(struct_decl.type_params.size() == type_args.size());
+
+    // Build substitution
+    TypeSubstitution subst;
+    StringView* param_names = reinterpret_cast<StringView*>(
+        m_allocator.alloc_bytes(sizeof(StringView) * type_args.size(), alignof(StringView)));
+    Type** concrete_types = reinterpret_cast<Type**>(
+        m_allocator.alloc_bytes(sizeof(Type*) * type_args.size(), alignof(Type*)));
+
+    for (u32 i = 0; i < struct_decl.type_params.size(); i++) {
+        param_names[i] = struct_decl.type_params[i].name;
+        concrete_types[i] = type_args[i];
+    }
+    subst.param_names = Span<StringView>(param_names, type_args.size());
+    subst.concrete_types = Span<Type*>(concrete_types, type_args.size());
+
+    // Clone and substitute
+    Decl* instantiated = clone_struct_decl(original, subst, mangled);
+
+    // Create a concrete struct type for this instantiation
+    Type* concrete_type = m_types.struct_type(mangled, instantiated);
+
+    // Create instance
+    GenericStructInstance* instance = m_allocator.emplace<GenericStructInstance>();
+    instance->mangled_name = mangled;
+    instance->original_decl = original;
+    instance->substitution = subst;
+    instance->instantiated_decl = instantiated;
+    instance->concrete_type = concrete_type;
+    instance->is_analyzed = false;
+    instance->template_module = get_struct_template_module(name);
+
+    // A type argument containing a TypeParam (directly or nested, e.g.
+    // Box<List<T>>) means this is an abstract Phase-B checking artifact, not
+    // a real monomorphization (see GenericStructInstance).
+    instance->is_abstract = false;
+    for (auto* type_arg : type_args) {
+        if (type_contains_type_param(type_arg)) {
+            instance->is_abstract = true;
+            break;
+        }
+    }
+
+    // Clone external method templates for this instantiation
+    const Vector<Decl*>* ext_methods = get_generic_struct_methods(name);
+    if (ext_methods) {
+        for (Decl* method_template : *ext_methods) {
+            Decl* cloned = clone_method_decl(method_template, subst, mangled);
+            instance->instantiated_methods.push_back(cloned);
+        }
+    }
+
+    // Clone external constructor templates for this instantiation
+    const Vector<Decl*>* ext_ctors = get_generic_struct_constructors(name);
+    if (ext_ctors) {
+        for (Decl* ctor_template : *ext_ctors) {
+            Decl* cloned = clone_constructor_decl(ctor_template, subst, mangled);
+            instance->instantiated_constructors.push_back(cloned);
+        }
+    }
+
+    // Clone external destructor templates for this instantiation
+    const Vector<Decl*>* ext_dtors = get_generic_struct_destructors(name);
+    if (ext_dtors) {
+        for (Decl* dtor_template : *ext_dtors) {
+            Decl* cloned = clone_destructor_decl(dtor_template, subst, mangled);
+            instance->instantiated_destructors.push_back(cloned);
+        }
+    }
+
+    m_all_struct_instances.push_back(instance);
+    m_pending_structs.push_back(instance);
+    m_struct_instance_cache[mangled] = instance;
+
+    return mangled;
+}
+
+bool GenericInstantiator::has_pending_funs() const {
+    return !m_pending_funs.empty();
+}
+
+Vector<GenericFunInstance*> GenericInstantiator::take_pending_funs() {
+    Vector<GenericFunInstance*> result;
+    swap(result, m_pending_funs);
+    return result;
+}
+
+void GenericInstantiator::sideline_cross_module_fun(GenericFunInstance* inst) {
+    m_cross_module_funs.push_back(inst);
+}
+
+void GenericInstantiator::promote_cross_module_funs() {
+    for (auto* inst : m_cross_module_funs) {
+        m_pending_funs.push_back(inst);
+    }
+    m_cross_module_funs.clear();
+}
+
+bool GenericInstantiator::has_cross_module_funs() const {
+    return !m_cross_module_funs.empty();
+}
+
+bool GenericInstantiator::has_pending_structs() const {
+    return !m_pending_structs.empty();
+}
+
+Vector<GenericStructInstance*> GenericInstantiator::take_pending_structs() {
+    Vector<GenericStructInstance*> result;
+    swap(result, m_pending_structs);
+    return result;
+}
+
+GenericFunInstance* GenericInstantiator::find_fun_instance(StringView mangled_name) const {
+    auto it = m_fun_instance_cache.find(mangled_name);
+    if (it != m_fun_instance_cache.end()) {
+        return it->second;
+    }
+    return nullptr;
+}
+
+GenericStructInstance* GenericInstantiator::find_struct_instance(StringView mangled_name) const {
+    auto it = m_struct_instance_cache.find(mangled_name);
+    if (it != m_struct_instance_cache.end()) {
+        return it->second;
+    }
+    return nullptr;
+}
+
+void GenericInstantiator::set_fun_bounds(StringView name, ResolvedTypeParams bounds) {
+    m_fun_bounds[name] = bounds;
+}
+
+void GenericInstantiator::set_struct_bounds(StringView name, ResolvedTypeParams bounds) {
+    m_struct_bounds[name] = bounds;
+}
+
+const ResolvedTypeParams* GenericInstantiator::get_fun_bounds(StringView name) const {
+    auto it = m_fun_bounds.find(name);
+    if (it != m_fun_bounds.end()) return &it->second;
+    return nullptr;
+}
+
+const ResolvedTypeParams* GenericInstantiator::get_struct_bounds(StringView name) const {
+    auto it = m_struct_bounds.find(name);
+    if (it != m_struct_bounds.end()) return &it->second;
+    return nullptr;
+}
+
+GenericStructInstance* GenericInstantiator::find_struct_instance_by_type(Type* concrete_type) const {
+    for (auto* inst : m_all_struct_instances) {
+        if (inst->concrete_type == concrete_type) {
+            return inst;
+        }
+    }
+    return nullptr;
+}
+
+// AST cloning with type substitution
+
+TypeExpr* GenericInstantiator::type_to_type_expr(Type* type, SourceLocation loc) {
+    TypeExpr* result = m_allocator.emplace<TypeExpr>();
+    result->loc = loc;
+    result->ref_kind = RefKind::None;
+    result->type_args = {};
+
+    switch (type->kind) {
+        // Primitives and named types — just use the name
+        case TypeKind::Void:   result->name = "void"; break;
+        case TypeKind::Bool:   result->name = "bool"; break;
+        case TypeKind::I8:     result->name = "i8"; break;
+        case TypeKind::I16:    result->name = "i16"; break;
+        case TypeKind::I32:    result->name = "i32"; break;
+        case TypeKind::I64:    result->name = "i64"; break;
+        case TypeKind::U8:     result->name = "u8"; break;
+        case TypeKind::U16:    result->name = "u16"; break;
+        case TypeKind::U32:    result->name = "u32"; break;
+        case TypeKind::U64:    result->name = "u64"; break;
+        case TypeKind::F32:    result->name = "f32"; break;
+        case TypeKind::F64:    result->name = "f64"; break;
+        case TypeKind::String: result->name = "string"; break;
+        case TypeKind::Struct: result->name = type->struct_info.name; break;
+        case TypeKind::Enum:   result->name = type->enum_info.name; break;
+        case TypeKind::Trait:  result->name = type->trait_info.name; break;
+        case TypeKind::TypeParam: result->name = type->type_param_info.name; break;
+        case TypeKind::Nil:    result->name = "nil"; break;
+        case TypeKind::Self:   result->name = "Self"; break;
+        case TypeKind::IntLiteral: result->name = "i32"; break;
+        case TypeKind::FloatLiteral: result->name = "f64"; break;
+        case TypeKind::ExceptionRef: result->name = "ExceptionRef"; break;
+        case TypeKind::Error:  result->name = "error"; break;
+
+        case TypeKind::List: {
+            result->name = "List";
+            TypeExpr** args = reinterpret_cast<TypeExpr**>(
+                m_allocator.alloc_bytes(sizeof(TypeExpr*), alignof(TypeExpr*)));
+            args[0] = type_to_type_expr(type->list_info.element_type, loc);
+            result->type_args = Span<TypeExpr*>(args, 1);
+            break;
+        }
+
+        case TypeKind::Map: {
+            result->name = "Map";
+            TypeExpr** args = reinterpret_cast<TypeExpr**>(
+                m_allocator.alloc_bytes(sizeof(TypeExpr*) * 2, alignof(TypeExpr*)));
+            args[0] = type_to_type_expr(type->map_info.key_type, loc);
+            args[1] = type_to_type_expr(type->map_info.value_type, loc);
+            result->type_args = Span<TypeExpr*>(args, 2);
+            break;
+        }
+
+        case TypeKind::Uniq:
+        case TypeKind::Ref:
+        case TypeKind::Weak: {
+            // Recursively build the inner type, then set ref_kind
+            TypeExpr* inner = type_to_type_expr(type->ref_info.inner_type, loc);
+            *result = *inner;
+            if (type->kind == TypeKind::Uniq) result->ref_kind = RefKind::Uniq;
+            else if (type->kind == TypeKind::Ref) result->ref_kind = RefKind::Ref;
+            else result->ref_kind = RefKind::Weak;
+            break;
+        }
+
+        case TypeKind::Function: {
+            // Function types as type arguments are uncommon, but handle gracefully
+            // Use the mangled name as a fallback
+            result->name = type_name_for_mangling(type);
+            break;
+        }
+    }
+
+    return result;
+}
+
+TypeExpr* GenericInstantiator::substitute_type_expr(TypeExpr* type_expr, const TypeSubstitution& subst) {
+    if (!type_expr) return nullptr;
+
+    TypeExpr* result = m_allocator.emplace<TypeExpr>();
+    *result = *type_expr;
+
+    // Check if this type name is a type parameter that needs substitution
+    if (type_expr->type_args.size() == 0) {
+        Type* concrete = subst.lookup(type_expr->name);
+        if (concrete) {
+            // Build a proper TypeExpr that preserves compound type structure
+            TypeExpr* concrete_expr = type_to_type_expr(concrete, type_expr->loc);
+            // Preserve the original ref_kind if the concrete type is not already a reference
+            if (type_expr->ref_kind != RefKind::None && concrete_expr->ref_kind == RefKind::None) {
+                concrete_expr->ref_kind = type_expr->ref_kind;
+            }
+            // Preserve a `borrowed` modifier across substitution (e.g. `borrowed T`
+            // with T = uniq Point becomes `borrowed uniq Point` -> resolves to ref Point).
+            if (type_expr->is_borrowed) concrete_expr->is_borrowed = true;
+            return concrete_expr;
+        }
+    }
+
+    // Handle generic type args (e.g., Box<T> -> Box<i32>, List<T> -> List<i32>,
+    // and the parameter list of a fun(T1, T2) -> R type expression)
+    if (type_expr->type_args.size() > 0) {
+        TypeExpr** args = reinterpret_cast<TypeExpr**>(
+            m_allocator.alloc_bytes(sizeof(TypeExpr*) * type_expr->type_args.size(), alignof(TypeExpr*)));
+        for (u32 i = 0; i < type_expr->type_args.size(); i++) {
+            args[i] = substitute_type_expr(type_expr->type_args[i], subst);
+        }
+        result->type_args = Span<TypeExpr*>(args, type_expr->type_args.size());
+    }
+
+    // Function-kind type expressions store the return type separately; substitute it too.
+    if (type_expr->return_type) {
+        result->return_type = substitute_type_expr(type_expr->return_type, subst);
+    }
+
+    return result;
+}
+
+Span<CallArg> GenericInstantiator::clone_call_args(Span<CallArg> args, const TypeSubstitution& subst) {
+    if (args.size() == 0) return {};
+    CallArg* data = reinterpret_cast<CallArg*>(
+        m_allocator.alloc_bytes(sizeof(CallArg) * args.size(), alignof(CallArg)));
+    for (u32 i = 0; i < args.size(); i++) {
+        data[i] = args[i];
+        data[i].expr = clone_expr(args[i].expr, subst);
+    }
+    return Span<CallArg>(data, args.size());
+}
+
+Span<FieldInit> GenericInstantiator::clone_field_inits(Span<FieldInit> fields, const TypeSubstitution& subst) {
+    if (fields.size() == 0) return {};
+    FieldInit* data = reinterpret_cast<FieldInit*>(
+        m_allocator.alloc_bytes(sizeof(FieldInit) * fields.size(), alignof(FieldInit)));
+    for (u32 i = 0; i < fields.size(); i++) {
+        data[i] = fields[i];
+        data[i].value = clone_expr(fields[i].value, subst);
+    }
+    return Span<FieldInit>(data, fields.size());
+}
+
+Expr* GenericInstantiator::clone_expr(Expr* expr, const TypeSubstitution& subst) {
+    if (!expr) return nullptr;
+    Expr* e = m_allocator.emplace<Expr>();
+    *e = *expr;
+    e->resolved_type = nullptr;
+
+    switch (expr->kind) {
+        case AstKind::ExprLiteral:
+        case AstKind::ExprIdentifier:
+        case AstKind::ExprThis:
+            break;
+        case AstKind::ExprUnary:
+            e->unary.operand = clone_expr(expr->unary.operand, subst);
+            break;
+        case AstKind::ExprBinary:
+            e->binary.left = clone_expr(expr->binary.left, subst);
+            e->binary.right = clone_expr(expr->binary.right, subst);
+            break;
+        case AstKind::ExprTernary:
+            e->ternary.condition = clone_expr(expr->ternary.condition, subst);
+            e->ternary.then_expr = clone_expr(expr->ternary.then_expr, subst);
+            e->ternary.else_expr = clone_expr(expr->ternary.else_expr, subst);
+            break;
+        case AstKind::ExprCall:
+            e->call.callee = clone_expr(expr->call.callee, subst);
+            e->call.arguments = clone_call_args(expr->call.arguments, subst);
+            // Substitute type args on the call itself
+            if (expr->call.type_args.size() > 0) {
+                TypeExpr** ta = reinterpret_cast<TypeExpr**>(
+                    m_allocator.alloc_bytes(sizeof(TypeExpr*) * expr->call.type_args.size(), alignof(TypeExpr*)));
+                for (u32 i = 0; i < expr->call.type_args.size(); i++) {
+                    ta[i] = substitute_type_expr(expr->call.type_args[i], subst);
+                }
+                e->call.type_args = Span<TypeExpr*>(ta, expr->call.type_args.size());
+            }
+            e->call.mangled_name = StringView(nullptr, 0);
+            break;
+        case AstKind::ExprIndex:
+            e->index.object = clone_expr(expr->index.object, subst);
+            e->index.index = clone_expr(expr->index.index, subst);
+            break;
+        case AstKind::ExprGet:
+            e->get.object = clone_expr(expr->get.object, subst);
+            break;
+        case AstKind::ExprStaticGet:
+            break;
+        case AstKind::ExprAssign:
+            e->assign.target = clone_expr(expr->assign.target, subst);
+            e->assign.value = clone_expr(expr->assign.value, subst);
+            break;
+        case AstKind::ExprGrouping:
+            e->grouping.expr = clone_expr(expr->grouping.expr, subst);
+            break;
+        case AstKind::ExprSuper:
+            break;
+        case AstKind::ExprStructLiteral:
+            e->struct_literal.fields = clone_field_inits(expr->struct_literal.fields, subst);
+            if (expr->struct_literal.type_args.size() > 0) {
+                TypeExpr** ta = reinterpret_cast<TypeExpr**>(
+                    m_allocator.alloc_bytes(sizeof(TypeExpr*) * expr->struct_literal.type_args.size(), alignof(TypeExpr*)));
+                for (u32 i = 0; i < expr->struct_literal.type_args.size(); i++) {
+                    ta[i] = substitute_type_expr(expr->struct_literal.type_args[i], subst);
+                }
+                e->struct_literal.type_args = Span<TypeExpr*>(ta, expr->struct_literal.type_args.size());
+            }
+            e->struct_literal.mangled_name = StringView(nullptr, 0);
+            break;
+        case AstKind::ExprStringInterp:
+            // f-string: clone the interpolated expressions so instances don't
+            // share mutable AST (the text `parts` are immutable and may be
+            // shared). Previously fell into `default` and aliased them.
+            if (expr->string_interp.expressions.size() > 0) {
+                Expr** exprs = reinterpret_cast<Expr**>(
+                    m_allocator.alloc_bytes(sizeof(Expr*) * expr->string_interp.expressions.size(),
+                                            alignof(Expr*)));
+                for (u32 i = 0; i < expr->string_interp.expressions.size(); i++) {
+                    exprs[i] = clone_expr(expr->string_interp.expressions[i], subst);
+                }
+                e->string_interp.expressions =
+                    Span<Expr*>(exprs, expr->string_interp.expressions.size());
+            }
+            break;
+        case AstKind::ExprLambda: {
+            // A lambda inside a generic template body references the
+            // template's type params in its parameter/return TypeExprs, and
+            // its body must be a private copy (semantic analysis rewrites
+            // captured identifiers in place). Previously fell into `default`,
+            // sharing everything — instantiation then failed with
+            // "unknown type 'T'" on the unsubstituted parameter types.
+            LambdaExpr& lambda = e->lambda;
+            const LambdaExpr& original = expr->lambda;
+
+            if (original.captures.size() > 0) {
+                CaptureEntry* entries = reinterpret_cast<CaptureEntry*>(
+                    m_allocator.alloc_bytes(sizeof(CaptureEntry) * original.captures.size(),
+                                            alignof(CaptureEntry)));
+                for (u32 i = 0; i < original.captures.size(); i++) {
+                    entries[i] = original.captures[i];
+                }
+                lambda.captures = Span<CaptureEntry>(entries, original.captures.size());
+            }
+
+            if (original.params.size() > 0) {
+                Param* params = reinterpret_cast<Param*>(
+                    m_allocator.alloc_bytes(sizeof(Param) * original.params.size(), alignof(Param)));
+                for (u32 i = 0; i < original.params.size(); i++) {
+                    params[i] = original.params[i];
+                    params[i].type = substitute_type_expr(original.params[i].type, subst);
+                    params[i].resolved_type = nullptr;
+                }
+                lambda.params = Span<Param>(params, original.params.size());
+            }
+            lambda.return_type = substitute_type_expr(original.return_type, subst);
+            lambda.body = clone_stmt(original.body, subst);
+
+            // Reset analysis annotations: each instantiation synthesizes its
+            // own env struct and lifted call function.
+            lambda.env_struct_name = StringView(nullptr, 0);
+            lambda.call_function_name = StringView(nullptr, 0);
+            lambda.env_struct_type = nullptr;
+            lambda.resolved_captures = Span<CaptureInfo>();
+            break;
+        }
+        default:
+            break;
+    }
+    return e;
+}
+
+Span<Decl*> GenericInstantiator::clone_decl_list(Span<Decl*> decls, const TypeSubstitution& subst) {
+    if (decls.size() == 0) return {};
+    Decl** data = reinterpret_cast<Decl**>(
+        m_allocator.alloc_bytes(sizeof(Decl*) * decls.size(), alignof(Decl*)));
+    for (u32 i = 0; i < decls.size(); i++) {
+        data[i] = clone_decl(decls[i], subst);
+    }
+    return Span<Decl*>(data, decls.size());
+}
+
+Stmt* GenericInstantiator::clone_stmt(Stmt* stmt, const TypeSubstitution& subst) {
+    if (!stmt) return nullptr;
+    Stmt* s = m_allocator.emplace<Stmt>();
+    *s = *stmt;
+
+    switch (stmt->kind) {
+        case AstKind::StmtExpr:
+            s->expr_stmt.expr = clone_expr(stmt->expr_stmt.expr, subst);
+            break;
+        case AstKind::StmtBlock:
+            s->block.declarations = clone_decl_list(stmt->block.declarations, subst);
+            break;
+        case AstKind::StmtIf:
+            s->if_stmt.condition = clone_expr(stmt->if_stmt.condition, subst);
+            s->if_stmt.then_branch = clone_stmt(stmt->if_stmt.then_branch, subst);
+            s->if_stmt.else_branch = clone_stmt(stmt->if_stmt.else_branch, subst);
+            break;
+        case AstKind::StmtWhile:
+            s->while_stmt.condition = clone_expr(stmt->while_stmt.condition, subst);
+            s->while_stmt.body = clone_stmt(stmt->while_stmt.body, subst);
+            break;
+        case AstKind::StmtFor:
+            s->for_stmt.initializer = clone_decl(stmt->for_stmt.initializer, subst);
+            s->for_stmt.condition = clone_expr(stmt->for_stmt.condition, subst);
+            s->for_stmt.increment = clone_expr(stmt->for_stmt.increment, subst);
+            s->for_stmt.body = clone_stmt(stmt->for_stmt.body, subst);
+            break;
+        case AstKind::StmtReturn:
+            s->return_stmt.value = clone_expr(stmt->return_stmt.value, subst);
+            break;
+        case AstKind::StmtBreak:
+        case AstKind::StmtContinue:
+            break;
+        case AstKind::StmtDelete:
+            s->delete_stmt.expr = clone_expr(stmt->delete_stmt.expr, subst);
+            s->delete_stmt.arguments = clone_call_args(stmt->delete_stmt.arguments, subst);
+            break;
+        case AstKind::StmtWhen:
+            s->when_stmt.discriminant = clone_expr(stmt->when_stmt.discriminant, subst);
+            if (stmt->when_stmt.cases.size() > 0) {
+                WhenCase* cases = reinterpret_cast<WhenCase*>(
+                    m_allocator.alloc_bytes(sizeof(WhenCase) * stmt->when_stmt.cases.size(), alignof(WhenCase)));
+                for (u32 i = 0; i < stmt->when_stmt.cases.size(); i++) {
+                    cases[i] = stmt->when_stmt.cases[i];
+                    cases[i].body = clone_decl_list(stmt->when_stmt.cases[i].body, subst);
+                }
+                s->when_stmt.cases = Span<WhenCase>(cases, stmt->when_stmt.cases.size());
+            }
+            s->when_stmt.else_body = clone_decl_list(stmt->when_stmt.else_body, subst);
+            break;
+        default:
+            break;
+    }
+    return s;
+}
+
+Decl* GenericInstantiator::clone_decl(Decl* decl, const TypeSubstitution& subst) {
+    if (!decl) return nullptr;
+    Decl* d = m_allocator.emplace<Decl>();
+    *d = *decl;
+
+    switch (decl->kind) {
+        case AstKind::DeclVar:
+            d->var_decl.initializer = clone_expr(decl->var_decl.initializer, subst);
+            d->var_decl.resolved_type = nullptr;
+            // Substitute type annotation
+            if (decl->var_decl.type) {
+                d->var_decl.type = substitute_type_expr(decl->var_decl.type, subst);
+            }
+            break;
+        case AstKind::StmtExpr:
+            d->stmt.expr_stmt.expr = clone_expr(decl->stmt.expr_stmt.expr, subst);
+            break;
+        default:
+            // For statement declarations embedded in Decl, clone the statement
+            if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtYield) {
+                Stmt* cloned = clone_stmt(&decl->stmt, subst);
+                if (cloned) d->stmt = *cloned;
+            }
+            break;
+    }
+    return d;
+}
+
+Decl* GenericInstantiator::clone_fun_decl(Decl* original, const TypeSubstitution& subst, StringView new_name) {
+    Decl* d = m_allocator.emplace<Decl>();
+    *d = *original;
+
+    FunDecl& fun_decl = d->fun_decl;
+    fun_decl.name = new_name;
+    fun_decl.type_params = Span<TypeParam>(); // Clear type params - this is a concrete instantiation
+
+    // Substitute parameter types
+    if (fun_decl.params.size() > 0) {
+        Param* params = reinterpret_cast<Param*>(
+            m_allocator.alloc_bytes(sizeof(Param) * fun_decl.params.size(), alignof(Param)));
+        for (u32 i = 0; i < fun_decl.params.size(); i++) {
+            params[i] = original->fun_decl.params[i];
+            params[i].type = substitute_type_expr(original->fun_decl.params[i].type, subst);
+        }
+        fun_decl.params = Span<Param>(params, fun_decl.params.size());
+    }
+
+    // Substitute return type
+    fun_decl.return_type = substitute_type_expr(original->fun_decl.return_type, subst);
+
+    // Clone body with substitution
+    fun_decl.body = clone_stmt(original->fun_decl.body, subst);
+
+    return d;
+}
+
+Decl* GenericInstantiator::clone_method_decl(Decl* original, const TypeSubstitution& subst, StringView mangled_struct_name) {
+    Decl* d = m_allocator.emplace<Decl>();
+    *d = *original;
+
+    MethodDecl& method_decl = d->method_decl;
+    method_decl.struct_name = mangled_struct_name;
+    method_decl.type_params = Span<TypeParam>(); // Clear type params - concrete instantiation
+
+    // Substitute parameter types
+    if (method_decl.params.size() > 0) {
+        Param* params = reinterpret_cast<Param*>(
+            m_allocator.alloc_bytes(sizeof(Param) * method_decl.params.size(), alignof(Param)));
+        for (u32 i = 0; i < method_decl.params.size(); i++) {
+            params[i] = original->method_decl.params[i];
+            params[i].type = substitute_type_expr(original->method_decl.params[i].type, subst);
+        }
+        method_decl.params = Span<Param>(params, method_decl.params.size());
+    }
+
+    // Substitute return type
+    method_decl.return_type = substitute_type_expr(original->method_decl.return_type, subst);
+
+    // Clone body with substitution
+    method_decl.body = clone_stmt(original->method_decl.body, subst);
+
+    return d;
+}
+
+Decl* GenericInstantiator::clone_constructor_decl(Decl* original, const TypeSubstitution& subst, StringView mangled_struct_name) {
+    Decl* d = m_allocator.emplace<Decl>();
+    *d = *original;
+
+    ConstructorDecl& constructor_decl = d->constructor_decl;
+    constructor_decl.struct_name = mangled_struct_name;
+    constructor_decl.type_params = Span<TypeParam>(); // Clear type params - concrete instantiation
+
+    // Substitute parameter types
+    if (constructor_decl.params.size() > 0) {
+        Param* params = reinterpret_cast<Param*>(
+            m_allocator.alloc_bytes(sizeof(Param) * constructor_decl.params.size(), alignof(Param)));
+        for (u32 i = 0; i < constructor_decl.params.size(); i++) {
+            params[i] = original->constructor_decl.params[i];
+            params[i].type = substitute_type_expr(original->constructor_decl.params[i].type, subst);
+        }
+        constructor_decl.params = Span<Param>(params, constructor_decl.params.size());
+    }
+
+    // Clone body with substitution
+    constructor_decl.body = clone_stmt(original->constructor_decl.body, subst);
+
+    return d;
+}
+
+Decl* GenericInstantiator::clone_destructor_decl(Decl* original, const TypeSubstitution& subst, StringView mangled_struct_name) {
+    Decl* d = m_allocator.emplace<Decl>();
+    *d = *original;
+
+    DestructorDecl& destructor_decl = d->destructor_decl;
+    destructor_decl.struct_name = mangled_struct_name;
+    destructor_decl.type_params = Span<TypeParam>(); // Clear type params - concrete instantiation
+
+    // Substitute parameter types
+    if (destructor_decl.params.size() > 0) {
+        Param* params = reinterpret_cast<Param*>(
+            m_allocator.alloc_bytes(sizeof(Param) * destructor_decl.params.size(), alignof(Param)));
+        for (u32 i = 0; i < destructor_decl.params.size(); i++) {
+            params[i] = original->destructor_decl.params[i];
+            params[i].type = substitute_type_expr(original->destructor_decl.params[i].type, subst);
+        }
+        destructor_decl.params = Span<Param>(params, destructor_decl.params.size());
+    }
+
+    // Clone body with substitution
+    destructor_decl.body = clone_stmt(original->destructor_decl.body, subst);
+
+    return d;
+}
+
+Decl* GenericInstantiator::clone_struct_decl(Decl* original, const TypeSubstitution& subst, StringView new_name) {
+    Decl* d = m_allocator.emplace<Decl>();
+    *d = *original;
+
+    StructDecl& struct_decl = d->struct_decl;
+    struct_decl.name = new_name;
+    struct_decl.type_params = Span<TypeParam>(); // Clear type params - concrete instantiation
+
+    // Substitute field types
+    if (struct_decl.fields.size() > 0) {
+        FieldDecl* fields = reinterpret_cast<FieldDecl*>(
+            m_allocator.alloc_bytes(sizeof(FieldDecl) * struct_decl.fields.size(), alignof(FieldDecl)));
+        for (u32 i = 0; i < struct_decl.fields.size(); i++) {
+            fields[i] = original->struct_decl.fields[i];
+            fields[i].type = substitute_type_expr(original->struct_decl.fields[i].type, subst);
+            if (fields[i].default_value) {
+                fields[i].default_value = clone_expr(original->struct_decl.fields[i].default_value, subst);
+            }
+        }
+        struct_decl.fields = Span<FieldDecl>(fields, struct_decl.fields.size());
+    }
+
+    // Clone methods with substitution
+    if (struct_decl.methods.size() > 0) {
+        FunDecl** methods = reinterpret_cast<FunDecl**>(
+            m_allocator.alloc_bytes(sizeof(FunDecl*) * struct_decl.methods.size(), alignof(FunDecl*)));
+        for (u32 i = 0; i < struct_decl.methods.size(); i++) {
+            // Create a temporary Decl to clone the method
+            Decl* tmp = m_allocator.emplace<Decl>();
+            tmp->kind = AstKind::DeclFun;
+            tmp->loc = original->loc;
+            tmp->fun_decl = *original->struct_decl.methods[i];
+
+            Decl* cloned = clone_fun_decl(tmp, subst, original->struct_decl.methods[i]->name);
+            methods[i] = &cloned->fun_decl;
+        }
+        struct_decl.methods = Span<FunDecl*>(methods, struct_decl.methods.size());
+    }
+
+    return d;
+}
+
+} // namespace rx

@@ -139,10 +139,10 @@ fun main(): i32 {
 
 | File | Purpose |
 |------|---------|
-| `include/roxy/compiler/ast.hpp` | `FieldInit`, `StructLiteralExpr` AST nodes |
-| `include/roxy/compiler/types.hpp` | `FieldInfo`, `StructTypeInfo`, `get_type_slot_count()` |
-| `src/roxy/compiler/parser.cpp` | Struct literal parsing |
-| `src/roxy/compiler/semantic.cpp` | Slot-count computation, struct literal validation |
-| `src/roxy/compiler/ir_builder.cpp` | `StackAlloc` and struct literal IR emission |
-| `src/roxy/compiler/lowering.cpp` | Stack slot allocation, field access lowering |
+| `include/roxy/compiler/parse/ast.hpp` | `FieldInit`, `StructLiteralExpr` AST nodes |
+| `include/roxy/compiler/types/types.hpp` | `FieldInfo`, `StructTypeInfo`, `get_type_slot_count()` |
+| `src/roxy/compiler/parse/parser.cpp` | Struct literal parsing |
+| `src/roxy/compiler/sema/semantic.cpp` | Slot-count computation, struct literal validation |
+| `src/roxy/compiler/ir/ir_builder.cpp` | `StackAlloc` and struct literal IR emission |
+| `src/roxy/compiler/codegen/lowering.cpp` | Stack slot allocation, field access lowering |
 | `src/roxy/vm/interpreter.cpp` | `STACK_ADDR` / `GET_FIELD` / `SET_FIELD`, frame local-stack management |

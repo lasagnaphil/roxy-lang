@@ -1,0 +1,494 @@
+#include "roxy/compiler/driver/compiler.hpp"
+#include "roxy/core/trace.hpp"
+#include "roxy/core/unique_ptr.hpp"
+#include "roxy/shared/lexer.hpp"
+#include "roxy/compiler/parse/parser.hpp"
+#include "roxy/compiler/sema/semantic.hpp"
+#include "roxy/compiler/ir/ssa_ir.hpp"
+#include "roxy/compiler/ir/ir_builder.hpp"
+#include "roxy/compiler/ir/ir_validator.hpp"
+#include "roxy/compiler/ir/ir_optimize.hpp"
+#include "roxy/compiler/ir/coroutine_lowering.hpp"
+#include "roxy/compiler/codegen/lowering.hpp"
+#include "roxy/vm/binding/registry.hpp"
+#include "roxy/vm/natives.hpp"
+
+#include <cstring>
+#include <chrono>
+
+namespace rx {
+
+// Monotonic nanosecond timestamp for phase timing (see CompileTimings).
+static inline u64 now_ns() {
+    return static_cast<u64>(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+}
+
+Compiler::Compiler(BumpAllocator& allocator)
+    : m_allocator(allocator)
+    , m_type_env(allocator)
+    , m_module_registry(allocator)
+    , m_builtin_registry(new NativeRegistry(allocator, m_type_env.types()))
+{
+    // Register built-in natives and add as "builtin" module (auto-imported as prelude)
+    register_builtin_natives(*m_builtin_registry);
+    m_module_registry.register_native_module(BUILTIN_MODULE_NAME, m_builtin_registry.get(), m_type_env.types());
+    m_native_registries.push_back({BUILTIN_MODULE_NAME, m_builtin_registry.get()});
+}
+
+void Compiler::add_native_registry(StringView module_name, NativeRegistry* registry) {
+    m_native_registries.push_back({module_name, registry});
+    m_module_registry.register_native_module(module_name, registry, m_type_env.types());
+}
+
+void Compiler::add_source(StringView module_name, const char* source, u32 length) {
+    SourceModule src;
+    src.name = module_name;
+    src.source = source;
+    src.length = length;
+    m_sources.push_back(src);
+
+    // Register as a script module (exports will be populated during analysis)
+    m_module_registry.register_script_module(module_name);
+}
+
+BCModule* Compiler::compile() {
+    // Build combined registry with all native functions from all registries
+    m_combined_registry = make_unique<NativeRegistry>(m_allocator, m_type_env.types());
+    for (const auto& [name, registry] : m_native_registries) {
+        registry->copy_entries_to(*m_combined_registry);
+    }
+
+    // Initialize per-module state
+    m_module_states.resize(m_sources.size());
+
+    m_timings = CompileTimings{};
+    u64 compile_start = now_ns();
+
+    // Phase 1: Parse all modules
+    u64 t0 = now_ns();
+    bool ok = parse_all();
+    m_timings.parse_ns = now_ns() - t0;
+    if (!ok) return nullptr;
+
+    // Phase 2: Topologically sort by imports
+    t0 = now_ns();
+    ok = topological_sort();
+    m_timings.topo_ns = now_ns() - t0;
+    if (!ok) return nullptr;
+
+    // Phase 3: Semantic analysis (in topological order)
+    t0 = now_ns();
+    ok = analyze_all();
+    m_timings.sema_ns = now_ns() - t0;
+    if (!ok) return nullptr;
+
+    // Phase 4: Build IR for all modules
+    t0 = now_ns();
+    ok = build_ir_all();
+    m_timings.ir_build_ns = now_ns() - t0;
+    if (!ok) return nullptr;
+
+    // Phase 5: Link into single BCModule (sub-phases timed inside)
+    BCModule* module = link_modules();
+
+    m_timings.total_ns = now_ns() - compile_start;
+    return module;
+}
+
+bool Compiler::parse_all() {
+    ROXY_ZONE("parse");
+    for (u32 i = 0; i < m_sources.size(); i++) {
+        const SourceModule& src = m_sources[i];
+
+        Lexer lexer(src.source, src.length);
+        Parser parser(lexer, m_allocator);
+        Program* program = parser.parse();
+
+        if (!program || parser.has_error()) {
+            const auto& err = parser.error();
+            add_error_fmt("Parse error in module '{}' at line {}: {}",
+                         src.name, err.loc.line, err.message);
+            return false;
+        }
+
+        m_module_states[i].program = program;
+
+        // Collect imports from the program
+        for (auto* decl : program->declarations) {
+            if (decl && decl->kind == AstKind::DeclImport) {
+                m_module_states[i].imports.push_back(decl->import_decl.module_path);
+            }
+        }
+    }
+
+    return true;
+}
+
+bool Compiler::topological_sort() {
+    ROXY_ZONE("topo-sort");
+    // Build module name to index map
+    tsl::robin_map<StringView, u32> name_to_idx;
+    for (u32 i = 0; i < m_sources.size(); i++) {
+        name_to_idx[m_sources[i].name] = i;
+    }
+
+    // State: 0 = unvisited, 1 = visiting, 2 = visited
+    Vector<u8> state(m_sources.size(), 0);
+    m_compile_order.clear();
+
+    for (u32 i = 0; i < m_sources.size(); i++) {
+        if (state[i] == 0) {
+            if (!detect_cycle(i, state, m_compile_order, name_to_idx)) {
+                return false;
+            }
+        }
+    }
+
+    // m_compile_order is now in reverse topological order (dependencies first)
+    return true;
+}
+
+bool Compiler::detect_cycle(u32 module_idx, Vector<u8>& state, Vector<u32>& order,
+                            const tsl::robin_map<StringView, u32>& name_to_idx) {
+    state[module_idx] = 1; // Visiting
+
+    // name_to_idx is built once in topological_sort and threaded through the
+    // recursion (was rebuilt on every call — O(V*(V+E)) for a pure defect).
+
+    // Check all imports
+    for (const StringView& import_name : m_module_states[module_idx].imports) {
+        auto it = name_to_idx.find(import_name);
+        if (it == name_to_idx.end()) {
+            // Import is not a script module (could be native module)
+            continue;
+        }
+
+        u32 dep_idx = it->second;
+        if (state[dep_idx] == 1) {
+            // Cycle detected
+            add_error_fmt("Circular import detected: module '{}' imports '{}' which creates a cycle",
+                         m_sources[module_idx].name, import_name);
+            return false;
+        }
+
+        if (state[dep_idx] == 0) {
+            if (!detect_cycle(dep_idx, state, order, name_to_idx)) {
+                return false;
+            }
+        }
+    }
+
+    state[module_idx] = 2; // Visited
+    order.push_back(module_idx);
+    return true;
+}
+
+bool Compiler::analyze_all() {
+    ROXY_ZONE("sema");
+    // Analyze in topological order (dependencies first)
+    for (u32 idx : m_compile_order) {
+        const SourceModule& src = m_sources[idx];
+        Program* program = m_module_states[idx].program;
+
+        // Set module name on program for visibility checking
+        program->module_name = src.name;
+
+        // Allocate an external SymbolTable that persists after analyzer scope
+        auto* symbols = new SymbolTable(m_allocator);
+
+        // Use the shared TypeEnv for type consistency, with external symbol table
+        SemanticAnalyzer analyzer(m_allocator, m_type_env, m_module_registry, *symbols);
+
+        if (!analyzer.analyze(program)) {
+            for (const auto& err : analyzer.errors()) {
+                add_error_fmt("Semantic error in module '{}' at line {}: {}",
+                             src.name, err.loc.line, err.message);
+            }
+            delete symbols;
+            return false;
+        }
+
+        // Persist symbols and synthetic decls for build_ir_all()
+        m_module_states[idx].symbols = symbols;
+        const auto& syn_vec = analyzer.synthetic_decls();
+        for (auto* d : syn_vec) {
+            m_module_states[idx].synthetic_decls.push_back(d);
+        }
+
+        // After analysis, register this module's exports
+        ModuleInfo* mod_info = m_module_registry.find_module(src.name);
+        if (mod_info) {
+            for (auto* decl : program->declarations) {
+                if (!decl) continue;
+
+                if (decl->kind == AstKind::DeclFun && decl->fun_decl.is_pub) {
+                    // lookup() returns the overload chain HEAD — for a member
+                    // of an overload set, walk the chain to THIS decl's symbol
+                    // so the export carries the right per-overload type.
+                    Symbol* sym = symbols->lookup(decl->fun_decl.name);
+                    while (sym && sym->decl != decl && sym->next_overload) {
+                        sym = sym->next_overload;
+                    }
+                    if (sym && sym->decl != decl) sym = nullptr;
+                    if (!sym) sym = symbols->lookup(decl->fun_decl.name);
+                    Type* func_type = sym ? sym->type : nullptr;
+
+                    ModuleExport exp;
+                    exp.name = decl->fun_decl.name;
+                    exp.kind = ExportKind::Function;
+                    exp.type = func_type;
+                    exp.is_native = false;
+                    exp.is_pub = true;
+                    exp.index = static_cast<u32>(mod_info->exports.size());
+                    exp.decl = decl;
+                    // Overload members export their signature-suffixed flat
+                    // name (empty for single definitions).
+                    exp.symbol_name = decl->fun_decl.overload_mangled_name;
+                    mod_info->exports.push_back(exp);
+                }
+                else if (decl->kind == AstKind::DeclStruct && decl->struct_decl.is_pub) {
+                    Symbol* sym = symbols->lookup(decl->struct_decl.name);
+                    Type* struct_type = sym ? sym->type : nullptr;
+
+                    ModuleExport exp;
+                    exp.name = decl->struct_decl.name;
+                    exp.kind = ExportKind::Struct;
+                    exp.type = struct_type;
+                    exp.is_native = false;
+                    exp.is_pub = true;
+                    exp.index = static_cast<u32>(mod_info->exports.size());
+                    exp.decl = decl;
+                    mod_info->exports.push_back(exp);
+                }
+                else if (decl->kind == AstKind::DeclEnum && decl->enum_decl.is_pub) {
+                    Symbol* sym = symbols->lookup(decl->enum_decl.name);
+                    Type* enum_type = sym ? sym->type : nullptr;
+
+                    ModuleExport exp;
+                    exp.name = decl->enum_decl.name;
+                    exp.kind = ExportKind::Enum;
+                    exp.type = enum_type;
+                    exp.is_native = false;
+                    exp.is_pub = true;
+                    exp.index = static_cast<u32>(mod_info->exports.size());
+                    exp.decl = decl;
+                    mod_info->exports.push_back(exp);
+                }
+            }
+        }
+    }
+
+    // Cross-module generic-fun instances: a use site in module B may have
+    // queued an instance whose template was registered by module A. Each
+    // module's own analyze() left such instances in the global pending queue
+    // because the body needs to resolve against A's symbol table. Drain them
+    // now by re-running each module's analyzer (cheap — it just holds
+    // references) and asking it to handle only its own templates' instances.
+    // Iterate to a fixed point: an A-owned instance's body might instantiate
+    // a B-owned template that nobody had referenced before.
+    while (m_type_env.generics().has_cross_module_funs()
+           || m_type_env.generics().has_pending_funs()) {
+        // Promote any sidelined cross-module instances back into the pending
+        // queue so the per-module analyzers below can pick them up.
+        m_type_env.generics().promote_cross_module_funs();
+
+        u32 total_drained = 0;
+        for (u32 idx : m_compile_order) {
+            if (!m_type_env.generics().has_pending_funs()) break;
+            const SourceModule& src = m_sources[idx];
+            Program* program = m_module_states[idx].program;
+            SymbolTable* symbols = m_module_states[idx].symbols;
+            if (!program || !symbols) continue;
+
+            // Fresh analyzer using this module's persisted SymbolTable. It
+            // shares the global TypeEnv (with the pending queue) and only
+            // drains instances whose template belongs to this module.
+            SemanticAnalyzer analyzer(m_allocator, m_type_env, m_module_registry, *symbols);
+            analyzer.set_program(program);  // seeds m_program for module-name lookup
+            total_drained += analyzer.analyze_owned_pending_fun_instances();
+            if (analyzer.has_errors()) {
+                for (const auto& err : analyzer.errors()) {
+                    add_error_fmt("Semantic error in module '{}' at line {}: {}",
+                                  src.name, err.loc.line, err.message);
+                }
+                return false;
+            }
+
+            // Persist any decls this drain synthesized (a drained instance's
+            // body may contain lambdas, whose lifted call functions land in
+            // the fresh analyzer's synthetic_decls). Dropping them here left
+            // the IR builder without the lambda's call function ("closure
+            // call function not found during lowering").
+            for (auto* d : analyzer.synthetic_decls()) {
+                m_module_states[idx].synthetic_decls.push_back(d);
+            }
+        }
+        // No module owned any of the pending — break to avoid infinite loop.
+        if (total_drained == 0) break;
+    }
+
+    return true;
+}
+
+bool Compiler::build_ir_all() {
+    ROXY_ZONE("ir-build");
+    // Build IR in topological order — no re-analysis needed,
+    // symbols and synthetic_decls were persisted during analyze_all()
+    for (u32 idx : m_compile_order) {
+        const SourceModule& src = m_sources[idx];
+        Program* program = m_module_states[idx].program;
+        SymbolTable& symbols = *m_module_states[idx].symbols;
+
+        // Build synthetic_decls span from persisted vector
+        auto& syn_vec = m_module_states[idx].synthetic_decls;
+        Span<Decl*> synthetic_decls;
+        if (!syn_vec.empty()) {
+            Decl** data = reinterpret_cast<Decl**>(m_allocator.alloc_bytes(
+                sizeof(Decl*) * syn_vec.size(), alignof(Decl*)));
+            for (u32 j = 0; j < syn_vec.size(); j++) {
+                data[j] = syn_vec[j];
+            }
+            synthetic_decls = Span<Decl*>(data, static_cast<u32>(syn_vec.size()));
+        }
+
+        // Use combined registry with all native functions
+        IRBuilder ir_builder(m_allocator, m_type_env, *m_combined_registry, symbols, m_module_registry);
+        IRModule* ir_module = ir_builder.build(program, synthetic_decls);
+
+        if (!ir_module) {
+            if (ir_builder.has_error()) {
+                add_error_fmt("IR generation failed for module '{}': {}",
+                             src.name, ir_builder.error());
+            } else {
+                add_error_fmt("IR generation failed for module '{}'",
+                             src.name);
+            }
+            return false;
+        }
+
+        m_module_states[idx].ir_module = ir_module;
+    }
+
+    return true;
+}
+
+BCModule* Compiler::link_modules() {
+    // For now, merge all IR modules and build a single bytecode module
+    // This is a simplified linker that combines functions from all modules
+
+    // Create merged IR module
+    IRModule merged_ir;
+    merged_ir.name = "linked";
+
+    // Collect all functions and module globals. Each module's globals occupy a
+    // distinct slot range in the merged global space, so re-base every global's
+    // offset — and the matching GlobalAddr ops in that module's functions — by
+    // the running base before merging. Function names are assumed unique across
+    // modules (non-pub names are module-prefixed by mangle_module_local).
+    // (Multiple modules each declaring globals also collide on the synthesized
+    // `__module_init`/`__module_shutdown` names — only one runs; cross-module
+    // globals are a documented limitation. Single-module globals are exact.)
+    u32 global_base = 0;
+    for (u32 idx : m_compile_order) {
+        IRModule* ir_mod = m_module_states[idx].ir_module;
+        if (global_base > 0 && ir_mod->global_slot_count > 0) {
+            for (IRFunction* func : ir_mod->functions) {
+                for (IRBlock* block : func->blocks) {
+                    for (IRInst* inst : block->instructions) {
+                        if (inst->op == IROp::GlobalAddr) {
+                            inst->global_data.slot_offset += global_base;
+                        }
+                    }
+                }
+            }
+        }
+        for (IRFunction* func : ir_mod->functions) {
+            merged_ir.functions.push_back(func);
+        }
+        for (const IRGlobal& g : ir_mod->globals) {
+            IRGlobal merged_g = g;
+            merged_g.slot_offset += global_base;
+            merged_ir.globals.push_back(merged_g);
+        }
+        global_base += ir_mod->global_slot_count;
+    }
+    merged_ir.global_slot_count = global_base;
+
+    // Coroutine lowering pass: transform coroutine functions into init/resume/done
+    {
+        ROXY_ZONE("coro-lower");
+        u64 t0 = now_ns();
+        coroutine_lower(&merged_ir, m_allocator, m_type_env);
+        m_timings.coro_lower_ns = now_ns() - t0;
+    }
+
+    // Phase 2 IR optimizations: copy propagation + DCE. Runs after coroutine
+    // lowering so generated init/resume/done bodies also benefit, and before
+    // validation so the validator checks the post-optimization IR.
+    {
+        ROXY_ZONE("ir-optimize");
+        u64 t0 = now_ns();
+        optimize_module(&merged_ir, m_allocator);
+        m_timings.ir_optimize_ns = now_ns() - t0;
+    }
+
+    // Validate merged IR before lowering. The validator only checks
+    // compiler-internal structural invariants (ValueId ranges, terminator
+    // presence, jump-arg counts) — it catches compiler bugs, never user errors —
+    // so it is gated to builds with asserts enabled (debug, tests, fuzzing).
+    // Release/AOT compiles (NDEBUG) skip it. See OPTIMIZATION.md §3.1.
+#ifndef NDEBUG
+    {
+        ROXY_ZONE("ir-validate");
+        u64 t0 = now_ns();
+        IRValidator validator;
+        bool valid = validator.validate(&merged_ir);
+        m_timings.ir_validate_ns = now_ns() - t0;
+        if (!valid) {
+            add_error_fmt("IR validation failed: {}", validator.error());
+            return nullptr;
+        }
+    }
+#endif
+
+    // Build bytecode from merged IR
+    // Static linking: all cross-module calls are resolved in the lowering phase
+    // since m_func_indices contains all functions from all modules
+    BytecodeBuilder bc_builder;
+    bc_builder.set_registry(m_combined_registry.get());
+    bc_builder.set_type_env(&m_type_env);
+    BCModule* module;
+    {
+        ROXY_ZONE("bc-lower");
+        u64 t0 = now_ns();
+        module = bc_builder.build(&merged_ir);
+        m_timings.bc_lower_ns = now_ns() - t0;
+    }
+
+    if (!module) {
+        const char* msg = bc_builder.error();
+        if (msg) {
+            add_error_fmt("Bytecode generation failed during linking: {}", msg);
+        } else {
+            add_error("Bytecode generation failed during linking");
+        }
+        return nullptr;
+    }
+
+    // Apply native functions from combined registry
+    m_combined_registry->apply_to_module(module);
+
+    return module;
+}
+
+void Compiler::add_error(const char* message) {
+    // Copy message to allocator
+    u32 len = static_cast<u32>(strlen(message));
+    char* msg = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
+    memcpy(msg, message, len + 1);
+    m_errors.push_back(msg);
+}
+
+
+} // namespace rx

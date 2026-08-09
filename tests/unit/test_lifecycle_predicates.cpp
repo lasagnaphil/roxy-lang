@@ -1,7 +1,7 @@
 #include "roxy/core/doctest/doctest.h"
 
 #include "roxy/core/bump_allocator.hpp"
-#include "roxy/compiler/types.hpp"
+#include "roxy/compiler/types/types.hpp"
 
 using namespace rx;
 

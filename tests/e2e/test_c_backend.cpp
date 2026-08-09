@@ -15,7 +15,7 @@
 #include "roxy/core/doctest/doctest.h"
 #include "test_helpers.hpp"
 
-#include "roxy/compiler/type_env.hpp"
+#include "roxy/compiler/types/type_env.hpp"
 #include "roxy/vm/binding/registry.hpp"
 #include "roxy/vm/natives.hpp"
 

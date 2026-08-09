@@ -56,7 +56,7 @@ The compiler parser is a recursive descent parser with Pratt parsing for express
 
 ## AST
 
-Complete AST node definitions (see `compiler/ast.hpp`, `enum class AstKind`):
+Complete AST node definitions (see `compiler/parse/ast.hpp`, `enum class AstKind`):
 - Expression nodes (literals, binary/unary ops, calls, index, get, lambda, etc.)
 - Statement nodes (if, while, for, return, block, when, try, throw, yield, etc.)
 - Declaration nodes (var, fun, struct, field, enum, import, constructor, destructor, method, trait)
@@ -125,7 +125,7 @@ Analysis results flow to the IR builder as in-place AST annotations
 (`resolved_type` plus name/flag fields, including several deliberate
 overloads such as the callee-type dispatch signal and the null-object module
 sentinel). The authoritative spec of that contract is the "semantic→IR
-annotation contract" comment above `struct Expr` in `compiler/ast.hpp` — keep
+annotation contract" comment above `struct Expr` in `compiler/parse/ast.hpp` — keep
 it updated when adding or overloading an annotation.
 
 Because analysis also *rewrites* the tree it walks (capture rewrites, generic
@@ -142,22 +142,22 @@ contract block ("the single-shot analysis rule").
 
 - `include/roxy/shared/lexer.hpp` - Lexer class
 - `src/roxy/shared/lexer.cpp` - Lexer implementation
-- `include/roxy/compiler/parser.hpp` - Parser class
-- `src/roxy/compiler/parser.cpp` - Parser implementation
-- `include/roxy/compiler/ast.hpp` - AST node definitions
-- `include/roxy/compiler/semantic.hpp` - Semantic analyzer
-- `src/roxy/compiler/semantic.cpp` - Semantic analysis implementation
-- `include/roxy/compiler/sema_context.hpp` - Shared collaborator context (state bundle + resolve_type_expr/analyze_expr/analyze_stmt thunks)
-- `include/roxy/compiler/function_context.hpp` - Per-function context slots + the one-unit FunctionContextScope guard
-- `include/roxy/compiler/type_checker.hpp` - Type relations and coercions
-- `src/roxy/compiler/type_checker.cpp` - Type checker implementation
-- `include/roxy/compiler/lifetime_checker.hpp` - Lifetime analysis (move states, termination, scope-exit checks)
-- `include/roxy/compiler/lambda_lifter.hpp` - Lambda lifting and closure-capture analysis (`LambdaLifter`)
-- `src/roxy/compiler/lifetime_checker.cpp` - Lifetime checker implementation
-- `include/roxy/compiler/trait_system.hpp` - Trait machinery (builtin traits, trait decls, impl validation, default injection)
-- `src/roxy/compiler/trait_system.cpp` - Trait system implementation
-- `include/roxy/compiler/generic_call_resolver.hpp` - Generic-call machinery (inference, calls, template refs, bounds, Phase B)
-- `src/roxy/compiler/generic_call_resolver.cpp` - Generic call resolver implementation
-- `include/roxy/compiler/error_reporter.hpp` - Error collection and formatting
-- `include/roxy/compiler/symbol_table.hpp` - Symbol table
-- `src/roxy/compiler/symbol_table.cpp` - Symbol table implementation
+- `include/roxy/compiler/parse/parser.hpp` - Parser class
+- `src/roxy/compiler/parse/parser.cpp` - Parser implementation
+- `include/roxy/compiler/parse/ast.hpp` - AST node definitions
+- `include/roxy/compiler/sema/semantic.hpp` - Semantic analyzer
+- `src/roxy/compiler/sema/semantic.cpp` - Semantic analysis implementation
+- `include/roxy/compiler/sema/sema_context.hpp` - Shared collaborator context (state bundle + resolve_type_expr/analyze_expr/analyze_stmt thunks)
+- `include/roxy/compiler/sema/function_context.hpp` - Per-function context slots + the one-unit FunctionContextScope guard
+- `include/roxy/compiler/sema/type_checker.hpp` - Type relations and coercions
+- `src/roxy/compiler/sema/type_checker.cpp` - Type checker implementation
+- `include/roxy/compiler/sema/lifetime_checker.hpp` - Lifetime analysis (move states, termination, scope-exit checks)
+- `include/roxy/compiler/sema/lambda_lifter.hpp` - Lambda lifting and closure-capture analysis (`LambdaLifter`)
+- `src/roxy/compiler/sema/lifetime_checker.cpp` - Lifetime checker implementation
+- `include/roxy/compiler/sema/trait_system.hpp` - Trait machinery (builtin traits, trait decls, impl validation, default injection)
+- `src/roxy/compiler/sema/trait_system.cpp` - Trait system implementation
+- `include/roxy/compiler/sema/generic_call_resolver.hpp` - Generic-call machinery (inference, calls, template refs, bounds, Phase B)
+- `src/roxy/compiler/sema/generic_call_resolver.cpp` - Generic call resolver implementation
+- `include/roxy/compiler/support/error_reporter.hpp` - Error collection and formatting
+- `include/roxy/compiler/types/symbol_table.hpp` - Symbol table
+- `src/roxy/compiler/types/symbol_table.cpp` - Symbol table implementation

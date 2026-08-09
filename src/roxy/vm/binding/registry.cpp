@@ -1,8 +1,8 @@
 #include "roxy/vm/binding/registry.hpp"
-#include "roxy/compiler/type_env.hpp"
-#include "roxy/compiler/ast.hpp"
+#include "roxy/compiler/types/type_env.hpp"
+#include "roxy/compiler/parse/ast.hpp"
 #include "roxy/shared/lexer.hpp"
-#include "roxy/compiler/parser.hpp"
+#include "roxy/compiler/parse/parser.hpp"
 
 #include <cassert>
 #include <cstring>

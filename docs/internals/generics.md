@@ -124,7 +124,7 @@ Lambdas inside template bodies clone like everything else: the cloner substitute
 
 A post-Pass-3 **worklist loop** processes pending instances (structs first, then functions) until none remain, since generic function bodies can trigger further struct instantiations. A generic struct's fields and method signatures are resolved inline on first instantiation (not deferred) so same-pass users can access them; method/ctor/dtor *bodies* are analyzed later in the worklist.
 
-The core records — `TypeSubstitution` (param names → concrete types), `GenericFunInstance`, and `GenericStructInstance` (mangled name, original/instantiated decls, concrete `Type*`, cloned methods/ctors/dtors) — live in `compiler/generics.hpp`.
+The core records — `TypeSubstitution` (param names → concrete types), `GenericFunInstance`, and `GenericStructInstance` (mangled name, original/instantiated decls, concrete `Type*`, cloned methods/ctors/dtors) — live in `compiler/types/generics.hpp`.
 
 ## Trait bounds
 
@@ -216,12 +216,12 @@ type_expr       -> ( "uniq" | "ref" | "weak" )? Identifier generic_args? ;
 
 | File | Purpose |
 |------|---------|
-| `include/roxy/compiler/generics.hpp` | `GenericInstantiator`, `TypeSubstitution`, instance records |
-| `src/roxy/compiler/generics.cpp` | Instantiation, AST cloning with substitution, name mangling |
-| `include/roxy/compiler/ast.hpp` | `TypeParam`, `type_params`/`type_args` on decls and exprs |
-| `include/roxy/compiler/types.hpp` | `TypeKind::TypeParam` for unresolved type parameters |
+| `include/roxy/compiler/types/generics.hpp` | `GenericInstantiator`, `TypeSubstitution`, instance records |
+| `src/roxy/compiler/types/generics.cpp` | Instantiation, AST cloning with substitution, name mangling |
+| `include/roxy/compiler/parse/ast.hpp` | `TypeParam`, `type_params`/`type_args` on decls and exprs |
+| `include/roxy/compiler/types/types.hpp` | `TypeKind::TypeParam` for unresolved type parameters |
 | `include/roxy/shared/lexer.hpp` | `save_position()` / `restore_position()` for trial-parse backtracking |
-| `src/roxy/compiler/generic_call_resolver.cpp` | Type-arg unification/inference, generic call analysis, template refs, bounds resolution/checking, Phase B body checking (`GenericCallResolver`) |
-| `src/roxy/compiler/semantic.cpp` | Template registration (Pass 1), generic-instance worklists, generic struct field resolution |
-| `src/roxy/compiler/ir_builder.cpp` | IR generation for generic instances |
+| `src/roxy/compiler/sema/generic_call_resolver.cpp` | Type-arg unification/inference, generic call analysis, template refs, bounds resolution/checking, Phase B body checking (`GenericCallResolver`) |
+| `src/roxy/compiler/sema/semantic.cpp` | Template registration (Pass 1), generic-instance worklists, generic struct field resolution |
+| `src/roxy/compiler/ir/ir_builder.cpp` | IR generation for generic instances |
 | `tests/e2e/test_generics.cpp` | E2E tests (incl. Phase A/B trait bounds and generic struct methods) |

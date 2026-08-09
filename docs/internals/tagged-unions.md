@@ -258,10 +258,10 @@ when_case       -> "case" Identifier ( "," Identifier )* ":" statement* ;
 
 | File | Purpose |
 |---|---|
-| `include/roxy/compiler/ast.hpp` | `WhenFieldDecl` / `WhenCaseFieldDecl` (struct decls), `StmtWhen` / `WhenCase` |
-| `include/roxy/compiler/types.hpp` | `WhenClauseInfo`, `VariantInfo`; `StructTypeInfo::when_clauses`, variant field lookup |
-| `src/roxy/compiler/parser.cpp` | parse `when` clauses and `when` statements |
-| `src/roxy/compiler/semantic.cpp` | `resolve_when_clauses`, union layout, variant-access and struct-literal validation |
-| `src/roxy/compiler/ir_builder.cpp` | `gen_when_stmt` (comparison chain + phi merge), variant field access |
-| `src/roxy/compiler/lowering.cpp` | union memory access in bytecode |
+| `include/roxy/compiler/parse/ast.hpp` | `WhenFieldDecl` / `WhenCaseFieldDecl` (struct decls), `StmtWhen` / `WhenCase` |
+| `include/roxy/compiler/types/types.hpp` | `WhenClauseInfo`, `VariantInfo`; `StructTypeInfo::when_clauses`, variant field lookup |
+| `src/roxy/compiler/parse/parser.cpp` | parse `when` clauses and `when` statements |
+| `src/roxy/compiler/sema/semantic.cpp` | `resolve_when_clauses`, union layout, variant-access and struct-literal validation |
+| `src/roxy/compiler/ir/ir_builder.cpp` | `gen_when_stmt` (comparison chain + phi merge), variant field access |
+| `src/roxy/compiler/codegen/lowering.cpp` | union memory access in bytecode |
 | `tests/e2e/test_tagged_unions.cpp` | E2E tests |

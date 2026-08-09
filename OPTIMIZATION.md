@@ -157,7 +157,7 @@ free-register scans.
 > predates the gate.
 
 `Compiler::link_modules()` runs `IRValidator::validate()` unconditionally
-(`src/roxy/compiler/compiler.cpp:428-438`). The validator only checks
+(`src/roxy/compiler/driver/compiler.cpp:428-438`). The validator only checks
 compiler-internal structural invariants (ValueId ranges, terminator presence,
 jump-arg counts) — it catches compiler bugs, never user errors. Gate it behind
 `#ifndef NDEBUG` or a `--verify-ir` flag; keep it on in debug, tests, and
@@ -196,7 +196,7 @@ constructor to lock the contract.
 > bc-lower for the ValueId maps (`dbd74a6`).
 
 `tsl::robin_map<u32,u32>` BlockId→code-offset (`lowering.hpp:141`), probed once
-per Goto / twice per Branch in `patch_jumps` (`src/roxy/compiler/lowering.cpp:2717`)
+per Goto / twice per Branch in `patch_jumps` (`src/roxy/compiler/codegen/lowering.cpp:2717`)
 plus per exception-handler/cleanup record. After `reorder_blocks_rpo`,
 `block->id.id == array index` — keys are dense. Replace with a
 `Vector<u32>` (sentinel `UINT32_MAX`), refilled per function via
@@ -211,10 +211,10 @@ that delivered −21% on bc-lower for the ValueId maps (`dbd74a6`).
 > `analyze_get_expr` reuses the object lookup.
 
 One ordinary call `foo(a, b)` today performs: `primitive_by_name` (a cascade of
-up to 13 memcmps, `src/roxy/compiler/types.cpp:474-489`), `is_generic_fun` ×2
-(`src/roxy/compiler/semantic.cpp:4078`/`4095` and again at `:2637`),
+up to 13 memcmps, `src/roxy/compiler/types/types.cpp:474-489`), `is_generic_fun` ×2
+(`src/roxy/compiler/sema/semantic.cpp:4078`/`4095` and again at `:2637`),
 `m_symbols.lookup` ×3 (`:2648`, `:4050`, and a re-lookup inside
-`check_not_moved`, `src/roxy/compiler/lifetime_checker.cpp:183`), and
+`check_not_moved`, `src/roxy/compiler/sema/lifetime_checker.cpp:183`), and
 `named_type_by_name` ×1 (`:4103`).
 
 Change: resolve the callee symbol once at the top of `analyze_call_expr` and
@@ -236,7 +236,7 @@ capture-rewrite path in `analyze_identifier_expr`.
 strings: `binary_op_to_trait_method(op)` → runtime `strlen` → `lookup_method`
 → `lookup_primitive_method` (`types.cpp:526-533`) = `robin_map<u8>` find +
 **linear memcmp scan** over ~28 registered operator methods per primitive
-(`src/roxy/compiler/trait_system.cpp:195-276`).
+(`src/roxy/compiler/sema/trait_system.cpp:195-276`).
 
 Change: build a dense `const MethodInfo* op_table[prim_kind][binary_op]` (and
 a unary table) once in `register_primitive_operator_methods`, from the same
@@ -260,7 +260,7 @@ Pass 2 resolves every signature (`register_fun_signature`,
 the same `TypeExpr`s to define body-scope symbols (`analyze_fun_body`,
 `:1469`, return type `:1449`). Each `resolve_type_expr` (`:1200`) costs ~20
 string comparisons + 1-2 map lookups. `Param::resolved_type`
-(`include/roxy/compiler/ast.hpp:636`) already exists — write it in Pass 2,
+(`include/roxy/compiler/parse/ast.hpp:636`) already exists — write it in Pass 2,
 read it in Pass 3. Same for methods/ctors/dtors.
 
 ### 3.7 IR-build: `gen_identifier_expr` triple lookup
@@ -271,7 +271,7 @@ read it in Pass 3. Same for methods/ctors/dtors.
 > (`m_param_is_ptr`) lookup.
 
 The most frequent expression kind pays three lookups
-(`src/roxy/compiler/ir_builder_expr.cpp:940`, `:1013`, `:1016`): `find_local`
+(`src/roxy/compiler/ir/ir_builder_expr.cpp:940`, `:1013`, `:1016`): `find_local`
 (walks the scope chain, already yields the `LocalVar` holding value + type),
 then `lookup_local` (re-walks the entire chain for the same value), then
 `m_param_is_ptr.count` (third hash lookup). Hoist the `LocalVar*` and reuse
@@ -394,7 +394,7 @@ tolerates stale entries per its own comment at `:289-300`).
 > them and a jump table wins nothing at N≈11–19 arms. Tests green; not committed.
 
 An ordinary expression statement runs ~7 failed `match()` calls in
-`declaration()` (`src/roxy/compiler/parser.cpp:1426-1486`) plus ~12 more in
+`declaration()` (`src/roxy/compiler/parse/parser.cpp:1426-1486`) plus ~12 more in
 `statement()` (`:968-1006`) — ~19 sequential kind-compares per statement —and
 `expression()` (`:187-192`) tests an 11-way chained `check()` for assignment
 operators on every expression. Convert both to a single `switch` on
@@ -429,7 +429,7 @@ build-in-place variant that fills `decl->stmt` directly; keep the
 > heap `Vector` (one each across ~18K ifs + ~13K loops). Not committed.
 
 Each `gen_if`/`gen_when`/`gen_while`/`gen_for`/`gen_try` calls
-`collect_assigned_vars` (`src/roxy/compiler/ir_builder_stmt.cpp:1335-1484`),
+`collect_assigned_vars` (`src/roxy/compiler/ir/ir_builder_stmt.cpp:1335-1484`),
 which recurses through the entire nested statement subtree — so a statement
 nested under k control-flow constructs is re-walked k times (super-linear in
 nesting depth), each call also constructing a fresh `robin_map` seed. Compute
@@ -451,7 +451,7 @@ write handling (`:1460-1463`).
 > separately-reviewed **code-quality** change with the `static_assert`-against-
 > enum-count guard the plan describes — but out of scope for a compile-time pass.
 
-`for_each_operand` (`include/roxy/compiler/ir_optimize.hpp:131-252`),
+`for_each_operand` (`include/roxy/compiler/ir/ir_optimize.hpp:131-252`),
 `compute_liveness` Pass 2 (`lowering.cpp:1185-1305`), and
 `compute_const_use_modes` (`:973-1100`) are three near-duplicate giant
 switches over all IROps — and operand enumeration is the innermost operation
@@ -574,7 +574,7 @@ Two composable steps:
 ### 5.3 IR-build scope environment: flat slot array
 
 Today: `Vector<tsl::robin_map<StringView, LocalVar>> m_local_scopes`
-(`include/roxy/compiler/ir_builder.hpp:556`). `define_local` walks all scopes;
+(`include/roxy/compiler/ir/ir_builder.hpp:556`). `define_local` walks all scopes;
 `lookup_local`/`find_local` walk innermost→outermost with a hash per level;
 and `snapshot_scopes`/`restore_scopes`
 (`ir_builder_stmt.cpp:133-154`) **deep-copy the entire map chain** —
@@ -719,7 +719,7 @@ genuinely expensive (robin_map bucket rehashes, nested variable-sized
    evaporated when **§5.2a measured neutral**: the IR walk is not
    `IRInst`-cache-locality-bound (the bottleneck is `Vector<IRInst*>` indirection
    + per-op compute), so a smaller `IRInst` cannot help. **Kept only Phase P** (the
-   canonical mangler, `compiler/mangling.{hpp,cpp}`) — perf-neutral, and it
+   canonical mangler, `compiler/support/mangling.{hpp,cpp}`) — perf-neutral, and it
    eliminated a real 8-way `$$`-mangling drift hazard independent of interning.
    Methodology lesson: **measure Tier-3 bets on the large `roxy_gen` corpus, not
    Lox** — every Phase-1 sub-slice looked like a ~1-2% "win" on Lox and was

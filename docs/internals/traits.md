@@ -179,10 +179,10 @@ generic_args   -> "<" type_expr ( "," type_expr )* ">" ;
 
 | File | Purpose |
 |------|---------|
-| `include/roxy/compiler/types.hpp` | `TraitMethodInfo`, `TraitTypeInfo` (with `type_params`), trait type kind |
-| `include/roxy/compiler/ast.hpp` | `TraitDecl` (with `type_params`), `MethodDecl` (with `trait_type_args`) |
-| `src/roxy/compiler/parser.cpp` | `trait_declaration()`, `for Trait<Args>` parsing |
-| `include/roxy/compiler/generics.hpp` | `clone_stmt()`, `substitute_type_expr()` (default method injection) |
-| `src/roxy/compiler/trait_system.cpp` | trait analysis/validation, generic trait type-arg resolution, default method injection (`TraitSystem`, driven by the semantic analyzer) |
-| `src/roxy/compiler/ir_builder.cpp` | operator dispatch, synthetic decl processing |
+| `include/roxy/compiler/types/types.hpp` | `TraitMethodInfo`, `TraitTypeInfo` (with `type_params`), trait type kind |
+| `include/roxy/compiler/parse/ast.hpp` | `TraitDecl` (with `type_params`), `MethodDecl` (with `trait_type_args`) |
+| `src/roxy/compiler/parse/parser.cpp` | `trait_declaration()`, `for Trait<Args>` parsing |
+| `include/roxy/compiler/types/generics.hpp` | `clone_stmt()`, `substitute_type_expr()` (default method injection) |
+| `src/roxy/compiler/sema/trait_system.cpp` | trait analysis/validation, generic trait type-arg resolution, default method injection (`TraitSystem`, driven by the semantic analyzer) |
+| `src/roxy/compiler/ir/ir_builder.cpp` | operator dispatch, synthetic decl processing |
 | `tests/e2e/test_traits.cpp` | E2E tests |

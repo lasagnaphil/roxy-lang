@@ -41,7 +41,7 @@ Grammar: `yield_stmt = "yield" expression ";"`.
 
 ## `Coro<T>` Type
 
-`Coro<T>` is `TypeKind::Coroutine`, carrying `CoroutineTypeInfo` (yield type `T`, the generated state struct, the `resume`/`done` methods, and the function name used for method mangling — see `compiler/types.hpp`). Two methods are registered on each `Coro<T>`:
+`Coro<T>` is `TypeKind::Coroutine`, carrying `CoroutineTypeInfo` (yield type `T`, the generated state struct, the `resume`/`done` methods, and the function name used for method mangling — see `compiler/types/types.hpp`). Two methods are registered on each `Coro<T>`:
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -288,18 +288,18 @@ question. Pass by value, or pass a `uniq`/`ref`.
 | File | Purpose |
 |------|---------|
 | `include/roxy/shared/token_kinds.hpp` | `KwYield` token |
-| `include/roxy/compiler/ast.hpp` | `YieldStmt` AST node; `FunDecl::is_coroutine`, `MethodDecl::is_coroutine` |
-| `src/roxy/compiler/parser.cpp` | `yield_statement()` parser; `MethodDecl::is_coroutine` init (union-safety) |
-| `include/roxy/compiler/types.hpp` | `TypeKind::Coroutine`, `CoroutineTypeInfo` |
-| `src/roxy/compiler/types.cpp` | `coroutine_type()`, `coroutine_type_for_func()`, `lookup_coro_method()`, `compute_drop_plan` (erased → `Closure`) |
-| `src/roxy/compiler/type_checker.cpp` | Coroutine assignability (yield-type match) |
-| `src/roxy/compiler/semantic.cpp` | yield-based coroutine classification for functions & methods (`stmt_contains_yield`, `register_method_signature`), coroutine-method body context / generic+trait guards (`analyze_member_body`, `resolve_method_member`), `populate_coro_methods()`, yield/return validation |
-| `src/roxy/compiler/ir_builder.cpp` (`build_method`) | Coroutine-method detection: per-function coro type from `MethodInfo`, `self` captured as a `ref` param |
-| `include/roxy/compiler/ssa_ir.hpp` | `IROp::Yield`, `IROp::FuncIndex`, coroutine metadata on `IRFunction` |
-| `src/roxy/compiler/ir_builder_expr.cpp` | `resume()` → `CallIndirect`, `done()` → inline `__state` compare |
-| `src/roxy/compiler/ir_builder.cpp` | `gen_yield_stmt()`, live-variable capture, resume blocks |
-| `src/roxy/compiler/coroutine_lowering.cpp` | State machine transformation: init/resume/destructor, `__resume_idx` seeding |
-| `src/roxy/compiler/lowering.cpp` | `FuncIndex` → `LOAD_INT`; `New` records dtor for erased delete; Yield assertion |
-| `src/roxy/compiler/c_emitter.cpp` | Erased `Coro<T>` (`void*`, `__coro_header`), `FuncIndex`, coro resume in `g_closure_fns[]` |
-| `src/roxy/compiler/ir_validator.cpp` | Post-lowering Yield validation |
+| `include/roxy/compiler/parse/ast.hpp` | `YieldStmt` AST node; `FunDecl::is_coroutine`, `MethodDecl::is_coroutine` |
+| `src/roxy/compiler/parse/parser.cpp` | `yield_statement()` parser; `MethodDecl::is_coroutine` init (union-safety) |
+| `include/roxy/compiler/types/types.hpp` | `TypeKind::Coroutine`, `CoroutineTypeInfo` |
+| `src/roxy/compiler/types/types.cpp` | `coroutine_type()`, `coroutine_type_for_func()`, `lookup_coro_method()`, `compute_drop_plan` (erased → `Closure`) |
+| `src/roxy/compiler/sema/type_checker.cpp` | Coroutine assignability (yield-type match) |
+| `src/roxy/compiler/sema/semantic.cpp` | yield-based coroutine classification for functions & methods (`stmt_contains_yield`, `register_method_signature`), coroutine-method body context / generic+trait guards (`analyze_member_body`, `resolve_method_member`), `populate_coro_methods()`, yield/return validation |
+| `src/roxy/compiler/ir/ir_builder.cpp` (`build_method`) | Coroutine-method detection: per-function coro type from `MethodInfo`, `self` captured as a `ref` param |
+| `include/roxy/compiler/ir/ssa_ir.hpp` | `IROp::Yield`, `IROp::FuncIndex`, coroutine metadata on `IRFunction` |
+| `src/roxy/compiler/ir/ir_builder_expr.cpp` | `resume()` → `CallIndirect`, `done()` → inline `__state` compare |
+| `src/roxy/compiler/ir/ir_builder.cpp` | `gen_yield_stmt()`, live-variable capture, resume blocks |
+| `src/roxy/compiler/ir/coroutine_lowering.cpp` | State machine transformation: init/resume/destructor, `__resume_idx` seeding |
+| `src/roxy/compiler/codegen/lowering.cpp` | `FuncIndex` → `LOAD_INT`; `New` records dtor for erased delete; Yield assertion |
+| `src/roxy/compiler/codegen/c_emitter.cpp` | Erased `Coro<T>` (`void*`, `__coro_header`), `FuncIndex`, coro resume in `g_closure_fns[]` |
+| `src/roxy/compiler/ir/ir_validator.cpp` | Post-lowering Yield validation |
 | `tests/e2e/test_coroutines.cpp` | E2E test suite |

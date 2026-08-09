@@ -2,7 +2,7 @@
 
 Optimization passes on Roxy's SSA IR. Phase 1 (constant folding, algebraic simplification, cast folding) runs eagerly during IR construction; Phases 2–4 (DCE + copy propagation, control-flow simplification, block-local CSE) run as standalone passes between IR building and lowering.
 
-**Current state:** Phase 1 is implemented in `IRBuilder::emit_binary` / `emit_unary` / `gen_primitive_cast`. Phases 2–4 live in `compiler/ir_optimize.{hpp,cpp}` and run from `Compiler::link_modules()` between coroutine lowering and IR validation:
+**Current state:** Phase 1 is implemented in `IRBuilder::emit_binary` / `emit_unary` / `gen_primitive_cast`. Phases 2–4 live in `compiler/ir/ir_optimize.{hpp,cpp}` and run from `Compiler::link_modules()` between coroutine lowering and IR validation:
 
 - **Phase 2** — use-count computation, dead code elimination, copy propagation.
 - **Phase 3** — branch folding, block merging, trivial block-argument elimination.
@@ -178,8 +178,8 @@ Deferred — these need more infrastructure:
 
 | File | Purpose |
 |---|---|
-| `include/roxy/compiler/ir_builder.hpp` / `src/roxy/compiler/ir_builder.cpp` | Phase 1 (fold / simplify / cast fold during IR building) |
-| `include/roxy/compiler/ir_optimize.hpp` / `src/roxy/compiler/ir_optimize.cpp` | Phases 2–4 passes and fixed-point driver |
-| `include/roxy/compiler/ssa_ir.hpp` / `src/roxy/compiler/ssa_ir.cpp` | IR data structures, `reorder_blocks_rpo`, printing |
-| `include/roxy/compiler/lowering.hpp` / `src/roxy/compiler/lowering.cpp` | IR → bytecode lowering |
+| `include/roxy/compiler/ir/ir_builder.hpp` / `src/roxy/compiler/ir/ir_builder.cpp` | Phase 1 (fold / simplify / cast fold during IR building) |
+| `include/roxy/compiler/ir/ir_optimize.hpp` / `src/roxy/compiler/ir/ir_optimize.cpp` | Phases 2–4 passes and fixed-point driver |
+| `include/roxy/compiler/ir/ssa_ir.hpp` / `src/roxy/compiler/ir/ssa_ir.cpp` | IR data structures, `reorder_blocks_rpo`, printing |
+| `include/roxy/compiler/codegen/lowering.hpp` / `src/roxy/compiler/codegen/lowering.cpp` | IR → bytecode lowering |
 | `tests/unit/test_ir_optimize.cpp` | Phase 2–4 unit tests |

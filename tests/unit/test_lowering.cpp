@@ -1,8 +1,8 @@
 #include "roxy/core/doctest/doctest.h"
 
-#include "roxy/compiler/lowering.hpp"
-#include "roxy/compiler/ssa_ir.hpp"
-#include "roxy/compiler/types.hpp"
+#include "roxy/compiler/codegen/lowering.hpp"
+#include "roxy/compiler/ir/ssa_ir.hpp"
+#include "roxy/compiler/types/types.hpp"
 #include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/core/bump_allocator.hpp"

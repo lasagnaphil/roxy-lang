@@ -836,7 +836,7 @@ error — borrow it with `ref`, make it `uniq`, or move the whole struct.
 
 ### Use-after-move detection
 
-The semantic analyzer's `LifetimeChecker` (`compiler/lifetime_checker.hpp`) tracks
+The semantic analyzer's `LifetimeChecker` (`compiler/sema/lifetime_checker.hpp`) tracks
 a move state per noncopyable local; using a `Moved` or `MaybeValid` variable is a
 compile error:
 

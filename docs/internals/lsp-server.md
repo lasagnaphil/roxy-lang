@@ -156,11 +156,11 @@ The LSP server shares existing compiler infrastructure rather than duplicating i
 |-----------|-------|
 | **Lexer** (`shared/lexer.hpp`) | As-is — all token types, positions, f-strings |
 | **Token kinds** (`shared/token_kinds.hpp`) | As-is — single source of truth for keywords/operators |
-| **TypeCache** (`compiler/types.hpp`) | As-is — interning, method lookup, trait checking |
-| **TypeEnv** (`compiler/type_env.hpp`) | With invalidation support for index updates |
-| **ModuleRegistry** (`compiler/module_registry.hpp`) | As-is — native + script module lookups |
+| **TypeCache** (`compiler/types/types.hpp`) | As-is — interning, method lookup, trait checking |
+| **TypeEnv** (`compiler/types/type_env.hpp`) | With invalidation support for index updates |
+| **ModuleRegistry** (`compiler/driver/module_registry.hpp`) | As-is — native + script module lookups |
 | **NativeRegistry** (`vm/binding/registry.hpp`) | As-is — built-in signatures for completions |
-| **GenericInstantiator** (`compiler/generics.hpp`) | Template registration reusable; instantiation may need per-request arenas |
+| **GenericInstantiator** (`compiler/types/generics.hpp`) | Template registration reusable; instantiation may need per-request arenas |
 
 ## Files
 

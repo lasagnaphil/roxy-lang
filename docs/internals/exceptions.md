@@ -193,22 +193,22 @@ Catch (handler) blocks are not reachable through normal control flow — they're
 | File | Purpose |
 |------|---------|
 | `include/roxy/shared/token_kinds.hpp` | `KwTry`, `KwCatch`, `KwThrow`, `KwFinally` tokens |
-| `include/roxy/compiler/ast.hpp` | `ThrowStmt`, `TryStmt`, `CatchClause` AST nodes |
-| `src/roxy/compiler/parser.cpp` | `throw_statement()`, `try_statement()` |
-| `include/roxy/compiler/types.hpp` | `TypeKind::ExceptionRef` |
-| `src/roxy/compiler/semantic.cpp` | Exception trait registration, `register_builtin_exception_types` (KeyError/IndexError), throw/try analysis |
-| `src/roxy/compiler/ir_builder.cpp` | `emit_throw_builtin_exception`, `emit_list_bounds_check`, `request_exception_message`/`build_exception_messages`, `register_backend_exception_type` |
+| `include/roxy/compiler/parse/ast.hpp` | `ThrowStmt`, `TryStmt`, `CatchClause` AST nodes |
+| `src/roxy/compiler/parse/parser.cpp` | `throw_statement()`, `try_statement()` |
+| `include/roxy/compiler/types/types.hpp` | `TypeKind::ExceptionRef` |
+| `src/roxy/compiler/sema/semantic.cpp` | Exception trait registration, `register_builtin_exception_types` (KeyError/IndexError), throw/try analysis |
+| `src/roxy/compiler/ir/ir_builder.cpp` | `emit_throw_builtin_exception`, `emit_list_bounds_check`, `request_exception_message`/`build_exception_messages`, `register_backend_exception_type` |
 | `include/roxy/vm/bytecode.hpp` / `src/roxy/vm/interpreter.cpp` | `INDEX_TRYADDR_MAP` opcode (nullable map find) |
 | `tests/e2e/test_index_exceptions.cpp` | Index-operator exception E2E suite (both backends) |
-| `include/roxy/compiler/ssa_ir.hpp` | `IROp::Throw`, `IRExceptionHandler`, `IRFinallyInfo` |
-| `src/roxy/compiler/ir_builder.cpp` | `gen_throw_stmt()`, `gen_try_stmt()` (registers the caught exception as a catch-scope owned local — finding 9a); `emit_implicit_destroy` (catch-all `ExceptionRef` type-erased free) |
-| `src/roxy/compiler/ssa_ir.cpp` | RPO reordering with handler block seeding |
+| `include/roxy/compiler/ir/ssa_ir.hpp` | `IROp::Throw`, `IRExceptionHandler`, `IRFinallyInfo` |
+| `src/roxy/compiler/ir/ir_builder.cpp` | `gen_throw_stmt()`, `gen_try_stmt()` (registers the caught exception as a catch-scope owned local — finding 9a); `emit_implicit_destroy` (catch-all `ExceptionRef` type-erased free) |
+| `src/roxy/compiler/ir/ssa_ir.cpp` | RPO reordering with handler block seeding |
 | `include/roxy/vm/bytecode.hpp` | `THROW` opcode, `BCExceptionHandler` |
-| `src/roxy/compiler/lowering.cpp` | Throw lowering, handler table PC translation |
+| `src/roxy/compiler/codegen/lowering.cpp` | Throw lowering, handler table PC translation |
 | `include/roxy/vm/vm.hpp` | `in_flight_exception`, `in_flight_message_fn_idx` |
 | `src/roxy/vm/interpreter.cpp` | THROW handler, unwinding loop |
 | `src/roxy/vm/object.cpp` | `object_free` in-flight guard (skip the exception under unwind — finding 9a) |
-| `src/roxy/compiler/c_emitter.cpp` | `emit_cleanup_records` in-flight guard (`roxy_exception_current()`) |
+| `src/roxy/compiler/codegen/c_emitter.cpp` | `emit_cleanup_records` in-flight guard (`roxy_exception_current()`) |
 | `src/roxy/rt/roxy_rt.{h,cpp}` | `roxy_exception_current()` (C-backend in-flight accessor) |
-| `src/roxy/compiler/ir_validator.cpp` | Throw/handler validation |
+| `src/roxy/compiler/ir/ir_validator.cpp` | Throw/handler validation |
 | `tests/e2e/test_exceptions.cpp` | E2E test suite (incl. exception-lifecycle cases: dtor once, re-throw hand-off, new-throw, return/finally, catch-all reclamation) |

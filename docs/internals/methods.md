@@ -74,9 +74,9 @@ Both method calls (`obj.method()`) and named-constructor calls (`Type.ctor()`) u
 
 | File | Purpose |
 |------|---------|
-| `include/roxy/compiler/types.hpp` | `MethodInfo` struct |
-| `include/roxy/compiler/ast.hpp` | `DeclMethod`, `MethodDecl` |
-| `src/roxy/compiler/parser.cpp` | method parsing |
-| `src/roxy/compiler/semantic.cpp` | method registration and body analysis |
-| `src/roxy/compiler/ir_builder.cpp` | method IR generation (mangled name, `self` param) |
+| `include/roxy/compiler/types/types.hpp` | `MethodInfo` struct |
+| `include/roxy/compiler/parse/ast.hpp` | `DeclMethod`, `MethodDecl` |
+| `src/roxy/compiler/parse/parser.cpp` | method parsing |
+| `src/roxy/compiler/sema/semantic.cpp` | method registration and body analysis |
+| `src/roxy/compiler/ir/ir_builder.cpp` | method IR generation (mangled name, `self` param) |
 | `tests/e2e/test_methods.cpp` | E2E tests |

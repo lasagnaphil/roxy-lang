@@ -144,15 +144,15 @@ When pressure exceeds 255 registers — the bump pointer is at the limit and the
 
 | File | Purpose |
 |---|---|
-| `include/roxy/compiler/ssa_ir.hpp` | IR data structures |
-| `src/roxy/compiler/ssa_ir.cpp` | IR utilities and printing |
-| `include/roxy/compiler/ir_builder.hpp` | AST → IR conversion |
-| `src/roxy/compiler/ir_builder.cpp` | Builder core: functions, globals, module init/shutdown |
-| `src/roxy/compiler/ir_builder_expr.cpp` / `ir_builder_stmt.cpp` | Expression / statement generation |
-| `src/roxy/compiler/ir_builder_lifetime.cpp` | Cleanup, destroy, and move-state emission |
-| `src/roxy/compiler/ir_fold.cpp` | Phase 1 constant folding / algebraic simplification |
-| `src/roxy/compiler/ownership_tracker.cpp` | Owned-local bookkeeping consulted by the builder |
-| `src/roxy/compiler/ir_optimize.cpp` | Phase 2–4 optimization passes ([optimization.md](optimization.md)) |
-| `src/roxy/compiler/ir_validator.cpp` | Structural IR validation (debug builds) |
-| `include/roxy/compiler/lowering.hpp` | IR → bytecode conversion |
-| `src/roxy/compiler/lowering.cpp` | Lowering implementation |
+| `include/roxy/compiler/ir/ssa_ir.hpp` | IR data structures |
+| `src/roxy/compiler/ir/ssa_ir.cpp` | IR utilities and printing |
+| `include/roxy/compiler/ir/ir_builder.hpp` | AST → IR conversion |
+| `src/roxy/compiler/ir/ir_builder.cpp` | Builder core: functions, globals, module init/shutdown |
+| `src/roxy/compiler/ir/ir_builder_expr.cpp` / `ir_builder_stmt.cpp` | Expression / statement generation |
+| `src/roxy/compiler/ir/ir_builder_lifetime.cpp` | Cleanup, destroy, and move-state emission |
+| `src/roxy/compiler/ir/ir_fold.cpp` | Phase 1 constant folding / algebraic simplification |
+| `src/roxy/compiler/ir/ownership_tracker.cpp` | Owned-local bookkeeping consulted by the builder |
+| `src/roxy/compiler/ir/ir_optimize.cpp` | Phase 2–4 optimization passes ([optimization.md](optimization.md)) |
+| `src/roxy/compiler/ir/ir_validator.cpp` | Structural IR validation (debug builds) |
+| `include/roxy/compiler/codegen/lowering.hpp` | IR → bytecode conversion |
+| `src/roxy/compiler/codegen/lowering.cpp` | Lowering implementation |

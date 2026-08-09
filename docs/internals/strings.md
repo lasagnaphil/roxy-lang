@@ -171,9 +171,9 @@ fun main(): i32 {
 | `include/roxy/vm/string.hpp` | `StringHeader` typedef alias of `roxy_string_header`, VM-side helpers |
 | `src/roxy/vm/string.cpp` | Thin shim — `string_alloc(vm, ...)` → `roxy_string_from_literal(...)` |
 | `src/roxy/vm/natives.cpp` | Native function wrappers and registration (incl. `to_string`) |
-| `src/roxy/compiler/ir_builder.cpp` | String operator rewriting, f-string IR generation |
-| `src/roxy/compiler/parser.cpp` | String literal and f-string parsing, escape processing |
+| `src/roxy/compiler/ir/ir_builder.cpp` | String operator rewriting, f-string IR generation |
+| `src/roxy/compiler/parse/parser.cpp` | String literal and f-string parsing, escape processing |
 | `src/roxy/shared/lexer.cpp` | F-string tokenization with brace depth tracking |
-| `include/roxy/compiler/ast.hpp` | `ExprStringInterp` AST node |
-| `src/roxy/compiler/semantic.cpp` | Printable trait registration, f-string type checking |
-| `include/roxy/compiler/types.hpp` | Primitive method/trait tables in `TypeCache` |
+| `include/roxy/compiler/parse/ast.hpp` | `ExprStringInterp` AST node |
+| `src/roxy/compiler/sema/semantic.cpp` | Printable trait registration, f-string type checking |
+| `include/roxy/compiler/types/types.hpp` | Primitive method/trait tables in `TypeCache` |

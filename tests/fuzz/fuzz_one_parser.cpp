@@ -2,7 +2,7 @@
 
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/shared/lexer.hpp"
-#include "roxy/compiler/parser.hpp"
+#include "roxy/compiler/parse/parser.hpp"
 
 namespace rx::fuzz {
 

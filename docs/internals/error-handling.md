@@ -23,7 +23,7 @@ problems as possible in one run: **semantic analysis** and the **compiler
 pipeline**.
 
 **Accumulation.** Diagnostics are pushed into an `ErrorReporter`
-(`compiler/error_reporter.hpp`), not returned. Each `SemanticError` carries a
+(`compiler/support/error_reporter.hpp`), not returned. Each `SemanticError` carries a
 `SourceLocation` and a message (owned in the bump allocator when formatted via
 `error_fmt`). Collection is capped so a pathological input doesn't spew
 unboundedly — `MAX_SEMANTIC_ERRORS` (20) in batch mode, `MAX_LSP_SEMANTIC_ERRORS`
@@ -54,11 +54,11 @@ Used where continuing past a failure buys nothing — either because the output 
 already meaningless, or because a failure means a *compiler bug* rather than a
 user error.
 
-- **Strict parser** (`compiler/parser.hpp`) — recursive descent with a single
+- **Strict parser** (`compiler/parse/parser.hpp`) — recursive descent with a single
   `m_has_error` flag (`has_error()`), reporting through `report_error_at`. Node
   constructors return `Expr*`/`Stmt*` and yield null on failure. This parser does
   **not** recover; the error-recovering variant lives in the LSP (see below).
-- **IR validator** (`compiler/ir_validator.hpp`) — a structural-integrity check
+- **IR validator** (`compiler/ir/ir_validator.hpp`) — a structural-integrity check
   between IR building and lowering. Malformed IR is a compiler bug, so it stops
   at the first violation: `m_has_error` + a single `m_error`/`m_error_buf`,
   surfaced via `has_error()` / `error()`.

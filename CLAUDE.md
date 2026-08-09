@@ -245,9 +245,9 @@ cmake .. -G Ninja -DENABLE_ASAN=ON
 The project is organized into 6 libraries:
 - `roxy_core` - File utilities, rx::String, rx::format_to, JSON parser/writer
 - `roxy_shared` - Lexer and tokens
-- `roxy_compiler` - Parser, AST, semantic analysis, SSA IR, IR builder
+- `roxy_compiler` - Parser, AST, semantic analysis, SSA IR, IR builder, and **both** codegen backends (bytecode lowering + C emission)
 - `roxy_rt` - Unified runtime (allocation, slab allocator, vmem, strings, lists, maps, intern). Used by both `roxy_vm` and AOT-compiled programs.
-- `roxy_vm` - Bytecode, value, object, VM, interpreter, lowering
+- `roxy_vm` - Bytecode, value, object, VM, interpreter
 - `roxy_lsp` - Error-recovering parser, LSP transport, LSP server
 
 ## Code Conventions
@@ -269,11 +269,23 @@ roxy-v2/
 ├── include/roxy/
 │   ├── core/           # Core utilities (types.hpp, span.hpp, vector.hpp, allocators)
 │   ├── shared/         # Lexer and tokens
-│   ├── compiler/       # Parser, AST, types, semantic, SSA IR, IR builder, lowering
+│   ├── compiler/       # Grouped by pipeline phase (see below)
+│   │   ├── types/      #   Type system: types, type_env, symbol_table, generics
+│   │   ├── support/    #   Cross-cutting: mangling, error_reporter, operator_traits
+│   │   ├── parse/      #   ast, parser
+│   │   ├── sema/       #   semantic + its collaborators (sema_context, function_context,
+│   │   │               #   type_checker, lifetime_checker, trait_system,
+│   │   │               #   generic_call_resolver, lambda_lifter)
+│   │   ├── ir/         #   ssa_ir, ir_builder*, ownership_tracker, ir_fold,
+│   │   │               #   ir_optimize, ir_validator, coroutine_lowering
+│   │   ├── codegen/    #   lowering (→ bytecode), c_emitter (→ C/C++)
+│   │   └── driver/     #   compiler, module_registry
 │   ├── lsp/            # LSP server (syntax_tree, lsp_parser, indexer, global_index, cst_lowering, lsp_analysis_context, transport, server)
 │   ├── rt/             # Unified runtime (roxy_rt.h, slab_allocator, vmem, string_intern) — used by both VM and AOT-compiled programs
 │   └── vm/             # Bytecode, value, object, VM, interpreter, binding/, map_dispatch
 ├── src/roxy/           # Implementation files matching include/ structure
+│                       #   (compiler/ir/ additionally holds the ir_builder_{expr,stmt,
+│                       #    lifetime}.cpp split TUs and their ir_builder_internal.hpp)
 ├── benchmarks/         # lox, mandelbrot, nbody, quicksort, struct_copy workloads
 ├── examples/           # Runnable Roxy programs (incl. lox/ — a Lox interpreter in Roxy)
 ├── tests/
@@ -326,17 +338,17 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Details:** `docs/internals/frontend.md` | **Files:** `shared/lexer.hpp`, `shared/lexer.cpp`
 
 **Parser** - Recursive descent with Pratt parsing for expressions. Fail-fast design.
-**Details:** `docs/internals/frontend.md` | **Files:** `compiler/parser.hpp`, `compiler/parser.cpp`
+**Details:** `docs/internals/frontend.md` | **Files:** `compiler/parse/parser.hpp`, `compiler/parse/parser.cpp`
 
 **AST** - Expression, statement, and declaration node kinds (literals, operators, calls, control flow, structs, enums, traits, etc.).
-**Files:** `compiler/ast.hpp`
+**Files:** `compiler/parse/ast.hpp`
 
 **Semantic Analysis** - Multi-pass analyzer with symbol resolution, type inference, and type checking. Extracted collaborators (each shared by reference via `SemaContext`, no back-reference to the analyzer): `LifetimeChecker` (move-state tracking for `uniq` variables / use-after-move detection, definite-termination branch merges, scope-exit destructor checks), `TraitSystem` (builtin trait registration, trait declarations, impl grouping/validation, default-method injection), `GenericCallResolver` (type-arg unification/inference, generic function calls, template refs in value position, trait bounds, Phase B template-body checking), and `LambdaLifter` (lambda expressions: capture validation, lifting the body into a synthetic call function, env-struct backfill, plus the capture rewrites on identifier/`self` references inside lambda bodies).
-**Details:** `docs/internals/frontend.md` | **Files:** `compiler/semantic.hpp`, `compiler/semantic.cpp`, `compiler/sema_context.hpp`, `compiler/function_context.hpp`, `compiler/lifetime_checker.{hpp,cpp}`, `compiler/trait_system.{hpp,cpp}`, `compiler/generic_call_resolver.{hpp,cpp}`, `compiler/lambda_lifter.{hpp,cpp}`
+**Details:** `docs/internals/frontend.md` | **Files:** `compiler/sema/semantic.hpp`, `compiler/sema/semantic.cpp`, `compiler/sema/sema_context.hpp`, `compiler/sema/function_context.hpp`, `compiler/sema/lifetime_checker.{hpp,cpp}`, `compiler/sema/trait_system.{hpp,cpp}`, `compiler/sema/generic_call_resolver.{hpp,cpp}`, `compiler/sema/lambda_lifter.{hpp,cpp}`
 
 ### Type System
 **Types** - Primitives (`void`, `bool`, `i32`, `i64`, `f32`, `f64`, `string`), structs, enums, references.
-**Files:** `compiler/types.hpp`, `compiler/types.cpp`
+**Files:** `compiler/types/types.hpp`, `compiler/types/types.cpp`
 
 **Enums** - C-style enumerations with integer underlying type. Access via `Type::Variant`.
 **Tests:** `tests/e2e/test_enums.cpp`
@@ -352,13 +364,13 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 
 ### IR and Bytecode
 **SSA IR** - Block arguments (not phi nodes); operations spanning arithmetic, comparisons, memory, calls, control flow, object lifecycle, and closures.
-**Details:** `docs/internals/ssa-ir.md` | **Files:** `compiler/ssa_ir.hpp`, `compiler/ir_builder.hpp`, `compiler/ownership_tracker.{hpp,cpp}` (owned-local state + keyed name/value lookups behind the IRBuilder's `OwnershipTracker` collaborator; the builder keeps all IR emission)
+**Details:** `docs/internals/ssa-ir.md` | **Files:** `compiler/ir/ssa_ir.hpp`, `compiler/ir/ir_builder.hpp`, `compiler/ir/ownership_tracker.{hpp,cpp}` (owned-local state + keyed name/value lookups behind the IRBuilder's `OwnershipTracker` collaborator; the builder keeps all IR emission)
 
 **IR Optimizations** - Phase 1 (constant folding, algebraic simplifications, cast folding) eagerly applied during IR building. Phases 2 (DCE, copy propagation), 3 (branch folding, block merging, trivial block-argument elimination), and 4 (block-local Common Subexpression Elimination) as standalone passes between coroutine lowering and IR validation, iterated to a fixed point with a final RPO sweep.
-**Details:** `docs/internals/optimization.md` | **Files:** `compiler/ir_optimize.hpp`, `compiler/ir_optimize.cpp`
+**Details:** `docs/internals/optimization.md` | **Files:** `compiler/ir/ir_optimize.hpp`, `compiler/ir/ir_optimize.cpp`
 
 **Bytecode** - 32-bit fixed-width register-based, three instruction formats (ABC, ABI, AOFF). Liveness-based register allocation with free-list reuse; register spilling via furthest-first eviction when pressure exceeds 255 registers.
-**Details:** `docs/internals/bytecode.md`, `docs/internals/ssa-ir.md` | **Files:** `vm/bytecode.hpp`, `compiler/lowering.hpp`
+**Details:** `docs/internals/bytecode.md`, `docs/internals/ssa-ir.md` | **Files:** `vm/bytecode.hpp`, `compiler/codegen/lowering.hpp`
 
 ### Runtime
 **VM** - Shared register file with windowing, call frame stack, module loading.
@@ -384,10 +396,10 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Details:** `docs/internals/interop.md` | **Files:** `vm/binding/`
 
 **Module System** - Multi-file compilation with `import`/`from` syntax, topological sorting, static linking.
-**Details:** `docs/internals/modules.md` | **Files:** `compiler/module_registry.hpp`, `compiler/compiler.hpp`
+**Details:** `docs/internals/modules.md` | **Files:** `compiler/driver/module_registry.hpp`, `compiler/driver/compiler.hpp`
 
 **Module Globals** - Top-level `var` declarations with persistent storage, a synthesized `__module_init` running initializers/constructors before `main`, and `__module_shutdown` running destructors for noncopyable globals at teardown (RAII). VM accesses via the `GLOBAL_ADDR` opcode; the C backend emits real C globals (`g_<name>`) with init/teardown driven from the generated `main()`. Both backends supported (single-module; multi-module init is a documented limitation). The C-backend `Delete` op gained typed-delete (runs destructors) as part of this.
-**Details:** `docs/internals/globals.md` | **Files:** `compiler/ir_builder.cpp` (`collect_globals`/`build_module_init`/`build_module_shutdown`), `compiler/c_emitter.cpp`, `vm/vm.cpp`
+**Details:** `docs/internals/globals.md` | **Files:** `compiler/ir/ir_builder.cpp` (`collect_globals`/`build_module_init`/`build_module_shutdown`), `compiler/codegen/c_emitter.cpp`, `vm/vm.cpp`
 
 ### Control Flow
 **When Statement** - Pattern matching on enum values with phi node support for variable modifications. Exhaustiveness is *detected* (all variants covered) — not required — and drives all-paths-return, sharper `uniq` move-state merges, and a trap on the impossible no-`else` fall-through.
@@ -425,7 +437,7 @@ Points worth knowing before touching it:
 - **Natives take no `RoxyVM*`.** `bind<>`'d functions are plain `Ret(Args...)` and call `roxy_get_ctx()` if they need runtime state; AOT emits a typed direct call using the entry's `aot_symbol_name`, with `extern` decls pre-scanned into the preamble so binaries link against headers or separate TUs.
 - Identifiers colliding with C++ keywords get a reserved `roxy_kw_` prefix in `emit_mangled_name`.
 
-**Details:** `docs/internals/c-backend.md` | **Files:** `compiler/c_emitter.{hpp,cpp}`, `rt/roxy_rt.{h,cpp}`, `rt/slab_allocator.{hpp,cpp}`, `rt/vmem.hpp`, `rt/vmem_{unix,win32}.cpp`, `rt/string_intern.{hpp,cpp}`, `vm/map_dispatch.{hpp,cpp}`, `vm/binding/binder.hpp`, `vm/binding/registry.hpp` | **Tests:** `tests/e2e/test_c_backend.cpp`, `tests/unit/test_runtime_ctx.cpp`
+**Details:** `docs/internals/c-backend.md` | **Files:** `compiler/codegen/c_emitter.{hpp,cpp}`, `rt/roxy_rt.{h,cpp}`, `rt/slab_allocator.{hpp,cpp}`, `rt/vmem.hpp`, `rt/vmem_{unix,win32}.cpp`, `rt/string_intern.{hpp,cpp}`, `vm/map_dispatch.{hpp,cpp}`, `vm/binding/binder.hpp`, `vm/binding/registry.hpp` | **Tests:** `tests/e2e/test_c_backend.cpp`, `tests/unit/test_runtime_ctx.cpp`
 
 ### LSP Server (Phases 1–7)
 **LSP Parser** - Error-recovering parser producing a lossless CST. Three recovery strategies: synthetic token insertion, statement boundary synchronization, bracket-aware skipping. Handles all grammar productions from the compiler parser.

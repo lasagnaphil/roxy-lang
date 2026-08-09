@@ -73,7 +73,7 @@ in `grammar.js`, both mirroring `lexer.cpp`:
 
 ### The parser is the ground truth
 
-`grammar.js` is modelled on `src/roxy/compiler/parser.cpp`, not on
+`grammar.js` is modelled on `src/roxy/compiler/parse/parser.cpp`, not on
 `docs/grammar.md` — the doc has drifted:
 
 | `docs/grammar.md` says | the parser actually does |
