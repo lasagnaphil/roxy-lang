@@ -3950,6 +3950,10 @@ bool SemanticAnalyzer::try_print_printable_fallback(Expr* expr, CallExpr& ce, Sy
 }
 
 Type* SemanticAnalyzer::analyze_overloaded_call(Expr* expr, CallExpr& ce, Symbol* head) {
+    // The only caller reaches here via `sym && is_function_symbol_kind(...) &&
+    // sym->next_overload`, so the overload-set head is non-null and has at
+    // least two members.
+    assert(head && "overload-set head must be non-null");
     Span<CallArg> args = ce.arguments;
 
     // ---- Phase A: analyze every argument exactly ONCE (single-shot rule) ----
@@ -5170,9 +5174,14 @@ Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* ri
     // Resolution then finds i32's registered operator methods. u32/u64 are NOT narrow
     // (they get native unsigned arithmetic separately and stay unsupported here);
     // string/struct/float/bool operands are never narrow, so this leaves them untouched.
-    if (left && left->is_narrow_integer())
+    // Operand types come from check_expr, which never returns null (it yields
+    // the error_type sentinel instead) — see docs/internals/error-handling.md.
+    // Asserting it here documents the contract and lets the static analyzer see
+    // that the unguarded dereferences below are safe.
+    assert(left && right && "operand types must be non-null (error_type sentinel)");
+    if (left->is_narrow_integer())
         left = m_types.i32_type();
-    if (right && right->is_narrow_integer())
+    if (right->is_narrow_integer())
         right = m_types.i32_type();
 
     switch (op) {
@@ -5264,7 +5273,9 @@ Type* SemanticAnalyzer::get_unary_result_type(UnaryOp op, Type* operand, SourceL
     // Numeric promotion (see get_binary_result_type): a narrow integer operand widens
     // to i32 for '-' / '~', yielding an i32 result. int_literal / bool operands are not
     // narrow, so the int-literal short-circuit and '!' below are unaffected.
-    if (operand && operand->is_narrow_integer())
+    // Non-null by the same contract as get_binary_result_type.
+    assert(operand && "operand type must be non-null (error_type sentinel)");
+    if (operand->is_narrow_integer())
         operand = m_types.i32_type();
 
     switch (op) {

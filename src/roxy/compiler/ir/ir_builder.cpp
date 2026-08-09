@@ -924,6 +924,7 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
 }
 
 ValueId IRBuilder::emit_zero_value(Type* type) {
+    assert(type && "zero value requires a resolved type");
     if (type->is_bool())
         return emit_const_bool(false);
     if (type->is_integer() || type->is_enum())

@@ -137,6 +137,9 @@ bool LambdaLifter::try_capture_identifier(Expr* expr, Symbol* sym, Type** out) {
 static StringView alloc_view(BumpAllocator& alloc, const char* str) {
     u32 len = static_cast<u32>(strlen(str));
     char* buf = reinterpret_cast<char*>(alloc.alloc_bytes(len, 1));
+    // Intentionally not NUL-terminated — StringView carries its length, and the
+    // allocation is sized exactly `len`. Terminating would need an extra byte.
+    // NOLINTNEXTLINE(bugprone-not-null-terminated-result)
     memcpy(buf, str, len);
     return StringView(buf, len);
 }

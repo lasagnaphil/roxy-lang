@@ -2751,8 +2751,12 @@ ValueId IRBuilder::gen_compound_assign(Expr* expr, ValueId rhs, bool& handled) {
     // Primitive compound assignment: fold the target's current value with the RHS.
     ValueId old_val = gen_expr(assign_expr.target);
 
+    // Sema resolved the target's type before we got here, so it is non-null;
+    // asserting lets the analyzer see the unguarded `type->` uses below are safe.
+    assert(type && "compound-assign target type must be resolved by sema");
+
     // Unsigned div/mod/shr diverge for u32/u64 targets (see get_binary_op).
-    bool is_unsigned = type && (type->kind == TypeKind::U32 || type->kind == TypeKind::U64);
+    bool is_unsigned = type->kind == TypeKind::U32 || type->kind == TypeKind::U64;
     IROp op;
     switch (assign_expr.op) {
         case AssignOp::AddAssign:

@@ -13,6 +13,8 @@ namespace rx {
 using namespace ir_builder_detail;
 
 IRBlock* IRBuilder::create_block(StringView name) {
+    // Blocks are only ever created while building a function body.
+    assert(m_current_func && "create_block outside a function body");
     IRBlock* block = m_allocator.emplace<IRBlock>();
     block->id = BlockId{static_cast<u32>(m_current_func->blocks.size())};
     block->name = name;
