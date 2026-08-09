@@ -269,18 +269,19 @@ The project is organized into 6 libraries:
 see the comment in `CMakeLists.txt` for why. **The build is warning-clean; keep
 it that way.**
 
-`.clang-format` describes the style already in use rather than imposing a new
-one. **Existing code is deliberately not mass-reformatted** (even this tuned
-config rewrites ~17.5k lines of intentional hand-alignment), so format
-*incrementally*:
+`.clang-format` is LLVM defaults overridden only where the house style differs
+(4-space indent, 100 columns, `Type* ptr`, un-indented namespaces, indented case
+labels). **The whole tree has been formatted with it**, so keep it clean:
 
 ```bash
-git-clang-format             # format only what you staged
-clang-format -i <file>       # when you're already rewriting a file
+clang-format -i <file>       # on files you touch
+git-clang-format             # or just what you staged
 ```
 
 Vendored code (`doctest/`, `tsl/`, `xxhash.h`, `third_party/`) is excluded via
-`.clang-format-ignore`.
+`.clang-format-ignore`. One known wart: `ir/ssa_ir.hpp` never reaches a fixed
+point — the wrapped trailing comments in the `IROp` enum oscillate between two
+alignments on successive runs, so a `--dry-run` check always flags that one file.
 
 `.clang-tidy` is a narrow, high-signal check set (~30 findings, all currently
 triaged; the broad `misc-*` style checks are off — they produce ~3.4k mechanical
