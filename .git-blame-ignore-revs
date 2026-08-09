@@ -13,3 +13,6 @@
 
 # style: apply clang-format to the whole tree (2026-08-09)
 b488faaa112fb89b14c8404ddbae46902569b584
+
+# style: format roxy_rt.h, missed by the sweep above (2026-08-09)
+57d1737cf1e3c6bd35e5b799068e74cbe714a533
