@@ -26,4 +26,4 @@ bool interpret(RoxyVM* vm, u32 stop_depth = 0);
 // methods from inside `map_hash_key` / `map_keys_equal`.
 u64 call_user_function(RoxyVM* vm, u32 func_idx, const u64* args, u32 argc);
 
-}
+} // namespace rx

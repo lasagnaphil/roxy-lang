@@ -5,10 +5,7 @@
 namespace rx {
 
 Parser::Parser(Lexer& lexer, BumpAllocator& allocator)
-    : m_lexer(lexer)
-    , m_allocator(allocator)
-    , m_has_error(false)
-{
+    : m_lexer(lexer), m_allocator(allocator), m_has_error(false) {
     m_current = m_lexer.next_token();
     m_previous = m_current;
 }
@@ -18,7 +15,8 @@ Program* Parser::parse() {
 
     while (!is_at_end()) {
         Decl* decl = declaration();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
         if (decl) {
             declarations.push_back(decl);
         }
@@ -40,12 +38,11 @@ void Parser::advance() {
     }
 }
 
-bool Parser::check(TokenKind kind) const {
-    return m_current.kind == kind;
-}
+bool Parser::check(TokenKind kind) const { return m_current.kind == kind; }
 
 bool Parser::match(TokenKind kind) {
-    if (!check(kind)) return false;
+    if (!check(kind))
+        return false;
     advance();
     return true;
 }
@@ -60,18 +57,15 @@ Token Parser::consume(TokenKind kind, const char* message) {
     return m_current;
 }
 
-bool Parser::is_at_end() const {
-    return m_current.kind == TokenKind::Eof;
-}
+bool Parser::is_at_end() const { return m_current.kind == TokenKind::Eof; }
 
 // Error handling
 
-void Parser::report_error(const char* message) {
-    report_error_at(m_current, message);
-}
+void Parser::report_error(const char* message) { report_error_at(m_current, message); }
 
 void Parser::report_error_at(const Token& token, const char* message) {
-    if (m_has_error) return;  // Only report first error
+    if (m_has_error)
+        return; // Only report first error
     m_has_error = true;
     m_error.loc = token.loc;
     m_error.message = message;
@@ -79,8 +73,7 @@ void Parser::report_error_at(const Token& token, const char* message) {
 
 // Allocation helper
 
-template <typename T>
-Span<T> Parser::alloc_span(const Vector<T>& vec) {
+template <typename T> Span<T> Parser::alloc_span(const Vector<T>& vec) {
     if (vec.empty()) {
         return Span<T>{};
     }
@@ -95,7 +88,7 @@ Span<T> Parser::alloc_span(const Vector<T>& vec) {
 
 // Infix operator rule: precedence, right-associativity, and binary operator
 struct InfixRule {
-    u8 precedence;      // 0 means not an infix operator
+    u8 precedence; // 0 means not an infix operator
     bool right_assoc;
     BinaryOp op;
 };
@@ -115,35 +108,54 @@ struct InfixRule {
 static InfixRule get_infix_rule(TokenKind kind) {
     switch (kind) {
         // Precedence 1: logical or
-        case TokenKind::PipePipe:     return {1, false, BinaryOp::Or};
+        case TokenKind::PipePipe:
+            return {1, false, BinaryOp::Or};
         // Precedence 2: logical and
-        case TokenKind::AmpAmp:       return {2, false, BinaryOp::And};
+        case TokenKind::AmpAmp:
+            return {2, false, BinaryOp::And};
         // Precedence 3: bitwise or
-        case TokenKind::Pipe:         return {3, false, BinaryOp::BitOr};
+        case TokenKind::Pipe:
+            return {3, false, BinaryOp::BitOr};
         // Precedence 4: bitwise xor
-        case TokenKind::Caret:        return {4, false, BinaryOp::BitXor};
+        case TokenKind::Caret:
+            return {4, false, BinaryOp::BitXor};
         // Precedence 5: bitwise and
-        case TokenKind::Amp:          return {5, false, BinaryOp::BitAnd};
+        case TokenKind::Amp:
+            return {5, false, BinaryOp::BitAnd};
         // Precedence 6: equality
-        case TokenKind::EqualEqual:   return {6, false, BinaryOp::Equal};
-        case TokenKind::BangEqual:    return {6, false, BinaryOp::NotEqual};
+        case TokenKind::EqualEqual:
+            return {6, false, BinaryOp::Equal};
+        case TokenKind::BangEqual:
+            return {6, false, BinaryOp::NotEqual};
         // Precedence 7: comparison
-        case TokenKind::Less:         return {7, false, BinaryOp::Less};
-        case TokenKind::LessEqual:    return {7, false, BinaryOp::LessEq};
-        case TokenKind::Greater:      return {7, false, BinaryOp::Greater};
-        case TokenKind::GreaterEqual: return {7, false, BinaryOp::GreaterEq};
+        case TokenKind::Less:
+            return {7, false, BinaryOp::Less};
+        case TokenKind::LessEqual:
+            return {7, false, BinaryOp::LessEq};
+        case TokenKind::Greater:
+            return {7, false, BinaryOp::Greater};
+        case TokenKind::GreaterEqual:
+            return {7, false, BinaryOp::GreaterEq};
         // Precedence 8: shift
-        case TokenKind::LessLess:     return {8, false, BinaryOp::Shl};
-        case TokenKind::GreaterGreater: return {8, false, BinaryOp::Shr};
+        case TokenKind::LessLess:
+            return {8, false, BinaryOp::Shl};
+        case TokenKind::GreaterGreater:
+            return {8, false, BinaryOp::Shr};
         // Precedence 9: additive
-        case TokenKind::Plus:         return {9, false, BinaryOp::Add};
-        case TokenKind::Minus:        return {9, false, BinaryOp::Sub};
+        case TokenKind::Plus:
+            return {9, false, BinaryOp::Add};
+        case TokenKind::Minus:
+            return {9, false, BinaryOp::Sub};
         // Precedence 10: multiplicative
-        case TokenKind::Star:         return {10, false, BinaryOp::Mul};
-        case TokenKind::Slash:        return {10, false, BinaryOp::Div};
-        case TokenKind::Percent:      return {10, false, BinaryOp::Mod};
+        case TokenKind::Star:
+            return {10, false, BinaryOp::Mul};
+        case TokenKind::Slash:
+            return {10, false, BinaryOp::Div};
+        case TokenKind::Percent:
+            return {10, false, BinaryOp::Mod};
         // Not an infix operator
-        default:                      return {0, false, {}};
+        default:
+            return {0, false, {}};
     }
 }
 
@@ -160,19 +172,23 @@ Expr* Parser::make_binary(Expr* left, BinaryOp op, Expr* right, SourceLocation l
 Expr* Parser::expression() {
     // Parse with precedence 0 to get the full expression
     Expr* expr = parse_precedence(1);
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     // Handle ternary operator (lower precedence than binary ops)
     if (match(TokenKind::Question)) {
         SourceLocation loc = m_previous.loc;
         Expr* then_expr = expression();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         consume(TokenKind::Colon, "expected ':' in ternary expression");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         Expr* else_expr = expression();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         Expr* ternary_expr = alloc<Expr>();
         ternary_expr->kind = AstKind::ExprTernary;
@@ -184,33 +200,57 @@ Expr* Parser::expression() {
     }
 
     // Handle assignment (lowest precedence, right-associative)
-    if (check(TokenKind::Equal) || check(TokenKind::PlusEqual) ||
-        check(TokenKind::MinusEqual) || check(TokenKind::StarEqual) ||
-        check(TokenKind::SlashEqual) || check(TokenKind::PercentEqual) ||
-        check(TokenKind::AmpEqual) || check(TokenKind::PipeEqual) ||
-        check(TokenKind::CaretEqual) || check(TokenKind::LessLessEqual) ||
-        check(TokenKind::GreaterGreaterEqual)) {
+    if (check(TokenKind::Equal) || check(TokenKind::PlusEqual) || check(TokenKind::MinusEqual) ||
+        check(TokenKind::StarEqual) || check(TokenKind::SlashEqual) ||
+        check(TokenKind::PercentEqual) || check(TokenKind::AmpEqual) ||
+        check(TokenKind::PipeEqual) || check(TokenKind::CaretEqual) ||
+        check(TokenKind::LessLessEqual) || check(TokenKind::GreaterGreaterEqual)) {
 
         Token op_token = m_current;
         AssignOp op;
         switch (m_current.kind) {
-            case TokenKind::Equal:        op = AssignOp::Assign; break;
-            case TokenKind::PlusEqual:    op = AssignOp::AddAssign; break;
-            case TokenKind::MinusEqual:   op = AssignOp::SubAssign; break;
-            case TokenKind::StarEqual:    op = AssignOp::MulAssign; break;
-            case TokenKind::SlashEqual:   op = AssignOp::DivAssign; break;
-            case TokenKind::PercentEqual: op = AssignOp::ModAssign; break;
-            case TokenKind::AmpEqual:     op = AssignOp::BitAndAssign; break;
-            case TokenKind::PipeEqual:    op = AssignOp::BitOrAssign; break;
-            case TokenKind::CaretEqual:   op = AssignOp::BitXorAssign; break;
-            case TokenKind::LessLessEqual: op = AssignOp::ShlAssign; break;
-            case TokenKind::GreaterGreaterEqual: op = AssignOp::ShrAssign; break;
-            default: op = AssignOp::Assign; break;
+            case TokenKind::Equal:
+                op = AssignOp::Assign;
+                break;
+            case TokenKind::PlusEqual:
+                op = AssignOp::AddAssign;
+                break;
+            case TokenKind::MinusEqual:
+                op = AssignOp::SubAssign;
+                break;
+            case TokenKind::StarEqual:
+                op = AssignOp::MulAssign;
+                break;
+            case TokenKind::SlashEqual:
+                op = AssignOp::DivAssign;
+                break;
+            case TokenKind::PercentEqual:
+                op = AssignOp::ModAssign;
+                break;
+            case TokenKind::AmpEqual:
+                op = AssignOp::BitAndAssign;
+                break;
+            case TokenKind::PipeEqual:
+                op = AssignOp::BitOrAssign;
+                break;
+            case TokenKind::CaretEqual:
+                op = AssignOp::BitXorAssign;
+                break;
+            case TokenKind::LessLessEqual:
+                op = AssignOp::ShlAssign;
+                break;
+            case TokenKind::GreaterGreaterEqual:
+                op = AssignOp::ShrAssign;
+                break;
+            default:
+                op = AssignOp::Assign;
+                break;
         }
         advance();
 
-        Expr* value = expression();  // Right-associative
-        if (m_has_error) return nullptr;
+        Expr* value = expression(); // Right-associative
+        if (m_has_error)
+            return nullptr;
 
         Expr* assign_expr = alloc<Expr>();
         assign_expr->kind = AstKind::ExprAssign;
@@ -227,14 +267,16 @@ Expr* Parser::expression() {
 Expr* Parser::parse_precedence(u8 min_prec) {
     // Parse prefix expression (unary operators and primary)
     Expr* left = unary();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     // Parse infix operators using Pratt parsing
     while (true) {
         InfixRule rule = get_infix_rule(m_current.kind);
 
         // Stop if not an infix operator or precedence is too low
-        if (rule.precedence == 0 || rule.precedence < min_prec) break;
+        if (rule.precedence == 0 || rule.precedence < min_prec)
+            break;
 
         SourceLocation loc = m_current.loc;
         advance();
@@ -242,7 +284,8 @@ Expr* Parser::parse_precedence(u8 min_prec) {
         // For right-associative operators, use same precedence; for left-associative, use higher
         u8 next_prec = rule.right_assoc ? rule.precedence : rule.precedence + 1;
         Expr* right = parse_precedence(next_prec);
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         left = make_binary(left, rule.op, right, loc);
     }
@@ -254,16 +297,25 @@ Expr* Parser::unary() {
     if (check(TokenKind::Bang) || check(TokenKind::Minus) || check(TokenKind::Tilde)) {
         UnaryOp op;
         switch (m_current.kind) {
-            case TokenKind::Bang:  op = UnaryOp::Not; break;
-            case TokenKind::Minus: op = UnaryOp::Negate; break;
-            case TokenKind::Tilde: op = UnaryOp::BitNot; break;
-            default: op = UnaryOp::Not; break;
+            case TokenKind::Bang:
+                op = UnaryOp::Not;
+                break;
+            case TokenKind::Minus:
+                op = UnaryOp::Negate;
+                break;
+            case TokenKind::Tilde:
+                op = UnaryOp::BitNot;
+                break;
+            default:
+                op = UnaryOp::Not;
+                break;
         }
         SourceLocation loc = m_current.loc;
         advance();
 
         Expr* operand = unary();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         Expr* unary_expr = alloc<Expr>();
         unary_expr->kind = AstKind::ExprUnary;
@@ -277,15 +329,18 @@ Expr* Parser::unary() {
 }
 
 Expr* Parser::postfix(Expr* expr) {
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     while (true) {
         if (match(TokenKind::LeftParen)) {
             expr = finish_call(expr);
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
         } else if (match(TokenKind::Dot)) {
             Token name_token = consume(TokenKind::Identifier, "expected property name after '.'");
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
 
             Expr* get_expr = alloc<Expr>();
             get_expr->kind = AstKind::ExprGet;
@@ -295,7 +350,8 @@ Expr* Parser::postfix(Expr* expr) {
             expr = get_expr;
         } else if (match(TokenKind::LeftBracket)) {
             expr = finish_index(expr);
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
         } else {
             break;
         }
@@ -309,7 +365,8 @@ Expr* Parser::finish_call(Expr* callee) {
     SourceLocation loc = m_previous.loc;
 
     if (!check(TokenKind::RightParen)) {
-        arguments.reserve(8);  // §4.8: one alloc instead of the 1->2->4->8 grow ladder (non-empty only)
+        arguments.reserve(
+            8); // §4.8: one alloc instead of the 1->2->4->8 grow ladder (non-empty only)
         do {
             CallArg arg;
             arg.modifier = ParamModifier::None;
@@ -325,13 +382,15 @@ Expr* Parser::finish_call(Expr* callee) {
             }
 
             arg.expr = expression();
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
             arguments.push_back(arg);
         } while (match(TokenKind::Comma));
     }
 
     consume(TokenKind::RightParen, "expected ')' after arguments");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Expr* call_expr = alloc<Expr>();
     call_expr->kind = AstKind::ExprCall;
@@ -349,10 +408,12 @@ Expr* Parser::finish_index(Expr* object) {
     SourceLocation loc = m_previous.loc;
 
     Expr* index = expression();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     consume(TokenKind::RightBracket, "expected ']' after index");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Expr* index_expr = alloc<Expr>();
     index_expr->kind = AstKind::ExprIndex;
@@ -453,7 +514,8 @@ Expr* Parser::primary() {
 
         while (true) {
             Expr* e = expression();
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
             expressions.push_back(e);
 
             if (match(TokenKind::FStringMid)) {
@@ -505,69 +567,84 @@ Expr* Parser::primary() {
                     entry.loc = entry_loc;
 
                     if (check(TokenKind::Identifier) && m_current.text() == "move"_sv) {
-                        advance();  // consume 'move'
-                        Token cap_name = consume(TokenKind::Identifier, "expected captured variable name after 'move'");
-                        if (m_has_error) return nullptr;
+                        advance(); // consume 'move'
+                        Token cap_name = consume(TokenKind::Identifier,
+                                                 "expected captured variable name after 'move'");
+                        if (m_has_error)
+                            return nullptr;
                         entry.name = cap_name.text();
                         entry.mode = CaptureMode::Move;
                     } else if (check(TokenKind::Identifier) && m_current.text() == "copy"_sv) {
-                        advance();  // consume 'copy'
+                        advance(); // consume 'copy'
                         consume(TokenKind::KwSelf, "[copy ...] is currently restricted to 'self'");
-                        if (m_has_error) return nullptr;
+                        if (m_has_error)
+                            return nullptr;
                         entry.name = "self"_sv;
                         entry.mode = CaptureMode::Copy;
                     } else if (match(TokenKind::KwWeak)) {
                         consume(TokenKind::KwSelf, "[weak ...] is currently restricted to 'self'");
-                        if (m_has_error) return nullptr;
+                        if (m_has_error)
+                            return nullptr;
                         entry.name = "self"_sv;
                         entry.mode = CaptureMode::Weak;
                     } else {
-                        report_error("expected 'move <name>', '[copy self]', or '[weak self]' in capture list");
+                        report_error("expected 'move <name>', '[copy self]', or '[weak self]' in "
+                                     "capture list");
                         return nullptr;
                     }
                     captures.push_back(entry);
                 } while (match(TokenKind::Comma));
             }
             consume(TokenKind::RightBracket, "expected ']' after capture list");
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
         }
 
         consume(TokenKind::LeftParen, "expected '(' after 'fun' in lambda expression");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         Vector<Param> params = parse_parameters();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
         consume(TokenKind::RightParen, "expected ')' after lambda parameters");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         // Optional return type annotation: ': RetType'
         TypeExpr* return_type = nullptr;
         if (match(TokenKind::Colon)) {
             return_type = type_expression();
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
         }
 
-        // Body: either '{ ... }' (block) or '=> expr' (expression body — desugars to '{ return expr; }')
+        // Body: either '{ ... }' (block) or '=> expr' (expression body — desugars to '{ return
+        // expr; }')
         Stmt* body = nullptr;
         if (match(TokenKind::LeftBrace)) {
             Vector<Decl*> decls;
             while (!check(TokenKind::RightBrace) && !is_at_end()) {
                 Decl* d = declaration();
-                if (m_has_error) return nullptr;
+                if (m_has_error)
+                    return nullptr;
                 decls.push_back(d);
             }
             consume(TokenKind::RightBrace, "expected '}' after lambda body");
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
             body = alloc<Stmt>();
             body->kind = AstKind::StmtBlock;
             body->loc = loc;
             body->block.declarations = alloc_span(decls);
         } else if (match(TokenKind::Equal)) {
             consume(TokenKind::Greater, "expected '>' to form '=>' in lambda short body");
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
             SourceLocation arrow_loc = m_previous.loc;
             Expr* expr_body = expression();
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
 
             // Desugar `=> expr` into `{ return expr; }`.
             Decl* ret_decl = alloc<Decl>();
@@ -602,7 +679,8 @@ Expr* Parser::primary() {
     if (match(TokenKind::KwRef)) {
         SourceLocation loc = m_previous.loc;
         Expr* operand = unary();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         Expr* expr = alloc<Expr>();
         expr->kind = AstKind::ExprUnary;
@@ -619,13 +697,15 @@ Expr* Parser::primary() {
 
         // uniq Type(...) or uniq Type { ... } or uniq Type<Args>(...) or uniq Type<Args> { ... }
         Token type_token = consume(TokenKind::Identifier, "expected type name after 'uniq'");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         // Parse optional generic type args: uniq Box<i32>(...)
         Span<TypeExpr*> type_args;
         if (check(TokenKind::Less)) {
             type_args = try_parse_generic_args();
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
         }
 
         // Check for struct literal: uniq Type { ... } or uniq Type<Args> { ... }
@@ -634,11 +714,14 @@ Expr* Parser::primary() {
             if (!check(TokenKind::RightBrace)) {
                 do {
                     Token name_token = consume(TokenKind::Identifier, "expected field name");
-                    if (m_has_error) return nullptr;
+                    if (m_has_error)
+                        return nullptr;
                     consume(TokenKind::Equal, "expected '=' after field name");
-                    if (m_has_error) return nullptr;
+                    if (m_has_error)
+                        return nullptr;
                     Expr* value = expression();
-                    if (m_has_error) return nullptr;
+                    if (m_has_error)
+                        return nullptr;
                     FieldInit field_init;
                     field_init.name = name_token.text();
                     field_init.value = value;
@@ -647,7 +730,8 @@ Expr* Parser::primary() {
                 } while (match(TokenKind::Comma));
             }
             consume(TokenKind::RightBrace, "expected '}' after struct literal fields");
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
 
             Expr* expr = alloc<Expr>();
             expr->kind = AstKind::ExprStructLiteral;
@@ -663,13 +747,16 @@ Expr* Parser::primary() {
         // Constructor call: uniq Type() or uniq Type.ctor_name() or uniq Type<Args>() etc.
         StringView ctor_name;
         if (match(TokenKind::Dot)) {
-            Token name_token = consume(TokenKind::Identifier, "expected constructor name after '.'");
-            if (m_has_error) return nullptr;
+            Token name_token =
+                consume(TokenKind::Identifier, "expected constructor name after '.'");
+            if (m_has_error)
+                return nullptr;
             ctor_name = name_token.text();
         }
 
         consume(TokenKind::LeftParen, "expected '(' or '{' after type");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         Vector<CallArg> arguments;
         if (!check(TokenKind::RightParen)) {
@@ -685,12 +772,14 @@ Expr* Parser::primary() {
                     arg.modifier_loc = m_previous.loc;
                 }
                 arg.expr = expression();
-                if (m_has_error) return nullptr;
+                if (m_has_error)
+                    return nullptr;
                 arguments.push_back(arg);
             } while (match(TokenKind::Comma));
         }
         consume(TokenKind::RightParen, "expected ')' after arguments");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         // Create callee as identifier
         Expr* callee = alloc<Expr>();
@@ -718,7 +807,8 @@ Expr* Parser::primary() {
         // Check for static member access (Type::member)
         if (match(TokenKind::ColonColon)) {
             Token member_token = consume(TokenKind::Identifier, "expected member name after '::'");
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
 
             Expr* expr = alloc<Expr>();
             expr->kind = AstKind::ExprStaticGet;
@@ -740,12 +830,16 @@ Expr* Parser::primary() {
                     Vector<FieldInit> fields;
                     if (!check(TokenKind::RightBrace)) {
                         do {
-                            Token field_token = consume(TokenKind::Identifier, "expected field name");
-                            if (m_has_error) return nullptr;
+                            Token field_token =
+                                consume(TokenKind::Identifier, "expected field name");
+                            if (m_has_error)
+                                return nullptr;
                             consume(TokenKind::Equal, "expected '=' after field name");
-                            if (m_has_error) return nullptr;
+                            if (m_has_error)
+                                return nullptr;
                             Expr* value = expression();
-                            if (m_has_error) return nullptr;
+                            if (m_has_error)
+                                return nullptr;
                             FieldInit field_init;
                             field_init.name = field_token.text();
                             field_init.value = value;
@@ -754,7 +848,8 @@ Expr* Parser::primary() {
                         } while (match(TokenKind::Comma));
                     }
                     consume(TokenKind::RightBrace, "expected '}' after struct literal fields");
-                    if (m_has_error) return nullptr;
+                    if (m_has_error)
+                        return nullptr;
 
                     Expr* expr = alloc<Expr>();
                     expr->kind = AstKind::ExprStructLiteral;
@@ -769,10 +864,13 @@ Expr* Parser::primary() {
 
                 if (match(TokenKind::Dot)) {
                     // Generic named constructor call: Pair<i32>.from(10, 32)
-                    Token ctor_name_token = consume(TokenKind::Identifier, "expected constructor name after '.'");
-                    if (m_has_error) return nullptr;
+                    Token ctor_name_token =
+                        consume(TokenKind::Identifier, "expected constructor name after '.'");
+                    if (m_has_error)
+                        return nullptr;
                     consume(TokenKind::LeftParen, "expected '(' after constructor name");
-                    if (m_has_error) return nullptr;
+                    if (m_has_error)
+                        return nullptr;
 
                     Vector<CallArg> arguments;
                     if (!check(TokenKind::RightParen)) {
@@ -788,12 +886,14 @@ Expr* Parser::primary() {
                                 arg.modifier_loc = m_previous.loc;
                             }
                             arg.expr = expression();
-                            if (m_has_error) return nullptr;
+                            if (m_has_error)
+                                return nullptr;
                             arguments.push_back(arg);
                         } while (match(TokenKind::Comma));
                     }
                     consume(TokenKind::RightParen, "expected ')' after arguments");
-                    if (m_has_error) return nullptr;
+                    if (m_has_error)
+                        return nullptr;
 
                     Expr* callee = alloc<Expr>();
                     callee->kind = AstKind::ExprIdentifier;
@@ -828,12 +928,14 @@ Expr* Parser::primary() {
                                 arg.modifier_loc = m_previous.loc;
                             }
                             arg.expr = expression();
-                            if (m_has_error) return nullptr;
+                            if (m_has_error)
+                                return nullptr;
                             arguments.push_back(arg);
                         } while (match(TokenKind::Comma));
                     }
                     consume(TokenKind::RightParen, "expected ')' after arguments");
-                    if (m_has_error) return nullptr;
+                    if (m_has_error)
+                        return nullptr;
 
                     Expr* callee = alloc<Expr>();
                     callee->kind = AstKind::ExprIdentifier;
@@ -873,11 +975,14 @@ Expr* Parser::primary() {
             if (!check(TokenKind::RightBrace)) {
                 do {
                     Token field_token = consume(TokenKind::Identifier, "expected field name");
-                    if (m_has_error) return nullptr;
+                    if (m_has_error)
+                        return nullptr;
                     consume(TokenKind::Equal, "expected '=' after field name");
-                    if (m_has_error) return nullptr;
+                    if (m_has_error)
+                        return nullptr;
                     Expr* value = expression();
-                    if (m_has_error) return nullptr;
+                    if (m_has_error)
+                        return nullptr;
                     FieldInit field_init;
                     field_init.name = field_token.text();
                     field_init.value = value;
@@ -886,7 +991,8 @@ Expr* Parser::primary() {
                 } while (match(TokenKind::Comma));
             }
             consume(TokenKind::RightBrace, "expected '}' after struct literal fields");
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
 
             Expr* expr = alloc<Expr>();
             expr->kind = AstKind::ExprStructLiteral;
@@ -915,7 +1021,8 @@ Expr* Parser::primary() {
         return expr;
     }
 
-    // super() for constructor call, super.method for method call, super.ctor_name() for named constructor
+    // super() for constructor call, super.method for method call, super.ctor_name() for named
+    // constructor
     if (match(TokenKind::KwSuper)) {
         SourceLocation loc = m_previous.loc;
 
@@ -926,16 +1033,18 @@ Expr* Parser::primary() {
             Expr* expr = alloc<Expr>();
             expr->kind = AstKind::ExprSuper;
             expr->loc = loc;
-            expr->super_expr.method_name = StringView{};  // empty = default constructor
+            expr->super_expr.method_name = StringView{}; // empty = default constructor
             return expr;
         }
 
         // Otherwise, expect super.something
         consume(TokenKind::Dot, "expected '.' or '(' after 'super'");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         Token method_token = consume(TokenKind::Identifier, "expected method name after 'super.'");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         Expr* expr = alloc<Expr>();
         expr->kind = AstKind::ExprSuper;
@@ -948,10 +1057,12 @@ Expr* Parser::primary() {
     if (match(TokenKind::LeftParen)) {
         SourceLocation loc = m_previous.loc;
         Expr* inner = expression();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         consume(TokenKind::RightParen, "expected ')' after expression");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         Expr* expr = alloc<Expr>();
         expr->kind = AstKind::ExprGrouping;
@@ -1010,18 +1121,21 @@ Stmt* Parser::statement() {
 Stmt* Parser::block_statement() {
     SourceLocation loc = m_previous.loc;
     Vector<Decl*> declarations;
-    if (!check(TokenKind::RightBrace) && !is_at_end()) declarations.reserve(8);  // §4.8
+    if (!check(TokenKind::RightBrace) && !is_at_end())
+        declarations.reserve(8); // §4.8
 
     while (!check(TokenKind::RightBrace) && !is_at_end()) {
         Decl* decl = declaration();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
         if (decl) {
             declarations.push_back(decl);
         }
     }
 
     consume(TokenKind::RightBrace, "expected '}' after block");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Stmt* stmt = alloc<Stmt>();
     stmt->kind = AstKind::StmtBlock;
@@ -1034,21 +1148,26 @@ Stmt* Parser::if_statement() {
     SourceLocation loc = m_previous.loc;
 
     consume(TokenKind::LeftParen, "expected '(' after 'if'");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Expr* condition = expression();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     consume(TokenKind::RightParen, "expected ')' after if condition");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Stmt* then_branch = statement();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Stmt* else_branch = nullptr;
     if (match(TokenKind::KwElse)) {
         else_branch = statement();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     }
 
     Stmt* stmt = alloc<Stmt>();
@@ -1064,16 +1183,20 @@ Stmt* Parser::while_statement() {
     SourceLocation loc = m_previous.loc;
 
     consume(TokenKind::LeftParen, "expected '(' after 'while'");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Expr* condition = expression();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     consume(TokenKind::RightParen, "expected ')' after while condition");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Stmt* body = statement();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Stmt* stmt = alloc<Stmt>();
     stmt->kind = AstKind::StmtWhile;
@@ -1087,7 +1210,8 @@ Stmt* Parser::for_statement() {
     SourceLocation loc = m_previous.loc;
 
     consume(TokenKind::LeftParen, "expected '(' after 'for'");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     // Initializer
     Decl* initializer = nullptr;
@@ -1095,11 +1219,13 @@ Stmt* Parser::for_statement() {
         // No initializer
     } else if (match(TokenKind::KwVar)) {
         initializer = var_declaration(false);
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     } else {
         // Expression statement as initializer
         Stmt* expr_stmt = expression_statement();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         initializer = alloc<Decl>();
         initializer->kind = AstKind::StmtExpr;
@@ -1111,22 +1237,27 @@ Stmt* Parser::for_statement() {
     Expr* condition = nullptr;
     if (!check(TokenKind::Semicolon)) {
         condition = expression();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     }
     consume(TokenKind::Semicolon, "expected ';' after for condition");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     // Increment
     Expr* increment = nullptr;
     if (!check(TokenKind::RightParen)) {
         increment = expression();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     }
     consume(TokenKind::RightParen, "expected ')' after for clauses");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Stmt* body = statement();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Stmt* stmt = alloc<Stmt>();
     stmt->kind = AstKind::StmtFor;
@@ -1144,11 +1275,13 @@ Stmt* Parser::return_statement() {
     Expr* value = nullptr;
     if (!check(TokenKind::Semicolon)) {
         value = expression();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     }
 
     consume(TokenKind::Semicolon, "expected ';' after return value");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Stmt* stmt = alloc<Stmt>();
     stmt->kind = AstKind::StmtReturn;
@@ -1160,7 +1293,8 @@ Stmt* Parser::return_statement() {
 Stmt* Parser::break_statement() {
     SourceLocation loc = m_previous.loc;
     consume(TokenKind::Semicolon, "expected ';' after 'break'");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Stmt* stmt = alloc<Stmt>();
     stmt->kind = AstKind::StmtBreak;
@@ -1171,7 +1305,8 @@ Stmt* Parser::break_statement() {
 Stmt* Parser::continue_statement() {
     SourceLocation loc = m_previous.loc;
     consume(TokenKind::Semicolon, "expected ';' after 'continue'");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Stmt* stmt = alloc<Stmt>();
     stmt->kind = AstKind::StmtContinue;
@@ -1191,9 +1326,10 @@ Stmt* Parser::delete_statement() {
     // If we see an ExprCall where callee is ExprGet, we treat it as a destructor call.
 
     Expr* expr = expression();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
-    StringView dtor_name;  // Empty for default destructor
+    StringView dtor_name; // Empty for default destructor
     Vector<CallArg> arguments;
 
     // Check if the expression is a call on a member (potential destructor call)
@@ -1213,7 +1349,8 @@ Stmt* Parser::delete_statement() {
     }
 
     consume(TokenKind::Semicolon, "expected ';' after delete statement");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Stmt* stmt = alloc<Stmt>();
     stmt->kind = AstKind::StmtDelete;
@@ -1233,10 +1370,12 @@ Stmt* Parser::when_statement() {
     m_suppress_struct_literal = true;
     Expr* discriminant = expression();
     m_suppress_struct_literal = false;
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     consume(TokenKind::LeftBrace, "expected '{' after 'when' discriminant");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Vector<WhenCase> cases;
     Span<Decl*> else_body;
@@ -1252,49 +1391,55 @@ Stmt* Parser::when_statement() {
             Vector<StringView> case_names;
             do {
                 Token name_token = consume(TokenKind::Identifier, "expected case name");
-                if (m_has_error) return nullptr;
+                if (m_has_error)
+                    return nullptr;
                 case_names.push_back(name_token.text());
             } while (match(TokenKind::Comma));
 
             consume(TokenKind::Colon, "expected ':' after case name(s)");
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
 
             // Parse case body - multiple statements until next case, else, or }
             Vector<Decl*> body_decls;
             while (!check(TokenKind::KwCase) && !check(TokenKind::KwElse) &&
                    !check(TokenKind::RightBrace) && !is_at_end()) {
                 Decl* decl = declaration();
-                if (m_has_error) return nullptr;
-                if (decl) body_decls.push_back(decl);
+                if (m_has_error)
+                    return nullptr;
+                if (decl)
+                    body_decls.push_back(decl);
             }
 
             wc.case_names = alloc_span(case_names);
             wc.body = alloc_span(body_decls);
             cases.push_back(wc);
-        }
-        else if (match(TokenKind::KwElse)) {
+        } else if (match(TokenKind::KwElse)) {
             else_loc = m_previous.loc;
             consume(TokenKind::Colon, "expected ':' after 'else'");
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
 
             // Parse else body - multiple statements until }
             Vector<Decl*> else_decls;
             while (!check(TokenKind::RightBrace) && !is_at_end()) {
                 Decl* decl = declaration();
-                if (m_has_error) return nullptr;
-                if (decl) else_decls.push_back(decl);
+                if (m_has_error)
+                    return nullptr;
+                if (decl)
+                    else_decls.push_back(decl);
             }
             else_body = alloc_span(else_decls);
-            break;  // else must be last
-        }
-        else {
+            break; // else must be last
+        } else {
             report_error("expected 'case' or 'else' in when statement");
             return nullptr;
         }
     }
 
     consume(TokenKind::RightBrace, "expected '}' after when statement");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Stmt* stmt = alloc<Stmt>();
     stmt->kind = AstKind::StmtWhen;
@@ -1310,10 +1455,12 @@ Stmt* Parser::throw_statement() {
     SourceLocation loc = m_previous.loc;
 
     Expr* expr = expression();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     consume(TokenKind::Semicolon, "expected ';' after throw expression");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Stmt* stmt = alloc<Stmt>();
     stmt->kind = AstKind::StmtThrow;
@@ -1326,10 +1473,12 @@ Stmt* Parser::yield_statement() {
     SourceLocation loc = m_previous.loc;
 
     Expr* expr = expression();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     consume(TokenKind::Semicolon, "expected ';' after yield expression");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Stmt* stmt = alloc<Stmt>();
     stmt->kind = AstKind::StmtYield;
@@ -1343,10 +1492,12 @@ Stmt* Parser::try_statement() {
 
     // Parse try body
     consume(TokenKind::LeftBrace, "expected '{' after 'try'");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Stmt* try_body = block_statement();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     // Parse catch clauses
     Vector<CatchClause> catches;
@@ -1356,28 +1507,34 @@ Stmt* Parser::try_statement() {
         clause.resolved_type = nullptr;
 
         consume(TokenKind::LeftParen, "expected '(' after 'catch'");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         Token var_token = consume(TokenKind::Identifier, "expected variable name in catch clause");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
         clause.var_name = var_token.text();
 
         // Optional type annotation
         if (match(TokenKind::Colon)) {
             clause.exception_type = type_expression();
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
         } else {
-            clause.exception_type = nullptr;  // catch-all
+            clause.exception_type = nullptr; // catch-all
         }
 
         consume(TokenKind::RightParen, "expected ')' after catch variable");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         consume(TokenKind::LeftBrace, "expected '{' after catch clause");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         clause.body = block_statement();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         catches.push_back(clause);
     }
@@ -1386,10 +1543,12 @@ Stmt* Parser::try_statement() {
     Stmt* finally_body = nullptr;
     if (match(TokenKind::KwFinally)) {
         consume(TokenKind::LeftBrace, "expected '{' after 'finally'");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         finally_body = block_statement();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     }
 
     // Validate: at least one catch or a finally
@@ -1411,10 +1570,12 @@ Stmt* Parser::expression_statement() {
     SourceLocation loc = m_current.loc;
 
     Expr* expr = expression();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     consume(TokenKind::Semicolon, "expected ';' after expression");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Stmt* stmt = alloc<Stmt>();
     stmt->kind = AstKind::StmtExpr;
@@ -1486,7 +1647,8 @@ Decl* Parser::declaration() {
 
     // Statement (wrapped in a Decl)
     Stmt* stmt = statement();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Decl* decl = alloc<Decl>();
     decl->kind = stmt->kind;
@@ -1499,22 +1661,26 @@ Decl* Parser::var_declaration(bool is_pub) {
     SourceLocation loc = m_previous.loc;
 
     Token name_token = consume(TokenKind::Identifier, "expected variable name");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     TypeExpr* type = nullptr;
     if (match(TokenKind::Colon)) {
         type = type_expression();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     }
 
     Expr* initializer = nullptr;
     if (match(TokenKind::Equal)) {
         initializer = expression();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     }
 
     consume(TokenKind::Semicolon, "expected ';' after variable declaration");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Decl* decl = alloc<Decl>();
     decl->kind = AstKind::DeclVar;
@@ -1531,18 +1697,20 @@ Vector<Param> Parser::parse_parameters() {
     Vector<Param> params;
 
     if (!check(TokenKind::RightParen)) {
-        params.reserve(8);  // §4.8: skip the grow ladder (non-empty only)
+        params.reserve(8); // §4.8: skip the grow ladder (non-empty only)
         do {
             Param param;
             param.modifier = ParamModifier::None;
 
             Token name_token = consume(TokenKind::Identifier, "expected parameter name");
-            if (m_has_error) return params;
+            if (m_has_error)
+                return params;
             param.name = name_token.text();
             param.loc = name_token.loc;
 
             consume(TokenKind::Colon, "expected ':' after parameter name");
-            if (m_has_error) return params;
+            if (m_has_error)
+                return params;
 
             // Check for parameter modifiers (out/inout) before the type
             if (match(TokenKind::KwOut)) {
@@ -1552,7 +1720,8 @@ Vector<Param> Parser::parse_parameters() {
             }
 
             param.type = type_expression();
-            if (m_has_error) return params;
+            if (m_has_error)
+                return params;
 
             params.push_back(param);
         } while (match(TokenKind::Comma));
@@ -1565,13 +1734,15 @@ Decl* Parser::fun_declaration(bool is_pub, bool is_native) {
     SourceLocation loc = m_previous.loc;
 
     Token name_token = consume(TokenKind::Identifier, "expected function name");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     // Parse optional type params: fun Name<T, U>
     Span<TypeParam> type_params;
     if (check(TokenKind::Less)) {
         type_params = parse_type_params();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     }
 
     // Check for method syntax: fun Name.method() or fun Name<T>.method()
@@ -1581,30 +1752,37 @@ Decl* Parser::fun_declaration(bool is_pub, bool is_native) {
 
     // Regular function — type_params are the function's own generic params
     consume(TokenKind::LeftParen, "expected '(' after function name");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Vector<Param> params = parse_parameters();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     consume(TokenKind::RightParen, "expected ')' after parameters");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     TypeExpr* return_type = nullptr;
     if (match(TokenKind::Colon)) {
         return_type = type_expression();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     }
 
     Stmt* body = nullptr;
     if (is_native) {
         consume(TokenKind::Semicolon, "expected ';' after native function declaration");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     } else {
         consume(TokenKind::LeftBrace, "expected '{' before function body");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         body = block_statement();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     }
 
     Decl* decl = alloc<Decl>();
@@ -1625,8 +1803,8 @@ Decl* Parser::fun_declaration(bool is_pub, bool is_native) {
     return decl;
 }
 
-Decl* Parser::method_declaration(bool is_pub, bool is_native,
-                                  Token struct_token, Span<TypeParam> type_params) {
+Decl* Parser::method_declaration(bool is_pub, bool is_native, Token struct_token,
+                                 Span<TypeParam> type_params) {
     SourceLocation loc = struct_token.loc;
 
     // Parse method name (after the dot).
@@ -1636,22 +1814,27 @@ Decl* Parser::method_declaration(bool is_pub, bool is_native,
         method_token = m_previous;
     } else {
         method_token = consume(TokenKind::Identifier, "expected method name after '.'");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     }
 
     consume(TokenKind::LeftParen, "expected '(' after method name");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Vector<Param> params = parse_parameters();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     consume(TokenKind::RightParen, "expected ')' after parameters");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     TypeExpr* return_type = nullptr;
     if (match(TokenKind::Colon)) {
         return_type = type_expression();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     }
 
     // Check for "for Trait" or "for Trait<Args>" clause
@@ -1659,13 +1842,15 @@ Decl* Parser::method_declaration(bool is_pub, bool is_native,
     Span<TypeExpr*> trait_type_args;
     if (match(TokenKind::KwFor)) {
         Token trait_token = consume(TokenKind::Identifier, "expected trait name after 'for'");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
         trait_name = trait_token.text();
 
         // Check for type args: for Trait<i32, f64>
         if (check(TokenKind::Less)) {
             trait_type_args = parse_type_args();
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
         }
     }
 
@@ -1673,15 +1858,18 @@ Decl* Parser::method_declaration(bool is_pub, bool is_native,
     Stmt* body = nullptr;
     if (is_native) {
         consume(TokenKind::Semicolon, "expected ';' after native method declaration");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     } else if (match(TokenKind::Semicolon)) {
         // No body - required trait method declaration
     } else {
         consume(TokenKind::LeftBrace, "expected '{' before method body");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         body = block_statement();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     }
 
     Decl* decl = alloc<Decl>();
@@ -1709,38 +1897,46 @@ Decl* Parser::method_declaration(bool is_pub, bool is_native,
 bool Parser::parse_ctor_dtor_common(const char* kind_name, CtorDtorParsed& out) {
     // Parse struct name: StructName or StructName<T> or StructName.name or StructName<T>.name
     Token struct_token = consume(TokenKind::Identifier, "expected struct name");
-    if (m_has_error) return false;
+    if (m_has_error)
+        return false;
 
     out.struct_name = struct_token.text();
-    out.name = StringView{};  // Empty for default
+    out.name = StringView{}; // Empty for default
 
     // Parse optional type params: Box<T>
     if (check(TokenKind::Less)) {
         out.type_params = parse_type_params();
-        if (m_has_error) return false;
+        if (m_has_error)
+            return false;
     }
 
     // Check for named variant: StructName.name
     if (match(TokenKind::Dot)) {
         Token name_token = consume(TokenKind::Identifier, "expected name after '.'");
-        if (m_has_error) return false;
+        if (m_has_error)
+            return false;
         out.name = name_token.text();
     }
 
     consume(TokenKind::LeftParen, "expected '(' after name");
-    if (m_has_error) return false;
+    if (m_has_error)
+        return false;
 
     out.params = parse_parameters();
-    if (m_has_error) return false;
+    if (m_has_error)
+        return false;
 
     consume(TokenKind::RightParen, "expected ')' after parameters");
-    if (m_has_error) return false;
+    if (m_has_error)
+        return false;
 
     consume(TokenKind::LeftBrace, "expected '{' before body");
-    if (m_has_error) return false;
+    if (m_has_error)
+        return false;
 
     out.body = block_statement();
-    if (m_has_error) return false;
+    if (m_has_error)
+        return false;
 
     return true;
 }
@@ -1789,24 +1985,28 @@ Decl* Parser::struct_declaration(bool is_pub) {
     SourceLocation loc = m_previous.loc;
 
     Token name_token = consume(TokenKind::Identifier, "expected struct name");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     // Check for generic type params: struct Name<T, U>
     Span<TypeParam> type_params;
     if (check(TokenKind::Less)) {
         type_params = parse_type_params();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     }
 
     StringView parent_name;
     if (match(TokenKind::Colon)) {
         Token parent_token = consume(TokenKind::Identifier, "expected parent struct name");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
         parent_name = parent_token.text();
     }
 
     consume(TokenKind::LeftBrace, "expected '{' before struct body");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Vector<FieldDecl> fields;
     Vector<WhenFieldDecl> when_clauses;
@@ -1819,7 +2019,8 @@ Decl* Parser::struct_declaration(bool is_pub) {
         if (match(TokenKind::KwFun)) {
             // Method
             Decl* method_decl = fun_declaration(member_is_pub, member_is_native);
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
             methods.push_back(&method_decl->fun_decl);
         } else if (match(TokenKind::KwWhen)) {
             // When clause (tagged union discriminant)
@@ -1828,7 +2029,8 @@ Decl* Parser::struct_declaration(bool is_pub) {
                 return nullptr;
             }
             WhenFieldDecl when_decl = parse_when_field_decl();
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
             when_clauses.push_back(when_decl);
         } else {
             if (member_is_native) {
@@ -1838,22 +2040,27 @@ Decl* Parser::struct_declaration(bool is_pub) {
 
             // Field
             Token field_name = consume(TokenKind::Identifier, "expected field name");
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
 
             consume(TokenKind::Colon, "expected ':' after field name");
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
 
             TypeExpr* field_type = type_expression();
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
 
             Expr* default_value = nullptr;
             if (match(TokenKind::Equal)) {
                 default_value = expression();
-                if (m_has_error) return nullptr;
+                if (m_has_error)
+                    return nullptr;
             }
 
             consume(TokenKind::Semicolon, "expected ';' after field declaration");
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
 
             FieldDecl field;
             field.name = field_name.text();
@@ -1866,7 +2073,8 @@ Decl* Parser::struct_declaration(bool is_pub) {
     }
 
     consume(TokenKind::RightBrace, "expected '}' after struct body");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Decl* decl = alloc<Decl>();
     decl->kind = AstKind::DeclStruct;
@@ -1887,16 +2095,20 @@ WhenFieldDecl Parser::parse_when_field_decl() {
 
     // Parse discriminant: name: EnumType
     Token discrim_token = consume(TokenKind::Identifier, "expected discriminant name after 'when'");
-    if (m_has_error) return WhenFieldDecl{};
+    if (m_has_error)
+        return WhenFieldDecl{};
 
     consume(TokenKind::Colon, "expected ':' after discriminant name");
-    if (m_has_error) return WhenFieldDecl{};
+    if (m_has_error)
+        return WhenFieldDecl{};
 
     TypeExpr* discrim_type = type_expression();
-    if (m_has_error) return WhenFieldDecl{};
+    if (m_has_error)
+        return WhenFieldDecl{};
 
     consume(TokenKind::LeftBrace, "expected '{' after discriminant type");
-    if (m_has_error) return WhenFieldDecl{};
+    if (m_has_error)
+        return WhenFieldDecl{};
 
     Vector<WhenCaseFieldDecl> cases;
 
@@ -1914,12 +2126,14 @@ WhenFieldDecl Parser::parse_when_field_decl() {
         Vector<StringView> case_names;
         do {
             Token name_token = consume(TokenKind::Identifier, "expected case name");
-            if (m_has_error) return WhenFieldDecl{};
+            if (m_has_error)
+                return WhenFieldDecl{};
             case_names.push_back(name_token.text());
         } while (match(TokenKind::Comma));
 
         consume(TokenKind::Colon, "expected ':' after case name(s)");
-        if (m_has_error) return WhenFieldDecl{};
+        if (m_has_error)
+            return WhenFieldDecl{};
 
         // Parse fields until next case or end of when clause
         Vector<FieldDecl> fields;
@@ -1927,22 +2141,27 @@ WhenFieldDecl Parser::parse_when_field_decl() {
             bool field_is_pub = match(TokenKind::KwPub);
 
             Token field_name = consume(TokenKind::Identifier, "expected field name");
-            if (m_has_error) return WhenFieldDecl{};
+            if (m_has_error)
+                return WhenFieldDecl{};
 
             consume(TokenKind::Colon, "expected ':' after field name");
-            if (m_has_error) return WhenFieldDecl{};
+            if (m_has_error)
+                return WhenFieldDecl{};
 
             TypeExpr* field_type = type_expression();
-            if (m_has_error) return WhenFieldDecl{};
+            if (m_has_error)
+                return WhenFieldDecl{};
 
             Expr* default_value = nullptr;
             if (match(TokenKind::Equal)) {
                 default_value = expression();
-                if (m_has_error) return WhenFieldDecl{};
+                if (m_has_error)
+                    return WhenFieldDecl{};
             }
 
             consume(TokenKind::Semicolon, "expected ';' after field declaration");
-            if (m_has_error) return WhenFieldDecl{};
+            if (m_has_error)
+                return WhenFieldDecl{};
 
             FieldDecl field;
             field.name = field_name.text();
@@ -1959,7 +2178,8 @@ WhenFieldDecl Parser::parse_when_field_decl() {
     }
 
     consume(TokenKind::RightBrace, "expected '}' after when clause");
-    if (m_has_error) return WhenFieldDecl{};
+    if (m_has_error)
+        return WhenFieldDecl{};
 
     WhenFieldDecl when_decl;
     when_decl.discriminant_name = discrim_token.text();
@@ -1973,22 +2193,26 @@ Decl* Parser::enum_declaration(bool is_pub) {
     SourceLocation loc = m_previous.loc;
 
     Token name_token = consume(TokenKind::Identifier, "expected enum name");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     consume(TokenKind::LeftBrace, "expected '{' before enum body");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Vector<EnumVariant> variants;
 
     if (!check(TokenKind::RightBrace)) {
         do {
             Token variant_name = consume(TokenKind::Identifier, "expected enum variant name");
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
 
             Expr* value = nullptr;
             if (match(TokenKind::Equal)) {
                 value = expression();
-                if (m_has_error) return nullptr;
+                if (m_has_error)
+                    return nullptr;
             }
 
             EnumVariant variant;
@@ -2000,7 +2224,8 @@ Decl* Parser::enum_declaration(bool is_pub) {
     }
 
     consume(TokenKind::RightBrace, "expected '}' after enum body");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Decl* decl = alloc<Decl>();
     decl->kind = AstKind::DeclEnum;
@@ -2015,24 +2240,28 @@ Decl* Parser::trait_declaration(bool is_pub) {
     SourceLocation loc = m_previous.loc;
 
     Token name_token = consume(TokenKind::Identifier, "expected trait name");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     // Check for generic type params: trait Name<T, U>
     Span<TypeParam> type_params;
     if (check(TokenKind::Less)) {
         type_params = parse_type_params();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     }
 
     StringView parent_name;
     if (match(TokenKind::Colon)) {
         Token parent_token = consume(TokenKind::Identifier, "expected parent trait name");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
         parent_name = parent_token.text();
     }
 
     consume(TokenKind::Semicolon, "expected ';' after trait declaration");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     Decl* decl = alloc<Decl>();
     decl->kind = AstKind::DeclTrait;
@@ -2046,7 +2275,8 @@ Decl* Parser::trait_declaration(bool is_pub) {
 
 StringView Parser::parse_module_path() {
     Token first = consume(TokenKind::Identifier, "expected module name");
-    if (m_has_error) return StringView();
+    if (m_has_error)
+        return StringView();
 
     // Check if this is a simple single-segment path
     if (!check(TokenKind::Dot)) {
@@ -2059,7 +2289,8 @@ StringView Parser::parse_module_path() {
 
     while (match(TokenKind::Dot)) {
         Token seg = consume(TokenKind::Identifier, "expected identifier after '.'");
-        if (m_has_error) return StringView();
+        if (m_has_error)
+            return StringView();
         segments.push_back(seg.text());
     }
 
@@ -2067,14 +2298,16 @@ StringView Parser::parse_module_path() {
     u32 total_len = 0;
     for (u32 i = 0; i < segments.size(); i++) {
         total_len += segments[i].size();
-        if (i > 0) total_len += 1;  // dots between segments
+        if (i > 0)
+            total_len += 1; // dots between segments
     }
 
     // Allocate and build the joined path string
     char* buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(total_len + 1, 1));
     u32 pos = 0;
     for (u32 i = 0; i < segments.size(); i++) {
-        if (i > 0) buf[pos++] = '.';
+        if (i > 0)
+            buf[pos++] = '.';
         memcpy(buf + pos, segments[i].data(), segments[i].size());
         pos += segments[i].size();
     }
@@ -2090,27 +2323,32 @@ Decl* Parser::import_declaration() {
     if (is_from_import) {
         // from pkg.subpkg import name1, name2;
         StringView module_path = parse_module_path();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         consume(TokenKind::KwImport, "expected 'import' after module path");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         Vector<ImportName> names;
         do {
             Token name_token = consume(TokenKind::Identifier, "expected import name");
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
 
             ImportName import_name;
             import_name.name = name_token.text();
-            import_name.alias = StringView{};  // Initialize alias to empty
+            import_name.alias = StringView{}; // Initialize alias to empty
             import_name.loc = name_token.loc;
 
             // Check for alias: "as alias_name"
             if (check(TokenKind::Identifier) && m_current.length == 2 &&
                 m_current.start[0] == 'a' && m_current.start[1] == 's') {
-                advance();  // consume "as"
-                Token alias_token = consume(TokenKind::Identifier, "expected alias name after 'as'");
-                if (m_has_error) return nullptr;
+                advance(); // consume "as"
+                Token alias_token =
+                    consume(TokenKind::Identifier, "expected alias name after 'as'");
+                if (m_has_error)
+                    return nullptr;
                 import_name.alias = alias_token.text();
             }
 
@@ -2118,7 +2356,8 @@ Decl* Parser::import_declaration() {
         } while (match(TokenKind::Comma));
 
         consume(TokenKind::Semicolon, "expected ';' after import");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         Decl* decl = alloc<Decl>();
         decl->kind = AstKind::DeclImport;
@@ -2130,10 +2369,12 @@ Decl* Parser::import_declaration() {
     } else {
         // import pkg.subpkg;
         StringView module_path = parse_module_path();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         consume(TokenKind::Semicolon, "expected ';' after import");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         Decl* decl = alloc<Decl>();
         decl->kind = AstKind::DeclImport;
@@ -2169,12 +2410,14 @@ void Parser::restore_state(const SavedState& state) {
 Span<TypeParam> Parser::parse_type_params() {
     // Consume '<'
     consume(TokenKind::Less, "expected '<' for type parameters");
-    if (m_has_error) return {};
+    if (m_has_error)
+        return {};
 
     Vector<TypeParam> params;
     do {
         Token name_token = consume(TokenKind::Identifier, "expected type parameter name");
-        if (m_has_error) return {};
+        if (m_has_error)
+            return {};
 
         TypeParam type_param;
         type_param.name = name_token.text();
@@ -2186,7 +2429,8 @@ Span<TypeParam> Parser::parse_type_params() {
             Vector<TypeExpr*> bounds;
             do {
                 TypeExpr* bound = type_expression();
-                if (m_has_error) return {};
+                if (m_has_error)
+                    return {};
                 bounds.push_back(bound);
             } while (match(TokenKind::Plus));
             type_param.bounds = alloc_span(bounds);
@@ -2195,7 +2439,8 @@ Span<TypeParam> Parser::parse_type_params() {
         params.push_back(type_param);
     } while (match(TokenKind::Comma));
 
-    if (!consume_closing_angle()) return {};
+    if (!consume_closing_angle())
+        return {};
 
     return alloc_span(params);
 }
@@ -2203,16 +2448,19 @@ Span<TypeParam> Parser::parse_type_params() {
 Span<TypeExpr*> Parser::parse_type_args() {
     // Consume '<'
     consume(TokenKind::Less, "expected '<' for type arguments");
-    if (m_has_error) return {};
+    if (m_has_error)
+        return {};
 
     Vector<TypeExpr*> args;
     do {
         TypeExpr* type = type_expression();
-        if (m_has_error) return {};
+        if (m_has_error)
+            return {};
         args.push_back(type);
     } while (match(TokenKind::Comma));
 
-    if (!consume_closing_angle()) return {};
+    if (!consume_closing_angle())
+        return {};
 
     return alloc_span(args);
 }
@@ -2271,10 +2519,9 @@ Span<TypeExpr*> Parser::try_parse_generic_args() {
     //     follow-tokens satisfy that), so committing is safe. The classic
     //     `f(a<b, c>5)` ambiguity stays correct because `>` is followed by `5`,
     //     which isn't in this set, so the trial parse falls back to comparison.
-    if (check(TokenKind::LeftParen) || check(TokenKind::LeftBrace) || check(TokenKind::Dot)
-        || check(TokenKind::Semicolon) || check(TokenKind::Comma)
-        || check(TokenKind::RightParen) || check(TokenKind::RightBracket)
-        || check(TokenKind::RightBrace) || check(TokenKind::Colon)) {
+    if (check(TokenKind::LeftParen) || check(TokenKind::LeftBrace) || check(TokenKind::Dot) ||
+        check(TokenKind::Semicolon) || check(TokenKind::Comma) || check(TokenKind::RightParen) ||
+        check(TokenKind::RightBracket) || check(TokenKind::RightBrace) || check(TokenKind::Colon)) {
         return alloc_span(args);
     }
 
@@ -2293,7 +2540,7 @@ bool Parser::consume_closing_angle() {
     if (check(TokenKind::GreaterGreater)) {
         // Split >> into > + >: consume one > and rewrite current token to >
         m_previous = m_current;
-        m_previous.length = 1;  // Just the first >
+        m_previous.length = 1; // Just the first >
         m_current.kind = TokenKind::Greater;
         m_current.start = m_current.start + 1;
         m_current.length = 1;
@@ -2351,33 +2598,39 @@ TypeExpr* Parser::type_expression() {
         type->kind = TypeExprKind::Function;
         type->loc = fun_token.loc;
         consume(TokenKind::LeftParen, "expected '(' after 'fun' in function type");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
 
         Vector<TypeExpr*> param_types;
         if (!check(TokenKind::RightParen)) {
             do {
                 TypeExpr* param_type = type_expression();
-                if (m_has_error) return nullptr;
+                if (m_has_error)
+                    return nullptr;
                 param_types.push_back(param_type);
             } while (match(TokenKind::Comma));
         }
         consume(TokenKind::RightParen, "expected ')' in function type parameter list");
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
         type->type_args = alloc_span(param_types);
 
         // Optional `-> ReturnType`. Absent means void.
         if (match(TokenKind::Minus)) {
             consume(TokenKind::Greater, "expected '>' to form '->' in function type");
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
             type->return_type = type_expression();
-            if (m_has_error) return nullptr;
+            if (m_has_error)
+                return nullptr;
         }
 
         return type;
     }
 
     Token name_token = consume(TokenKind::Identifier, "expected type name");
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     type->name = name_token.text();
     type->loc = name_token.loc;
@@ -2386,7 +2639,8 @@ TypeExpr* Parser::type_expression() {
     // Unambiguous here since type_expression() is only called in type position
     if (check(TokenKind::Less)) {
         type->type_args = parse_type_args();
-        if (m_has_error) return nullptr;
+        if (m_has_error)
+            return nullptr;
     }
 
     return type;
@@ -2424,21 +2678,38 @@ StringView Parser::process_fstring_part(const Token& token) {
 
     u32 max_len = content_end - content_start;
     char* buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(max_len + 1, 1));
-    if (!buf) return StringView();
+    if (!buf)
+        return StringView();
 
     u32 out_idx = 0;
     for (u32 i = content_start; i < content_end; i++) {
         if (src[i] == '\\' && i + 1 < content_end) {
             i++;
             switch (src[i]) {
-                case 'n': buf[out_idx++] = '\n'; break;
-                case 't': buf[out_idx++] = '\t'; break;
-                case 'r': buf[out_idx++] = '\r'; break;
-                case '\\': buf[out_idx++] = '\\'; break;
-                case '"': buf[out_idx++] = '"'; break;
-                case '0': buf[out_idx++] = '\0'; break;
-                case '{': buf[out_idx++] = '{'; break;
-                case '}': buf[out_idx++] = '}'; break;
+                case 'n':
+                    buf[out_idx++] = '\n';
+                    break;
+                case 't':
+                    buf[out_idx++] = '\t';
+                    break;
+                case 'r':
+                    buf[out_idx++] = '\r';
+                    break;
+                case '\\':
+                    buf[out_idx++] = '\\';
+                    break;
+                case '"':
+                    buf[out_idx++] = '"';
+                    break;
+                case '0':
+                    buf[out_idx++] = '\0';
+                    break;
+                case '{':
+                    buf[out_idx++] = '{';
+                    break;
+                case '}':
+                    buf[out_idx++] = '}';
+                    break;
                 default:
                     buf[out_idx++] = '\\';
                     buf[out_idx++] = src[i];
@@ -2478,14 +2749,30 @@ StringView Parser::process_string_literal(const Token& token) {
             // Escape sequence
             i++;
             switch (src[i]) {
-                case 'n': buf[out_idx++] = '\n'; break;
-                case 't': buf[out_idx++] = '\t'; break;
-                case 'r': buf[out_idx++] = '\r'; break;
-                case '\\': buf[out_idx++] = '\\'; break;
-                case '"': buf[out_idx++] = '"'; break;
-                case '0': buf[out_idx++] = '\0'; break;
-                case '{': buf[out_idx++] = '{'; break;
-                case '}': buf[out_idx++] = '}'; break;
+                case 'n':
+                    buf[out_idx++] = '\n';
+                    break;
+                case 't':
+                    buf[out_idx++] = '\t';
+                    break;
+                case 'r':
+                    buf[out_idx++] = '\r';
+                    break;
+                case '\\':
+                    buf[out_idx++] = '\\';
+                    break;
+                case '"':
+                    buf[out_idx++] = '"';
+                    break;
+                case '0':
+                    buf[out_idx++] = '\0';
+                    break;
+                case '{':
+                    buf[out_idx++] = '{';
+                    break;
+                case '}':
+                    buf[out_idx++] = '}';
+                    break;
                 default:
                     // Unknown escape - keep as-is
                     buf[out_idx++] = '\\';
@@ -2500,4 +2787,4 @@ StringView Parser::process_string_literal(const Token& token) {
     return StringView(buf, out_idx);
 }
 
-}
+} // namespace rx

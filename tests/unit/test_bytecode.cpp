@@ -1,7 +1,7 @@
 #include "roxy/core/doctest/doctest.h"
 
-#include "roxy/vm/bytecode.hpp"
 #include "roxy/core/vector.hpp"
+#include "roxy/vm/bytecode.hpp"
 
 using namespace rx;
 
@@ -190,4 +190,4 @@ TEST_SUITE("Bytecode") {
         CHECK(strstr(out.data(), "RET") != nullptr);
     }
 
-}  // TEST_SUITE("Bytecode")
+} // TEST_SUITE("Bytecode")

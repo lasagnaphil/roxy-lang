@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -71,7 +71,8 @@ TEST_SUITE("E2E Container Borrow") {
         CHECK(result.stdout_output == "[1, 10, 20]\n");
     }
 
-    TEST_CASE_TEMPLATE("the same container can be borrowed twice at once", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("the same container can be borrowed twice at once", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun compare(a: ref List<i32>, b: ref List<i32>): i32 {
             return a.len() * 10 + b.len();
@@ -250,7 +251,8 @@ TEST_SUITE("E2E Container Borrow") {
         CHECK(result.stdout_output == "1\n2\n[1, 2]\n");
     }
 
-    TEST_CASE_TEMPLATE("an element of a borrowed List is an inout lvalue", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("an element of a borrowed List is an inout lvalue", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun add_to(x: inout i32, n: i32) { x = x + n; }
 
@@ -368,7 +370,8 @@ TEST_SUITE("E2E Container Borrow") {
         CHECK(result.stdout_output == "2\n1\n2\n");
     }
 
-    TEST_CASE_TEMPLATE("a borrowed container can be copied but not moved", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("a borrowed container can be copied but not moved", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun clone(xs: ref List<i32>): List<i32> { return xs.copy(); }
 
@@ -461,4 +464,4 @@ TEST_SUITE("E2E Container Borrow") {
         CHECK(compile(allocator, source) == nullptr);
     }
 
-}  // TEST_SUITE("E2E Container Borrow")
+} // TEST_SUITE("E2E Container Borrow")

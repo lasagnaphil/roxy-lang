@@ -36,7 +36,8 @@ void String::grow(u32 min_cap) {
         old_size = sso_size();
         old_data = m_sso.buf;
     } else {
-        if (min_cap <= m_heap.capacity) return;
+        if (min_cap <= m_heap.capacity)
+            return;
         old_size = m_heap.size;
         old_data = m_heap.ptr;
     }
@@ -45,7 +46,8 @@ void String::grow(u32 min_cap) {
     if (!is_sso() && m_heap.capacity * 2 > new_cap) {
         new_cap = m_heap.capacity * 2;
     }
-    if (new_cap < 32) new_cap = 32;
+    if (new_cap < 32)
+        new_cap = 32;
 
     char* new_ptr = static_cast<char*>(malloc(new_cap + 1));
     memcpy(new_ptr, old_data, old_size);
@@ -118,14 +120,13 @@ String::String(String&& other) noexcept {
     other.m_sso.tag = SSO_BIT | SSO_CAP;
 }
 
-String::~String() {
-    free_heap();
-}
+String::~String() { free_heap(); }
 
 // Assignment
 
 String& String::operator=(const String& other) {
-    if (this == &other) return *this;
+    if (this == &other)
+        return *this;
     free_heap();
     if (other.is_sso()) {
         memcpy(this, &other, sizeof(String));
@@ -136,7 +137,8 @@ String& String::operator=(const String& other) {
 }
 
 String& String::operator=(String&& other) noexcept {
-    if (this == &other) return *this;
+    if (this == &other)
+        return *this;
     free_heap();
     memcpy(this, &other, sizeof(String));
     other.m_sso.buf[0] = '\0';
@@ -149,7 +151,8 @@ String& String::operator=(const char* s) {
     u32 len = s ? static_cast<u32>(strlen(s)) : 0;
     free_heap();
     if (len <= SSO_CAP) {
-        if (len > 0) memcpy(m_sso.buf, s, len);
+        if (len > 0)
+            memcpy(m_sso.buf, s, len);
         set_sso_size(len);
     } else {
         init_heap(s, len);
@@ -160,7 +163,8 @@ String& String::operator=(const char* s) {
 String& String::operator=(StringView sv) {
     free_heap();
     if (sv.size() <= SSO_CAP) {
-        if (sv.size() > 0) memcpy(m_sso.buf, sv.data(), sv.size());
+        if (sv.size() > 0)
+            memcpy(m_sso.buf, sv.data(), sv.size());
         set_sso_size(sv.size());
     } else {
         init_heap(sv.data(), sv.size());
@@ -188,7 +192,8 @@ void String::push_back(char c) {
 }
 
 void String::append(const char* s, u32 len) {
-    if (len == 0) return;
+    if (len == 0)
+        return;
     u32 sz = size();
     u32 new_size = sz + len;
     if (is_sso() && new_size <= SSO_CAP) {
@@ -211,7 +216,8 @@ void String::clear() {
 }
 
 void String::reserve(u32 new_cap) {
-    if (new_cap <= capacity()) return;
+    if (new_cap <= capacity())
+        return;
     grow(new_cap);
 }
 
@@ -248,23 +254,29 @@ void String::resize(u32 new_size, char fill) {
 
 bool String::operator==(const String& other) const {
     u32 sz = size();
-    if (sz != other.size()) return false;
-    if (sz == 0) return true;
+    if (sz != other.size())
+        return false;
+    if (sz == 0)
+        return true;
     return memcmp(data(), other.data(), sz) == 0;
 }
 
 bool String::operator==(StringView sv) const {
     u32 sz = size();
-    if (sz != sv.size()) return false;
-    if (sz == 0) return true;
+    if (sz != sv.size())
+        return false;
+    if (sz == 0)
+        return true;
     return memcmp(data(), sv.data(), sz) == 0;
 }
 
 bool String::operator==(const char* s) const {
-    if (!s) return empty();
+    if (!s)
+        return empty();
     u32 len = static_cast<u32>(strlen(s));
     u32 sz = size();
-    if (sz != len) return false;
+    if (sz != len)
+        return false;
     return memcmp(data(), s, sz) == 0;
 }
 
@@ -274,19 +286,23 @@ u32 String::find(char c, u32 pos) const {
     u32 sz = size();
     const char* d = data();
     for (u32 i = pos; i < sz; i++) {
-        if (d[i] == c) return i;
+        if (d[i] == c)
+            return i;
     }
     return npos;
 }
 
 u32 String::find(const char* needle, u32 pos) const {
-    if (!needle || *needle == '\0') return pos <= size() ? pos : npos;
+    if (!needle || *needle == '\0')
+        return pos <= size() ? pos : npos;
     u32 needle_len = static_cast<u32>(strlen(needle));
     u32 sz = size();
-    if (needle_len > sz) return npos;
+    if (needle_len > sz)
+        return npos;
     const char* d = data();
     for (u32 i = pos; i + needle_len <= sz; i++) {
-        if (memcmp(d + i, needle, needle_len) == 0) return i;
+        if (memcmp(d + i, needle, needle_len) == 0)
+            return i;
     }
     return npos;
 }

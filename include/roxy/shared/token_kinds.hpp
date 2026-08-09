@@ -7,57 +7,57 @@ enum class TokenKind {
     IntLiteral,
     FloatLiteral,
     StringLiteral,
-    FStringBegin,   // f"text{      — text before first interpolation
-    FStringMid,     // }text{       — text between interpolations
-    FStringEnd,     // }text"       — text after last interpolation
+    FStringBegin, // f"text{      — text before first interpolation
+    FStringMid,   // }text{       — text between interpolations
+    FStringEnd,   // }text"       — text after last interpolation
     Identifier,
 
     // Single-character tokens
-    LeftParen,      // (
-    RightParen,     // )
-    LeftBrace,      // {
-    RightBrace,     // }
-    LeftBracket,    // [
-    RightBracket,   // ]
-    Comma,          // ,
-    Dot,            // .
-    Semicolon,      // ;
-    Colon,          // :
-    Question,       // ?
-    Tilde,          // ~
+    LeftParen,    // (
+    RightParen,   // )
+    LeftBrace,    // {
+    RightBrace,   // }
+    LeftBracket,  // [
+    RightBracket, // ]
+    Comma,        // ,
+    Dot,          // .
+    Semicolon,    // ;
+    Colon,        // :
+    Question,     // ?
+    Tilde,        // ~
 
     // One or two character tokens
-    Plus,           // +
-    PlusEqual,      // +=
-    Minus,          // -
-    MinusEqual,     // -=
-    Star,           // *
-    StarEqual,      // *=
-    Slash,          // /
-    SlashEqual,     // /=
-    Percent,        // %
-    PercentEqual,   // %=
-    Bang,           // !
-    BangEqual,      // !=
-    Equal,          // =
-    EqualEqual,     // ==
-    Less,           // <
-    LessEqual,      // <=
-    Greater,        // >
-    GreaterEqual,   // >=
-    Amp,            // &
-    AmpAmp,         // &&
-    AmpEqual,       // &=
-    Pipe,           // |
-    PipePipe,       // ||
-    PipeEqual,      // |=
-    Caret,          // ^
-    CaretEqual,     // ^=
-    LessLess,       // <<
-    LessLessEqual,  // <<=
-    GreaterGreater, // >>
+    Plus,                // +
+    PlusEqual,           // +=
+    Minus,               // -
+    MinusEqual,          // -=
+    Star,                // *
+    StarEqual,           // *=
+    Slash,               // /
+    SlashEqual,          // /=
+    Percent,             // %
+    PercentEqual,        // %=
+    Bang,                // !
+    BangEqual,           // !=
+    Equal,               // =
+    EqualEqual,          // ==
+    Less,                // <
+    LessEqual,           // <=
+    Greater,             // >
+    GreaterEqual,        // >=
+    Amp,                 // &
+    AmpAmp,              // &&
+    AmpEqual,            // &=
+    Pipe,                // |
+    PipePipe,            // ||
+    PipeEqual,           // |=
+    Caret,               // ^
+    CaretEqual,          // ^=
+    LessLess,            // <<
+    LessLessEqual,       // <<=
+    GreaterGreater,      // >>
     GreaterGreaterEqual, // >>=
-    ColonColon,     // ::
+    ColonColon,          // ::
 
     // Keywords - Types/modifiers
     KwTrue,
@@ -115,4 +115,4 @@ enum class TokenKind {
 
 const char* token_kind_to_string(TokenKind kind);
 
-}
+} // namespace rx

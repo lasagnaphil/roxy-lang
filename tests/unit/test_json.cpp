@@ -8,7 +8,7 @@ using namespace rx;
 // Helper: parse JSON source into a DOM value.
 // source_buf must outlive the returned JsonValue (in-situ parsing).
 static bool parse_json(const char* json, BumpAllocator& allocator, JsonValue& out,
-                        String& source_buf, JsonParseError* error = nullptr) {
+                       String& source_buf, JsonParseError* error = nullptr) {
     u32 length = (u32)strlen(json);
     source_buf.reserve(length + 1);
     source_buf.resize(length + 1);
@@ -245,7 +245,8 @@ TEST_SUITE("JSON") {
         BumpAllocator allocator(1024);
         String buf;
         JsonValue root;
-        REQUIRE(parse_json("{\"items\":[{\"id\":1},{\"id\":2}],\"count\":2}", allocator, root, buf));
+        REQUIRE(
+            parse_json("{\"items\":[{\"id\":1},{\"id\":2}],\"count\":2}", allocator, root, buf));
         CHECK(root.is_object());
 
         const JsonValue* items = root.find("items");
@@ -318,16 +319,40 @@ TEST_SUITE("JSON") {
             u32 object_count = 0;
             u32 array_count = 0;
 
-            bool on_null() { null_count++; return true; }
-            bool on_bool(bool) { bool_count++; return true; }
-            bool on_int(i64) { int_count++; return true; }
-            bool on_double(f64) { double_count++; return true; }
-            bool on_string(StringView) { string_count++; return true; }
-            bool on_key(StringView) { key_count++; return true; }
+            bool on_null() {
+                null_count++;
+                return true;
+            }
+            bool on_bool(bool) {
+                bool_count++;
+                return true;
+            }
+            bool on_int(i64) {
+                int_count++;
+                return true;
+            }
+            bool on_double(f64) {
+                double_count++;
+                return true;
+            }
+            bool on_string(StringView) {
+                string_count++;
+                return true;
+            }
+            bool on_key(StringView) {
+                key_count++;
+                return true;
+            }
             bool on_start_object() { return true; }
-            bool on_end_object(u32) { object_count++; return true; }
+            bool on_end_object(u32) {
+                object_count++;
+                return true;
+            }
             bool on_start_array() { return true; }
-            bool on_end_array(u32) { array_count++; return true; }
+            bool on_end_array(u32) {
+                array_count++;
+                return true;
+            }
         };
 
         char source[] = "{\"a\":1,\"b\":\"hi\",\"c\":[null,true,3.14]}";
@@ -353,7 +378,10 @@ TEST_SUITE("JSON") {
             i64 found_int = 0;
             bool on_null() { return true; }
             bool on_bool(bool) { return true; }
-            bool on_int(i64 v) { found_int = v; return false; }
+            bool on_int(i64 v) {
+                found_int = v;
+                return false;
+            }
             bool on_double(f64) { return true; }
             bool on_string(StringView) { return true; }
             bool on_key(StringView) { return true; }
@@ -654,9 +682,11 @@ TEST_SUITE("JSON") {
     TEST_CASE("parse - deeply nested JSON") {
         // 50 levels of nesting
         String input;
-        for (int i = 0; i < 50; i++) input.push_back('[');
+        for (int i = 0; i < 50; i++)
+            input.push_back('[');
         input.push_back('1');
-        for (int i = 0; i < 50; i++) input.push_back(']');
+        for (int i = 0; i < 50; i++)
+            input.push_back(']');
 
         BumpAllocator allocator(4096);
         JsonValue root;
@@ -774,4 +804,4 @@ TEST_SUITE("JSON") {
         CHECK(output == "\"\\u0001\\u001f\"");
     }
 
-}  // TEST_SUITE("JSON")
+} // TEST_SUITE("JSON")

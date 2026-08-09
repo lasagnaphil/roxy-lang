@@ -1,9 +1,9 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
-#include "roxy/core/vector.hpp"
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/format.hpp"
+#include "roxy/core/types.hpp"
+#include "roxy/core/vector.hpp"
 #include "roxy/shared/token.hpp"
 
 #include <cstring>
@@ -43,13 +43,15 @@ public:
     }
 
     void error(SourceLocation loc, const char* message) {
-        if (too_many_errors()) return;
+        if (too_many_errors())
+            return;
         m_errors.push_back({loc, message, false});
     }
 
-    template<typename... Args>
+    template <typename... Args>
     void error_fmt(SourceLocation loc, runtime_format_string fmt, const Args&... args) {
-        if (too_many_errors()) return;
+        if (too_many_errors())
+            return;
 
         char buffer[512];
         format_to(buffer, sizeof(buffer), fmt, args...);
@@ -61,7 +63,7 @@ public:
         m_errors.push_back({loc, msg, true});
     }
 
-    template<typename... Args>
+    template <typename... Args>
     void error_fmt(SourceLocation loc, fmt_string<sizeof...(Args)> fmt, const Args&... args) {
         error_fmt(loc, runtime_format_string{fmt.str}, args...);
     }
@@ -72,4 +74,4 @@ private:
     bool m_lsp_mode = false;
 };
 
-}
+} // namespace rx

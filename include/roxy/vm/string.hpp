@@ -14,9 +14,7 @@ struct RoxyVM;
 using StringHeader = roxy_string_header;
 
 // Get the StringHeader from string data pointer (data points to StringHeader)
-inline StringHeader* get_string_header(void* data) {
-    return static_cast<StringHeader*>(data);
-}
+inline StringHeader* get_string_header(void* data) { return static_cast<StringHeader*>(data); }
 
 inline const StringHeader* get_string_header(const void* data) {
     return static_cast<const StringHeader*>(data);
@@ -24,19 +22,15 @@ inline const StringHeader* get_string_header(const void* data) {
 
 // Get pointer to character data (follows StringHeader)
 inline char* string_chars(void* data) {
-    return reinterpret_cast<char*>(
-        static_cast<u8*>(data) + sizeof(StringHeader));
+    return reinterpret_cast<char*>(static_cast<u8*>(data) + sizeof(StringHeader));
 }
 
 inline const char* string_chars(const void* data) {
-    return reinterpret_cast<const char*>(
-        static_cast<const u8*>(data) + sizeof(StringHeader));
+    return reinterpret_cast<const char*>(static_cast<const u8*>(data) + sizeof(StringHeader));
 }
 
 // Get string length
-inline u32 string_length(const void* data) {
-    return get_string_header(data)->length;
-}
+inline u32 string_length(const void* data) { return get_string_header(data)->length; }
 
 // Allocate a new string (copies data)
 // Returns pointer to string data (StringHeader followed by chars)
@@ -54,4 +48,4 @@ u32 register_string_type();
 // Get the registered string type ID
 u32 get_string_type_id();
 
-}
+} // namespace rx

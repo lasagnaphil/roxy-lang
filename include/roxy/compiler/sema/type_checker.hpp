@@ -1,11 +1,11 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
-#include "roxy/core/string.hpp"
-#include "roxy/shared/token.hpp"
 #include "roxy/compiler/parse/ast.hpp"
-#include "roxy/compiler/types/types.hpp"
 #include "roxy/compiler/support/error_reporter.hpp"
+#include "roxy/compiler/types/types.hpp"
+#include "roxy/core/string.hpp"
+#include "roxy/core/types.hpp"
+#include "roxy/shared/token.hpp"
 
 namespace rx {
 
@@ -33,4 +33,4 @@ private:
     ErrorReporter& m_reporter;
 };
 
-}
+} // namespace rx

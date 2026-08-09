@@ -1,11 +1,11 @@
 #include "roxy/vm/object.hpp"
-#include "roxy/vm/vm.hpp"
+#include "roxy/core/vector.hpp"
+#include "roxy/rt/roxy_rt.h"
 #include "roxy/rt/slab_allocator.hpp"
 #include "roxy/vm/list.hpp"
 #include "roxy/vm/map.hpp"
 #include "roxy/vm/string.hpp"
-#include "roxy/rt/roxy_rt.h"
-#include "roxy/core/vector.hpp"
+#include "roxy/vm/vm.hpp"
 
 #include <cassert>
 #include <cstring>
@@ -35,7 +35,8 @@ const ObjectTypeInfo* get_object_type(u32 type_id) {
 
 void init_type_registry() {
     static bool initialized = false;
-    if (initialized) return;
+    if (initialized)
+        return;
     // Registry indices MUST line up with the shared runtime's ROXY_TYPEID_*
     // constants. `roxy_rt` stamps those constants straight into the object
     // header (roxy_string_alloc → 1, roxy_list_alloc → 2, roxy_map_alloc → 3),
@@ -47,10 +48,10 @@ void init_type_registry() {
     // map-dispatch entries), and user structs collided with ROXY_TYPEID_MAP.
     // A reserved slot at 0 makes the two schemes identical; user types
     // registered by vm_load_module then start after them.
-    register_object_type("<reserved>", 0, nullptr);   // id 0 — unused
-    register_string_type();                            // id 1 == ROXY_TYPEID_STRING
-    register_list_type();                              // id 2 == ROXY_TYPEID_LIST
-    register_map_type();                               // id 3 == ROXY_TYPEID_MAP
+    register_object_type("<reserved>", 0, nullptr); // id 0 — unused
+    register_string_type();                         // id 1 == ROXY_TYPEID_STRING
+    register_list_type();                           // id 2 == ROXY_TYPEID_LIST
+    register_map_type();                            // id 3 == ROXY_TYPEID_MAP
     assert(get_string_type_id() == ROXY_TYPEID_STRING);
     assert(get_list_type_id() == ROXY_TYPEID_LIST);
     assert(get_map_type_id() == ROXY_TYPEID_MAP);
@@ -66,9 +67,9 @@ void* object_alloc(RoxyVM* vm, u32 type_id, u32 data_size) {
     // tracing) covers both modes uniformly.
     u32 total_size = sizeof(ObjectHeader) + data_size;
     u64 generation = 0;
-    void* mem = vm->slab_vtable.alloc(vm->slab_vtable.userdata,
-                                      total_size, &generation);
-    if (!mem) return nullptr;
+    void* mem = vm->slab_vtable.alloc(vm->slab_vtable.userdata, total_size, &generation);
+    if (!mem)
+        return nullptr;
 
     // Initialize header. ref_count starts at 0 for the constraint
     // reference model: uniq doesn't affect ref_count, only ref borrows do.
@@ -80,28 +81,32 @@ void* object_alloc(RoxyVM* vm, u32 type_id, u32 data_size) {
 }
 
 bool ref_dec(RoxyVM* vm, void* data) {
-    if (data == nullptr) return false;
+    if (data == nullptr)
+        return false;
 
     ObjectHeader* header = get_header_from_data(data);
     if (header->ref_count == 0) {
-        if (vm) vm->error = "ref_dec: reference count already zero";
-        return false;  // error
+        if (vm)
+            vm->error = "ref_dec: reference count already zero";
+        return false; // error
     }
 
     // In constraint reference model, ref_count tracks borrows, not ownership.
     // Decrement borrow count - deallocation is handled by owner via delete.
     header->ref_count--;
-    return true;  // success
+    return true; // success
 }
 
 u64 weak_ref_create(void* data) {
-    if (data == nullptr) return 0;
+    if (data == nullptr)
+        return 0;
     ObjectHeader* header = get_header_from_data(data);
     return header->weak_generation;
 }
 
 bool weak_ref_valid(void* data, u64 generation) {
-    if (data == nullptr) return false;
+    if (data == nullptr)
+        return false;
 
     // Safe to read: memory is always mapped (active or tombstoned)
     // Tombstoned memory returns zeros, so is_alive() will be false
@@ -110,7 +115,8 @@ bool weak_ref_valid(void* data, u64 generation) {
 }
 
 void object_free(RoxyVM* vm, void* data) {
-    if (data == nullptr) return;
+    if (data == nullptr)
+        return;
     assert(vm != nullptr && vm->allocator != nullptr);
 
     // In-flight guard (finding 9a): a caught exception is registered as an owned
@@ -121,7 +127,8 @@ void object_free(RoxyVM* vm, void* data) {
     // handler (or the unhandled/double-throw paths, which null in_flight before
     // their own free) reclaims it exactly once. Skipping here is always safe: the
     // in-flight object is never orphaned.
-    if (vm && data == vm->in_flight_exception) return;
+    if (vm && data == vm->in_flight_exception)
+        return;
 
     ObjectHeader* header = get_header_from_data(data);
 
@@ -133,7 +140,8 @@ void object_free(RoxyVM* vm, void* data) {
     // uniform here rather than scattered per call site. The destructor and the
     // actual free are both below this gate, so a refused free runs neither.
     if (header->ref_count != 0) {
-        if (vm) vm->error = "Cannot delete: object has active borrows";
+        if (vm)
+            vm->error = "Cannot delete: object has active borrows";
         return;
     }
 
@@ -156,4 +164,4 @@ void object_free(RoxyVM* vm, void* data) {
     vm->slab_vtable.free(vm->slab_vtable.userdata, header);
 }
 
-}
+} // namespace rx

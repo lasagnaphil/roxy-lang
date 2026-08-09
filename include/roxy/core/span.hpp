@@ -2,13 +2,12 @@
 
 #include "roxy/core/types.hpp"
 
-#include <type_traits>
 #include <cassert>
+#include <type_traits>
 
 namespace rx {
 
-template <typename T, typename Index = u32>
-class Span {
+template <typename T, typename Index = u32> class Span {
     T* m_data = nullptr;
     Index m_size = 0;
 
@@ -37,4 +36,4 @@ public:
     Index ssize() const { return static_cast<std::make_signed_t<Index>>(m_size); }
 };
 
-}
+} // namespace rx

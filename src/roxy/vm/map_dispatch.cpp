@@ -1,7 +1,7 @@
 #include "roxy/vm/map_dispatch.hpp"
+#include "roxy/core/vector.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/vm.hpp"
-#include "roxy/core/vector.hpp"
 
 #include <cstring>
 
@@ -12,23 +12,21 @@ namespace rx {
 // `Map<X, Y>`) push deeper frames and pop on return.
 static thread_local Vector<MapDispatchFrame> g_dispatch_stack;
 
-void map_dispatch_push(MapDispatchFrame frame) {
-    g_dispatch_stack.push_back(frame);
-}
+void map_dispatch_push(MapDispatchFrame frame) { g_dispatch_stack.push_back(frame); }
 
-void map_dispatch_pop() {
-    g_dispatch_stack.pop_back();
-}
+void map_dispatch_pop() { g_dispatch_stack.pop_back(); }
 
 extern "C" uint64_t vm_hash_trampoline(const void* key_src) {
     // Top of the dispatch stack tells us which VM and which bytecode
     // function to invoke. Empty stack → fall back to a stable hash so we
     // don't crash; this shouldn't happen in practice because the VM-side
     // map ops always push before calling roxy_map_*.
-    if (g_dispatch_stack.empty()) return 0;
+    if (g_dispatch_stack.empty())
+        return 0;
     const MapDispatchFrame& f = g_dispatch_stack.back();
-    if (f.hash_fn_idx == UINT32_MAX) return 0;
-    u64 args[1] = { reinterpret_cast<u64>(key_src) };
+    if (f.hash_fn_idx == UINT32_MAX)
+        return 0;
+    u64 args[1] = {reinterpret_cast<u64>(key_src)};
     return call_user_function(f.vm, f.hash_fn_idx, args, 1);
 }
 
@@ -39,7 +37,8 @@ extern "C" bool vm_eq_trampoline(const void* a_void, const void* b_void) {
         return false;
     }
     const MapDispatchFrame& f = g_dispatch_stack.back();
-    if (f.eq_fn_idx == UINT32_MAX) return false;
+    if (f.eq_fn_idx == UINT32_MAX)
+        return false;
 
     // Roxy's calling convention for `K::eq(self: ref K, other: K)`:
     //   self   → pointer in 1 register (always)
@@ -72,18 +71,15 @@ extern "C" bool vm_eq_trampoline(const void* a_void, const void* b_void) {
     return call_user_function(f.vm, f.eq_fn_idx, args, argc) != 0;
 }
 
-roxy_map_hash_fn map_dispatch_hash_trampoline() {
-    return &vm_hash_trampoline;
-}
+roxy_map_hash_fn map_dispatch_hash_trampoline() { return &vm_hash_trampoline; }
 
-roxy_map_eq_fn map_dispatch_eq_trampoline() {
-    return &vm_eq_trampoline;
-}
+roxy_map_eq_fn map_dispatch_eq_trampoline() { return &vm_eq_trampoline; }
 
 // ----- Per-VM dispatch info side-table -----
 
 void map_dispatch_register(RoxyVM* vm, void* map_ptr, MapDispatchInfo info) {
-    if (!vm || !map_ptr) return;
+    if (!vm || !map_ptr)
+        return;
     if (info.hash_fn_idx == UINT32_MAX && info.eq_fn_idx == UINT32_MAX) {
         // Both sentinel — no custom dispatch, no entry needed.
         return;
@@ -94,13 +90,15 @@ void map_dispatch_register(RoxyVM* vm, void* map_ptr, MapDispatchInfo info) {
 MapDispatchInfo map_dispatch_lookup(RoxyVM* vm, void* map_ptr) {
     if (vm && map_ptr) {
         auto it = vm->map_dispatch.find(map_ptr);
-        if (it != vm->map_dispatch.end()) return it->second;
+        if (it != vm->map_dispatch.end())
+            return it->second;
     }
     return MapDispatchInfo{UINT32_MAX, UINT32_MAX};
 }
 
 void map_dispatch_unregister(RoxyVM* vm, void* map_ptr) {
-    if (!vm || !map_ptr) return;
+    if (!vm || !map_ptr)
+        return;
     vm->map_dispatch.erase(map_ptr);
 }
 

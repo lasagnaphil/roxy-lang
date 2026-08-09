@@ -6,20 +6,23 @@ namespace rx {
 
 SyntaxNode* FileIndexer::find_child(SyntaxNode* node, SyntaxKind kind) {
     for (u32 i = 0; i < node->children.size(); i++) {
-        if (node->children[i]->kind == kind) return node->children[i];
+        if (node->children[i]->kind == kind)
+            return node->children[i];
     }
     return nullptr;
 }
 
 SyntaxNode* FileIndexer::find_child_after(SyntaxNode* node, SyntaxKind kind, u32 start_index) {
     for (u32 i = start_index; i < node->children.size(); i++) {
-        if (node->children[i]->kind == kind) return node->children[i];
+        if (node->children[i]->kind == kind)
+            return node->children[i];
     }
     return nullptr;
 }
 
 StringView FileIndexer::get_identifier_text(SyntaxNode* node) {
-    if (!node) return ""_sv;
+    if (!node)
+        return ""_sv;
     if (node->kind == SyntaxKind::TokenIdentifier) {
         return node->token.text();
     }
@@ -27,7 +30,8 @@ StringView FileIndexer::get_identifier_text(SyntaxNode* node) {
 }
 
 TextRange FileIndexer::get_node_range(SyntaxNode* node) {
-    if (!node) return TextRange{0, 0};
+    if (!node)
+        return TextRange{0, 0};
     return node->range;
 }
 
@@ -37,11 +41,13 @@ bool FileIndexer::has_child(SyntaxNode* node, SyntaxKind kind) {
 
 Vector<ParamStub> FileIndexer::extract_params(SyntaxNode* param_list) {
     Vector<ParamStub> params;
-    if (!param_list) return params;
+    if (!param_list)
+        return params;
 
     for (u32 i = 0; i < param_list->children.size(); i++) {
         SyntaxNode* param_node = param_list->children[i];
-        if (param_node->kind != SyntaxKind::NodeParam) continue;
+        if (param_node->kind != SyntaxKind::NodeParam)
+            continue;
 
         ParamStub param;
         param.range = param_node->range;
@@ -67,7 +73,8 @@ Vector<ParamStub> FileIndexer::extract_params(SyntaxNode* param_list) {
 TypeRef FileIndexer::extract_type_ref(SyntaxNode* type_expr_node) {
     TypeRef ref;
     ref.range = TextRange{0, 0};
-    if (!type_expr_node) return ref;
+    if (!type_expr_node)
+        return ref;
 
     ref.range = type_expr_node->range;
 
@@ -84,7 +91,8 @@ TypeRef FileIndexer::extract_type_ref(SyntaxNode* type_expr_node) {
 
 FileStubs FileIndexer::index(SyntaxNode* root) {
     FileStubs stubs;
-    if (!root || root->kind != SyntaxKind::NodeProgram) return stubs;
+    if (!root || root->kind != SyntaxKind::NodeProgram)
+        return stubs;
 
     for (u32 i = 0; i < root->children.size(); i++) {
         SyntaxNode* child = root->children[i];
@@ -197,8 +205,8 @@ void FileIndexer::index_method_decl(SyntaxNode* node, FileStubs& stubs) {
     stub.has_body = has_child(node, SyntaxKind::NodeBlockStmt);
     stub.trait_name = ""_sv;
 
-    // Structure: [?pub, ?native, struct_name, ?type_params, '.', method_name, '(', params, ')', ...]
-    // Find struct_name = first identifier
+    // Structure: [?pub, ?native, struct_name, ?type_params, '.', method_name, '(', params, ')',
+    // ...] Find struct_name = first identifier
     SyntaxNode* struct_name_node = find_child(node, SyntaxKind::TokenIdentifier);
     if (struct_name_node) {
         stub.struct_name = struct_name_node->token.text();

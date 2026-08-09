@@ -19,7 +19,8 @@ CEmitter::CEmitter(BumpAllocator& alloc, const CEmitterConfig& config)
 // (which is why `uniq`/`ref` of one another collapse too). Only the value-shaped
 // pointees — structs, enums, primitives — gain a star when borrowed.
 static bool emits_as_c_pointer(Type* type) {
-    if (!type) return false;
+    if (!type)
+        return false;
     switch (type->kind) {
         case TypeKind::List:
         case TypeKind::Map:
@@ -42,18 +43,42 @@ void CEmitter::emit_type(Type* type, String& out) {
         return;
     }
     switch (type->kind) {
-        case TypeKind::Void:   out.append("void");     break;
-        case TypeKind::Bool:   out.append("bool");      break;
-        case TypeKind::I8:     out.append("int8_t");    break;
-        case TypeKind::I16:    out.append("int16_t");   break;
-        case TypeKind::I32:    out.append("int32_t");   break;
-        case TypeKind::I64:    out.append("int64_t");   break;
-        case TypeKind::U8:     out.append("uint8_t");   break;
-        case TypeKind::U16:    out.append("uint16_t");  break;
-        case TypeKind::U32:    out.append("uint32_t");  break;
-        case TypeKind::U64:    out.append("uint64_t");  break;
-        case TypeKind::F32:    out.append("float");     break;
-        case TypeKind::F64:    out.append("double");    break;
+        case TypeKind::Void:
+            out.append("void");
+            break;
+        case TypeKind::Bool:
+            out.append("bool");
+            break;
+        case TypeKind::I8:
+            out.append("int8_t");
+            break;
+        case TypeKind::I16:
+            out.append("int16_t");
+            break;
+        case TypeKind::I32:
+            out.append("int32_t");
+            break;
+        case TypeKind::I64:
+            out.append("int64_t");
+            break;
+        case TypeKind::U8:
+            out.append("uint8_t");
+            break;
+        case TypeKind::U16:
+            out.append("uint16_t");
+            break;
+        case TypeKind::U32:
+            out.append("uint32_t");
+            break;
+        case TypeKind::U64:
+            out.append("uint64_t");
+            break;
+        case TypeKind::F32:
+            out.append("float");
+            break;
+        case TypeKind::F64:
+            out.append("double");
+            break;
         case TypeKind::Struct:
             emit_mangled_name(type->struct_info.name, out);
             break;
@@ -63,7 +88,8 @@ void CEmitter::emit_type(Type* type, String& out) {
         case TypeKind::Ref:
         case TypeKind::Uniq:
             emit_type(type->ref_info.inner_type, out);
-            if (!emits_as_c_pointer(type->ref_info.inner_type)) out.append("*");
+            if (!emits_as_c_pointer(type->ref_info.inner_type))
+                out.append("*");
             break;
         case TypeKind::String:
             out.append("void*");
@@ -117,24 +143,104 @@ void CEmitter::emit_type(Type* type, String& out) {
 static bool is_cpp_keyword(StringView s) {
     static const tsl::robin_set<StringView> keywords = {
         // C / C++ fundamental types and qualifiers
-        "int", "char", "short", "long", "float", "double", "void", "bool",
-        "signed", "unsigned", "wchar_t", "char8_t", "char16_t", "char32_t",
-        "const", "volatile", "static", "extern", "register", "mutable", "auto",
-        "constexpr", "consteval", "constinit", "inline", "thread_local", "restrict",
+        "int",
+        "char",
+        "short",
+        "long",
+        "float",
+        "double",
+        "void",
+        "bool",
+        "signed",
+        "unsigned",
+        "wchar_t",
+        "char8_t",
+        "char16_t",
+        "char32_t",
+        "const",
+        "volatile",
+        "static",
+        "extern",
+        "register",
+        "mutable",
+        "auto",
+        "constexpr",
+        "consteval",
+        "constinit",
+        "inline",
+        "thread_local",
+        "restrict",
         // declarations / OOP
-        "class", "struct", "union", "enum", "typedef", "template", "typename",
-        "namespace", "using", "operator", "this", "friend", "virtual", "override",
-        "final", "explicit", "public", "private", "protected", "typeid", "decltype",
+        "class",
+        "struct",
+        "union",
+        "enum",
+        "typedef",
+        "template",
+        "typename",
+        "namespace",
+        "using",
+        "operator",
+        "this",
+        "friend",
+        "virtual",
+        "override",
+        "final",
+        "explicit",
+        "public",
+        "private",
+        "protected",
+        "typeid",
+        "decltype",
         // control flow / statements (mostly also Roxy keywords; harmless)
-        "if", "else", "while", "for", "do", "switch", "case", "default", "break",
-        "continue", "goto", "return", "try", "catch", "throw", "new", "delete",
-        "sizeof", "alignof", "alignas", "static_assert", "static_cast",
-        "dynamic_cast", "reinterpret_cast", "const_cast", "noexcept",
-        "nullptr", "true", "false", "asm", "export", "co_await", "co_return",
-        "co_yield", "concept", "requires",
+        "if",
+        "else",
+        "while",
+        "for",
+        "do",
+        "switch",
+        "case",
+        "default",
+        "break",
+        "continue",
+        "goto",
+        "return",
+        "try",
+        "catch",
+        "throw",
+        "new",
+        "delete",
+        "sizeof",
+        "alignof",
+        "alignas",
+        "static_assert",
+        "static_cast",
+        "dynamic_cast",
+        "reinterpret_cast",
+        "const_cast",
+        "noexcept",
+        "nullptr",
+        "true",
+        "false",
+        "asm",
+        "export",
+        "co_await",
+        "co_return",
+        "co_yield",
+        "concept",
+        "requires",
         // alternative tokens
-        "and", "or", "not", "xor", "bitand", "bitor", "compl",
-        "and_eq", "or_eq", "xor_eq", "not_eq",
+        "and",
+        "or",
+        "not",
+        "xor",
+        "bitand",
+        "bitor",
+        "compl",
+        "and_eq",
+        "or_eq",
+        "xor_eq",
+        "not_eq",
     };
     return keywords.find(s) != keywords.end();
 }
@@ -185,7 +291,8 @@ void CEmitter::emit_value(ValueId id, String& out) {
 
 Type* CEmitter::get_value_type(ValueId id) {
     auto it = m_value_types.find(id.id);
-    if (it != m_value_types.end()) return it->second;
+    if (it != m_value_types.end())
+        return it->second;
     return nullptr;
 }
 
@@ -231,7 +338,8 @@ void CEmitter::emit_field_access(ValueId object, StringView field_name, String& 
 }
 
 const IRFunction* CEmitter::find_function(StringView name) {
-    if (!m_module) return nullptr;
+    if (!m_module)
+        return nullptr;
     for (u32 i = 0; i < m_module->functions.size(); i++) {
         if (m_module->functions[i]->name == name) {
             return m_module->functions[i];
@@ -241,7 +349,8 @@ const IRFunction* CEmitter::find_function(StringView name) {
 }
 
 bool CEmitter::is_scalar_stack_alloc(ValueId id) {
-    if (!is_stack_alloc_value(id)) return false;
+    if (!is_stack_alloc_value(id))
+        return false;
     Type* val_type = get_value_type(id);
     return val_type && !val_type->is_struct();
 }
@@ -329,14 +438,11 @@ void CEmitter::collect_value_types(const IRFunction* func) {
                 // / $$pop (post-mangling). Match by suffix.
                 auto ends_with = [](StringView s, const char* suffix) {
                     u32 sl = static_cast<u32>(strlen(suffix));
-                    return s.size() >= sl &&
-                        memcmp(s.data() + s.size() - sl, suffix, sl) == 0;
+                    return s.size() >= sl && memcmp(s.data() + s.size() - sl, suffix, sl) == 0;
                 };
                 if (ends_with(fn, "$$get") || ends_with(fn, "$$get_or") ||
-                    ends_with(fn, "$$index") ||
-                    ends_with(fn, "$$pop") ||
-                    fn == "__map_iter_key_ptr_at"_sv ||
-                    fn == "__map_iter_value_ptr_at"_sv) {
+                    ends_with(fn, "$$index") || ends_with(fn, "$$pop") ||
+                    fn == "__map_iter_key_ptr_at"_sv || fn == "__map_iter_value_ptr_at"_sv) {
                     // The iter _ptr_at natives return an interior pointer to a
                     // struct key/value's inline slots (synthesized container
                     // to_string).
@@ -356,7 +462,8 @@ void CEmitter::emit_global_symbol(StringView name, String& out) {
 }
 
 const IRGlobal* CEmitter::find_global_by_offset(u32 slot_offset) {
-    if (!m_module) return nullptr;
+    if (!m_module)
+        return nullptr;
     for (u32 i = 0; i < m_module->globals.size(); i++) {
         if (m_module->globals[i].slot_offset == slot_offset) {
             return &m_module->globals[i];
@@ -368,7 +475,8 @@ const IRGlobal* CEmitter::find_global_by_offset(u32 slot_offset) {
 // One C global per Roxy global. Zero-initialized statics — `__module_init` runs
 // the real initializers (and constructors) at startup, so no C initializer here.
 void CEmitter::emit_global_definitions(const IRModule* module, String& out) {
-    if (module->globals.empty()) return;
+    if (module->globals.empty())
+        return;
     for (u32 i = 0; i < module->globals.size(); i++) {
         const IRGlobal& g = module->globals[i];
         out.append("static ");
@@ -381,12 +489,11 @@ void CEmitter::emit_global_definitions(const IRModule* module, String& out) {
 }
 
 // Append an rx::String to the output buffer.
-static inline void ap(String& out, const String& s) {
-    out.append(StringView(s.data(), s.size()));
-}
+static inline void ap(String& out, const String& s) { out.append(StringView(s.data(), s.size())); }
 
 void CEmitter::emit_delete_slot(Type* elem, StringView slot_expr, String& out) {
-    if (!elem) return;
+    if (!elem)
+        return;
     if (elem->kind == TypeKind::Ref) {
         // `ref` element: the slot holds the borrowed pointer — release the count
         // (the owner frees the pointee, not the container). lifetimes.md "Applying the model".
@@ -395,15 +502,19 @@ void CEmitter::emit_delete_slot(Type* elem, StringView slot_expr, String& out) {
         out.append("));\n");
         return;
     }
-    if (elem->is_copy()) return;  // copyable element: nothing to clean
-    bool ptr_shaped = elem->kind == TypeKind::Uniq || elem->is_list()
-        || elem->is_map() || elem->is_coroutine() || elem->is_function();
+    if (elem->is_copy())
+        return; // copyable element: nothing to clean
+    bool ptr_shaped = elem->kind == TypeKind::Uniq || elem->is_list() || elem->is_map() ||
+                      elem->is_coroutine() || elem->is_function();
     if (ptr_shaped) {
         // The slot holds an owning pointer (uniq/List/Map/Coro/closure env): load
         // and recurse.
         String ev = format("_de{}", m_delete_tmp++);
-        out.append("    void* "); ap(out, ev); out.append(" = *(void**)(");
-        out.append(slot_expr); out.append(");\n");
+        out.append("    void* ");
+        ap(out, ev);
+        out.append(" = *(void**)(");
+        out.append(slot_expr);
+        out.append(");\n");
         emit_typed_delete(elem, StringView(ev.data(), ev.size()), /*free_obj=*/true, out);
     } else {
         // Inline value struct: its data lives at the slot; recurse in place.
@@ -418,7 +529,8 @@ void CEmitter::emit_delete_slot(Type* elem, StringView slot_expr, String& out) {
 }
 
 void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj, String& out) {
-    if (!type) return;
+    if (!type)
+        return;
     // The *kind* of drop is decided once by the shared, backend-agnostic
     // compute_drop_plan (lifetimes.md "Value lifecycle"); this is the C lowering of that
     // plan. For C, WalkFields and CallDtor are identical — both call the struct's
@@ -433,16 +545,24 @@ void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj,
             if (free_obj) {
                 u32 n = m_delete_tmp++;
                 String pv = format("_dp{}", n);
-                out.append("    { void* "); ap(out, pv); out.append(" = (void*)(");
-                out.append(ptr_expr); out.append(");\n");
-                out.append("    if ("); ap(out, pv); out.append(") roxy_free(");
-                ap(out, pv); out.append("); }\n");
+                out.append("    { void* ");
+                ap(out, pv);
+                out.append(" = (void*)(");
+                out.append(ptr_expr);
+                out.append(");\n");
+                out.append("    if (");
+                ap(out, pv);
+                out.append(") roxy_free(");
+                ap(out, pv);
+                out.append("); }\n");
             }
             return;
 
         case DropKind::Closure:
             // Type-erased: dispatch the env destructor by __call_idx and free.
-            out.append("    __closure_delete("); out.append(ptr_expr); out.append(");\n");
+            out.append("    __closure_delete(");
+            out.append(ptr_expr);
+            out.append(");\n");
             return;
 
         case DropKind::List:
@@ -450,20 +570,27 @@ void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj,
             // Per-type drop-glue function (the AOT analogue of a struct's
             // `$$delete`); the glue null-guards and always frees the header.
             String glue = request_container_drop_glue(type);
-            out.append("    "); out.append(StringView(glue.data(), glue.size()));
-            out.append("("); out.append(ptr_expr); out.append(");\n");
+            out.append("    ");
+            out.append(StringView(glue.data(), glue.size()));
+            out.append("(");
+            out.append(ptr_expr);
+            out.append(");\n");
             return;
         }
 
         case DropKind::RefDec:
             // A counted borrow: release the count, never free the pointee.
-            out.append("    roxy_ref_dec((void*)("); out.append(ptr_expr); out.append("));\n");
+            out.append("    roxy_ref_dec((void*)(");
+            out.append(ptr_expr);
+            out.append("));\n");
             return;
 
         case DropKind::StrRelease:
             // An owned reference-counted string: release (owner--; frees at zero,
             // no-op if immortal — finding 9b).
-            out.append("    roxy_string_release((void*)("); out.append(ptr_expr); out.append("));\n");
+            out.append("    roxy_string_release((void*)(");
+            out.append(ptr_expr);
+            out.append("));\n");
             return;
 
         case DropKind::CallDtor:
@@ -474,23 +601,33 @@ void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj,
             String dtor = mangle_destructor_owned(st->struct_info.name);
             bool have_dtor = find_function(StringView(dtor.data(), dtor.size())) != nullptr;
             auto emit_dtor_call = [&](StringView target) {
-                if (!have_dtor) return;
+                if (!have_dtor)
+                    return;
                 out.append("    ");
                 emit_function_symbol(StringView(dtor.data(), dtor.size()), out);
                 out.append("((");
                 emit_type(st, out);
-                out.append("*)("); out.append(target); out.append("));\n");
+                out.append("*)(");
+                out.append(target);
+                out.append("));\n");
             };
             if (free_obj) {
                 // Heap pointer (uniq/coro): may be null (a never-set uniq field, a
                 // moved-out slot). Guard, bind once, run dtor, free.
                 u32 n = m_delete_tmp++;
                 String pv = format("_dp{}", n);
-                out.append("    { void* "); ap(out, pv); out.append(" = (void*)(");
-                out.append(ptr_expr); out.append(");\n");
-                out.append("    if ("); ap(out, pv); out.append(") {\n");
+                out.append("    { void* ");
+                ap(out, pv);
+                out.append(" = (void*)(");
+                out.append(ptr_expr);
+                out.append(");\n");
+                out.append("    if (");
+                ap(out, pv);
+                out.append(") {\n");
                 emit_dtor_call(StringView(pv.data(), pv.size()));
-                out.append("    roxy_free("); ap(out, pv); out.append(");\n");
+                out.append("    roxy_free(");
+                ap(out, pv);
+                out.append(");\n");
                 out.append("    } }\n");
             } else {
                 // Inline value struct deleted via its address — never null/freed.
@@ -506,37 +643,85 @@ void CEmitter::emit_typed_delete(Type* type, StringView ptr_expr, bool free_obj,
 // instance; closures all erase to "fun" (their drop is the type-erased
 // __closure_delete, so sharing one glue is correct). lifetimes.md "Value lifecycle".
 void CEmitter::append_type_mangle(Type* type, String& out) {
-    if (!type) { out.append("void"); return; }
+    if (!type) {
+        out.append("void");
+        return;
+    }
     switch (type->kind) {
         case TypeKind::List:
-            out.append("List$"); append_type_mangle(type->list_info.element_type, out); break;
+            out.append("List$");
+            append_type_mangle(type->list_info.element_type, out);
+            break;
         case TypeKind::Map:
-            out.append("Map$"); append_type_mangle(type->map_info.key_type, out);
-            out.append("$"); append_type_mangle(type->map_info.value_type, out); break;
+            out.append("Map$");
+            append_type_mangle(type->map_info.key_type, out);
+            out.append("$");
+            append_type_mangle(type->map_info.value_type, out);
+            break;
         case TypeKind::Uniq:
-            out.append("uniq$"); append_type_mangle(type->base_type(), out); break;
+            out.append("uniq$");
+            append_type_mangle(type->base_type(), out);
+            break;
         case TypeKind::Ref:
-            out.append("ref$"); append_type_mangle(type->base_type(), out); break;
+            out.append("ref$");
+            append_type_mangle(type->base_type(), out);
+            break;
         case TypeKind::Weak:
-            out.append("weak$"); append_type_mangle(type->base_type(), out); break;
+            out.append("weak$");
+            append_type_mangle(type->base_type(), out);
+            break;
         case TypeKind::Coroutine:
-            out.append("Coro$"); append_type_mangle(type->coro_info.yield_type, out); break;
-        case TypeKind::Struct: emit_mangled_name(type->struct_info.name, out); break;
-        case TypeKind::Enum:   emit_mangled_name(type->enum_info.name, out); break;
-        case TypeKind::Function: out.append("fun"); break;  // erased: all share __closure_delete
-        case TypeKind::Bool:   out.append("bool"); break;
-        case TypeKind::I8:     out.append("i8"); break;
-        case TypeKind::I16:    out.append("i16"); break;
-        case TypeKind::I32:    out.append("i32"); break;
-        case TypeKind::I64:    out.append("i64"); break;
-        case TypeKind::U8:     out.append("u8"); break;
-        case TypeKind::U16:    out.append("u16"); break;
-        case TypeKind::U32:    out.append("u32"); break;
-        case TypeKind::U64:    out.append("u64"); break;
-        case TypeKind::F32:    out.append("f32"); break;
-        case TypeKind::F64:    out.append("f64"); break;
-        case TypeKind::String: out.append("string"); break;
-        default:               out.append("v"); break;
+            out.append("Coro$");
+            append_type_mangle(type->coro_info.yield_type, out);
+            break;
+        case TypeKind::Struct:
+            emit_mangled_name(type->struct_info.name, out);
+            break;
+        case TypeKind::Enum:
+            emit_mangled_name(type->enum_info.name, out);
+            break;
+        case TypeKind::Function:
+            out.append("fun");
+            break; // erased: all share __closure_delete
+        case TypeKind::Bool:
+            out.append("bool");
+            break;
+        case TypeKind::I8:
+            out.append("i8");
+            break;
+        case TypeKind::I16:
+            out.append("i16");
+            break;
+        case TypeKind::I32:
+            out.append("i32");
+            break;
+        case TypeKind::I64:
+            out.append("i64");
+            break;
+        case TypeKind::U8:
+            out.append("u8");
+            break;
+        case TypeKind::U16:
+            out.append("u16");
+            break;
+        case TypeKind::U32:
+            out.append("u32");
+            break;
+        case TypeKind::U64:
+            out.append("u64");
+            break;
+        case TypeKind::F32:
+            out.append("f32");
+            break;
+        case TypeKind::F64:
+            out.append("f64");
+            break;
+        case TypeKind::String:
+            out.append("string");
+            break;
+        default:
+            out.append("v");
+            break;
     }
 }
 
@@ -549,61 +734,115 @@ void CEmitter::emit_container_drop_body(Type* type, StringView self_var, String&
     if (type->is_list()) {
         Type* elem = type->list_info.element_type;
         String h = format("_dl{}", n);
-        out.append("    roxy_list_header* "); ap(out, h);
-        out.append(" = (roxy_list_header*)("); out.append(self_var); out.append(");\n");
-        out.append("    if (!"); ap(out, h); out.append(") return;\n");
-        if (member_needs_drop(elem)) {  // shared condition (lifetimes.md "Value lifecycle")
+        out.append("    roxy_list_header* ");
+        ap(out, h);
+        out.append(" = (roxy_list_header*)(");
+        out.append(self_var);
+        out.append(");\n");
+        out.append("    if (!");
+        ap(out, h);
+        out.append(") return;\n");
+        if (member_needs_drop(elem)) { // shared condition (lifetimes.md "Value lifecycle")
             String iv = format("_di{}", n);
             String sv = format("_ds{}", n);
-            out.append("    for (uint32_t "); ap(out, iv); out.append(" = 0; ");
-            ap(out, iv); out.append(" < "); ap(out, h); out.append("->length; ");
-            ap(out, iv); out.append("++) {\n");
-            out.append("    uint32_t* "); ap(out, sv); out.append(" = "); ap(out, h);
-            out.append("->elements + (size_t)"); ap(out, iv); out.append(" * ");
-            ap(out, h); out.append("->element_slot_count;\n");
+            out.append("    for (uint32_t ");
+            ap(out, iv);
+            out.append(" = 0; ");
+            ap(out, iv);
+            out.append(" < ");
+            ap(out, h);
+            out.append("->length; ");
+            ap(out, iv);
+            out.append("++) {\n");
+            out.append("    uint32_t* ");
+            ap(out, sv);
+            out.append(" = ");
+            ap(out, h);
+            out.append("->elements + (size_t)");
+            ap(out, iv);
+            out.append(" * ");
+            ap(out, h);
+            out.append("->element_slot_count;\n");
             emit_delete_slot(elem, StringView(sv.data(), sv.size()), out);
             out.append("    }\n");
         }
-        out.append("    roxy_list_delete("); ap(out, h); out.append(");\n");
-        out.append("    roxy_free("); ap(out, h); out.append(");\n");
+        out.append("    roxy_list_delete(");
+        ap(out, h);
+        out.append(");\n");
+        out.append("    roxy_free(");
+        ap(out, h);
+        out.append(");\n");
         return;
     }
     // Map
     Type* kt = type->map_info.key_type;
     Type* vt = type->map_info.value_type;
-    bool kc = map_key_needs_drop(kt);   // keys can't be `ref`
-    bool vc = member_needs_drop(vt);   // shared condition (lifetimes.md "Value lifecycle")
+    bool kc = map_key_needs_drop(kt); // keys can't be `ref`
+    bool vc = member_needs_drop(vt);  // shared condition (lifetimes.md "Value lifecycle")
     String h = format("_dm{}", n);
-    out.append("    roxy_map_header* "); ap(out, h);
-    out.append(" = (roxy_map_header*)("); out.append(self_var); out.append(");\n");
-    out.append("    if (!"); ap(out, h); out.append(") return;\n");
+    out.append("    roxy_map_header* ");
+    ap(out, h);
+    out.append(" = (roxy_map_header*)(");
+    out.append(self_var);
+    out.append(");\n");
+    out.append("    if (!");
+    ap(out, h);
+    out.append(") return;\n");
     if (kc || vc) {
         String iv = format("_di{}", n);
-        out.append("    if ("); ap(out, h); out.append("->capacity > 0 && ");
-        ap(out, h); out.append("->distances) {\n");
-        out.append("    for (uint32_t "); ap(out, iv); out.append(" = 0; ");
-        ap(out, iv); out.append(" < "); ap(out, h); out.append("->capacity; ");
-        ap(out, iv); out.append("++) {\n");
-        out.append("    if ("); ap(out, h); out.append("->distances["); ap(out, iv);
+        out.append("    if (");
+        ap(out, h);
+        out.append("->capacity > 0 && ");
+        ap(out, h);
+        out.append("->distances) {\n");
+        out.append("    for (uint32_t ");
+        ap(out, iv);
+        out.append(" = 0; ");
+        ap(out, iv);
+        out.append(" < ");
+        ap(out, h);
+        out.append("->capacity; ");
+        ap(out, iv);
+        out.append("++) {\n");
+        out.append("    if (");
+        ap(out, h);
+        out.append("->distances[");
+        ap(out, iv);
         out.append("] == 0) continue;\n");
         if (kc) {
             String ks = format("_dk{}", n);
-            out.append("    uint32_t* "); ap(out, ks); out.append(" = "); ap(out, h);
-            out.append("->keys + (size_t)"); ap(out, iv); out.append(" * ");
-            ap(out, h); out.append("->key_slot_count;\n");
+            out.append("    uint32_t* ");
+            ap(out, ks);
+            out.append(" = ");
+            ap(out, h);
+            out.append("->keys + (size_t)");
+            ap(out, iv);
+            out.append(" * ");
+            ap(out, h);
+            out.append("->key_slot_count;\n");
             emit_delete_slot(kt, StringView(ks.data(), ks.size()), out);
         }
         if (vc) {
             String vs = format("_dv{}", n);
-            out.append("    uint32_t* "); ap(out, vs); out.append(" = "); ap(out, h);
-            out.append("->values + (size_t)"); ap(out, iv); out.append(" * ");
-            ap(out, h); out.append("->value_slot_count;\n");
+            out.append("    uint32_t* ");
+            ap(out, vs);
+            out.append(" = ");
+            ap(out, h);
+            out.append("->values + (size_t)");
+            ap(out, iv);
+            out.append(" * ");
+            ap(out, h);
+            out.append("->value_slot_count;\n");
             emit_delete_slot(vt, StringView(vs.data(), vs.size()), out);
         }
-        out.append("    } }\n");  // close for + if(capacity)
+        out.append("    } }\n"); // close for + if(capacity)
     }
-    out.append("    roxy_map_delete("); ap(out, h); out.append(");\n");
-    out.append("    roxy_free("); ap(out, h); out.append(");\n");
+    out.append("    roxy_map_delete(");
+    ap(out, h);
+    out.append(");\n");
+    out.append("    roxy_free(");
+    ap(out, h);
+    out.append(");\n");
 }
 
 // Lazily emit (forward decl + definition) a per-type container drop-glue function
@@ -646,7 +885,8 @@ void CEmitter::emit_enum_typedefs(const IRModule* module, String& out) {
             const EnumDecl& enum_decl = info.decl->enum_decl;
             i64 next_value = 0;
             for (u32 v = 0; v < enum_decl.variants.size(); v++) {
-                if (v > 0) out.append(", ");
+                if (v > 0)
+                    out.append(", ");
                 emit_mangled_name(info.name, out);
                 out.push_back('_');
                 out.append(enum_decl.variants[v].name.data(), enum_decl.variants[v].name.size());
@@ -694,7 +934,8 @@ void CEmitter::emit_struct_typedefs(const IRModule* module, String& out) {
     // Simple dependency sort: emit structs that don't depend on others first.
     // Build adjacency: struct A depends on struct B if A has a value-type field of type B.
     u32 count = module->struct_types.size();
-    if (count == 0) return;
+    if (count == 0)
+        return;
 
     // Map struct type pointer to index
     tsl::robin_map<Type*, u32> type_to_index;
@@ -745,7 +986,8 @@ void CEmitter::emit_struct_typedefs(const IRModule* module, String& out) {
     Vector<u32> order;
     Vector<u32> queue;
     for (u32 i = 0; i < count; i++) {
-        if (in_degree[i] == 0) queue.push_back(i);
+        if (in_degree[i] == 0)
+            queue.push_back(i);
     }
 
     while (!queue.empty()) {
@@ -758,7 +1000,8 @@ void CEmitter::emit_struct_typedefs(const IRModule* module, String& out) {
             for (u32 d = 0; d < depends_on[i].size(); d++) {
                 if (depends_on[i][d] == current) {
                     in_degree[i]--;
-                    if (in_degree[i] == 0) queue.push_back(i);
+                    if (in_degree[i] == 0)
+                        queue.push_back(i);
                 }
             }
         }
@@ -769,9 +1012,13 @@ void CEmitter::emit_struct_typedefs(const IRModule* module, String& out) {
         for (u32 i = 0; i < count; i++) {
             bool found = false;
             for (u32 j = 0; j < order.size(); j++) {
-                if (order[j] == i) { found = true; break; }
+                if (order[j] == i) {
+                    found = true;
+                    break;
+                }
             }
-            if (!found) order.push_back(i);
+            if (!found)
+                order.push_back(i);
         }
     }
 
@@ -804,7 +1051,8 @@ void CEmitter::emit_struct_typedefs(const IRModule* module, String& out) {
             out.append("    union {\n");
             for (u32 v = 0; v < clause.variants.size(); v++) {
                 const VariantInfo& variant = clause.variants[v];
-                if (variant.fields.size() == 0) continue;
+                if (variant.fields.size() == 0)
+                    continue;
                 out.append("        struct { ");
                 for (u32 vf = 0; vf < variant.fields.size(); vf++) {
                     emit_type(variant.fields[vf].type, out);
@@ -828,8 +1076,10 @@ void CEmitter::emit_struct_typedefs(const IRModule* module, String& out) {
 void CEmitter::emit_block_arg_declarations(const IRFunction* func, String& out) {
     for (u32 b = 0; b < func->blocks.size(); b++) {
         const IRBlock* block = func->blocks[b];
-        if (block->params.empty()) continue;
-        if (b == 0) continue; // entry block params are function params
+        if (block->params.empty())
+            continue;
+        if (b == 0)
+            continue; // entry block params are function params
 
         for (u32 p = 0; p < block->params.size(); p++) {
             out.append("    ");
@@ -841,15 +1091,16 @@ void CEmitter::emit_block_arg_declarations(const IRFunction* func, String& out) 
     }
 }
 
-void CEmitter::emit_block_arg_value(const IRFunction* func, const JumpTarget& target,
-                                    u32 i, String& out) {
+void CEmitter::emit_block_arg_value(const IRFunction* func, const JumpTarget& target, u32 i,
+                                    String& out) {
     // Look up the destination block param's type so the arg can be normalized to
     // the representation the param variable was declared with.
     Type* param_type = nullptr;
     for (u32 b = 0; b < func->blocks.size(); b++) {
         if (func->blocks[b]->id.id == target.block.id) {
             const IRBlock* dest = func->blocks[b];
-            if (i < dest->params.size()) param_type = dest->params[i].type;
+            if (i < dest->params.size())
+                param_type = dest->params[i].type;
             break;
         }
     }
@@ -860,9 +1111,9 @@ void CEmitter::emit_block_arg_value(const IRFunction* func, const JumpTarget& ta
     // `const_null`, and `T* = (void*)` is ill-formed in C++. (`void*`-mapped
     // params — Function / String / List / Map — take a null fine.)
     if (val_type && val_type->kind == TypeKind::Nil) {
-        if (param_type && (param_type->kind == TypeKind::Uniq ||
-                           param_type->kind == TypeKind::Ref ||
-                           param_type->kind == TypeKind::Coroutine)) {
+        if (param_type &&
+            (param_type->kind == TypeKind::Uniq || param_type->kind == TypeKind::Ref ||
+             param_type->kind == TypeKind::Coroutine)) {
             out.push_back('(');
             emit_type(param_type, out);
             out.push_back(')');
@@ -877,8 +1128,7 @@ void CEmitter::emit_block_arg_value(const IRFunction* func, const JumpTarget& ta
     // result (e.g. `try { r = inner(); } catch { /* keep r */ }` merges the
     // call result and the prior `r`). Dereference the pointer so the struct is
     // copied into the value param, matching the VM's slot-copy block-arg model.
-    if (param_type && param_type->is_struct() &&
-        is_pointer_value(target.args[i].value)) {
+    if (param_type && param_type->is_struct() && is_pointer_value(target.args[i].value)) {
         out.push_back('*');
     }
     emit_value(target.args[i].value, out);
@@ -900,15 +1150,16 @@ void CEmitter::emit_block_arg_assignments(const IRFunction* func, const JumpTarg
 // All SSA values are pre-declared at function top. Instructions only assign.
 
 void CEmitter::emit_instruction(const IRInst* inst, String& out) {
-    if (inst->op == IROp::BlockArg) return;
+    if (inst->op == IROp::BlockArg)
+        return;
 
     // Phase 5 follow-up: emit a `#line` directive whenever the instruction's
     // source line moves to a new line, so debugger step / error attribution
     // tracks per-statement granularity. Skipped when no source_path is set,
     // when the IR builder couldn't recover a line (synthesized lowering),
     // or when consecutive insts share the same line.
-    if (!m_config.source_path.empty() && inst->source_line != 0
-        && inst->source_line != m_last_emitted_source_line) {
+    if (!m_config.source_path.empty() && inst->source_line != 0 &&
+        inst->source_line != m_last_emitted_source_line) {
         char buf[32];
         format_to(buf, sizeof(buf), "#line {} \"", inst->source_line);
         out.append(buf);
@@ -929,7 +1180,8 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             // A void-typed constant is a return-sentinel (e.g. the coroutine
             // $$delete destructor's `return default`); it is never declared as a
             // local, so emit nothing — the void Return terminator becomes `return;`.
-            if (inst->type && inst->type->kind == TypeKind::Void) return;
+            if (inst->type && inst->type->kind == TypeKind::Void)
+                return;
             out.append("    ");
             emit_value(inst->result, out);
             if (inst->type && inst->type->is_enum()) {
@@ -942,7 +1194,8 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                 out.append(buf);
             } else {
                 char buf[32];
-                if (inst->type && (inst->type->kind == TypeKind::I64 || inst->type->kind == TypeKind::U64)) {
+                if (inst->type &&
+                    (inst->type->kind == TypeKind::I64 || inst->type->kind == TypeKind::U64)) {
                     format_to(buf, sizeof(buf), " = {}LL;\n", inst->const_data.int_val);
                 } else {
                     format_to(buf, sizeof(buf), " = {};\n", inst->const_data.int_val);
@@ -1000,13 +1253,22 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         }
 
         // --- Binary arithmetic (integer add/sub/mul) ---
-        case IROp::AddI: case IROp::SubI: case IROp::MulI: {
+        case IROp::AddI:
+        case IROp::SubI:
+        case IROp::MulI: {
             const char* op_str = nullptr;
             switch (inst->op) {
-                case IROp::AddI: op_str = " + "; break;
-                case IROp::SubI: op_str = " - "; break;
-                case IROp::MulI: op_str = " * "; break;
-                default: break;
+                case IROp::AddI:
+                    op_str = " + ";
+                    break;
+                case IROp::SubI:
+                    op_str = " - ";
+                    break;
+                case IROp::MulI:
+                    op_str = " * ";
+                    break;
+                default:
+                    break;
             }
             out.append("    ");
             emit_value(inst->result, out);
@@ -1022,17 +1284,27 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         // Route through roxy_rt's checked helpers so INT_MIN/-1 and divide-by-zero
         // don't invoke C signed-division UB (which SIGFPE-traps on x86 idiv). A raw
         // `v0 / v1` would crash AOT binaries on x86 for ordinary-looking arithmetic.
-        case IROp::DivI: case IROp::ModI:
-        case IROp::DivU: case IROp::ModU: {
+        case IROp::DivI:
+        case IROp::ModI:
+        case IROp::DivU:
+        case IROp::ModU: {
             bool is64 = inst->type &&
                         (inst->type->kind == TypeKind::I64 || inst->type->kind == TypeKind::U64);
             const char* fn;
             switch (inst->op) {
                 // Unsigned helpers guard only divide-by-zero (no INT_MIN/-1 case).
-                case IROp::DivU: fn = is64 ? "roxy_udiv_u64" : "roxy_udiv_u32"; break;
-                case IROp::ModU: fn = is64 ? "roxy_umod_u64" : "roxy_umod_u32"; break;
-                case IROp::DivI: fn = is64 ? "roxy_idiv_i64" : "roxy_idiv_i32"; break;
-                default:         fn = is64 ? "roxy_imod_i64" : "roxy_imod_i32"; break;
+                case IROp::DivU:
+                    fn = is64 ? "roxy_udiv_u64" : "roxy_udiv_u32";
+                    break;
+                case IROp::ModU:
+                    fn = is64 ? "roxy_umod_u64" : "roxy_umod_u32";
+                    break;
+                case IROp::DivI:
+                    fn = is64 ? "roxy_idiv_i64" : "roxy_idiv_i32";
+                    break;
+                default:
+                    fn = is64 ? "roxy_imod_i64" : "roxy_imod_i32";
+                    break;
             }
             out.append("    ");
             emit_value(inst->result, out);
@@ -1047,14 +1319,26 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         }
 
         // --- Binary arithmetic (f32) ---
-        case IROp::AddF: case IROp::SubF: case IROp::MulF: case IROp::DivF: {
+        case IROp::AddF:
+        case IROp::SubF:
+        case IROp::MulF:
+        case IROp::DivF: {
             const char* op_str = nullptr;
             switch (inst->op) {
-                case IROp::AddF: op_str = " + "; break;
-                case IROp::SubF: op_str = " - "; break;
-                case IROp::MulF: op_str = " * "; break;
-                case IROp::DivF: op_str = " / "; break;
-                default: break;
+                case IROp::AddF:
+                    op_str = " + ";
+                    break;
+                case IROp::SubF:
+                    op_str = " - ";
+                    break;
+                case IROp::MulF:
+                    op_str = " * ";
+                    break;
+                case IROp::DivF:
+                    op_str = " / ";
+                    break;
+                default:
+                    break;
             }
             out.append("    ");
             emit_value(inst->result, out);
@@ -1067,14 +1351,26 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         }
 
         // --- Binary arithmetic (f64) ---
-        case IROp::AddD: case IROp::SubD: case IROp::MulD: case IROp::DivD: {
+        case IROp::AddD:
+        case IROp::SubD:
+        case IROp::MulD:
+        case IROp::DivD: {
             const char* op_str = nullptr;
             switch (inst->op) {
-                case IROp::AddD: op_str = " + "; break;
-                case IROp::SubD: op_str = " - "; break;
-                case IROp::MulD: op_str = " * "; break;
-                case IROp::DivD: op_str = " / "; break;
-                default: break;
+                case IROp::AddD:
+                    op_str = " + ";
+                    break;
+                case IROp::SubD:
+                    op_str = " - ";
+                    break;
+                case IROp::MulD:
+                    op_str = " * ";
+                    break;
+                case IROp::DivD:
+                    op_str = " / ";
+                    break;
+                default:
+                    break;
             }
             out.append("    ");
             emit_value(inst->result, out);
@@ -1087,7 +1383,9 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         }
 
         // --- Unary arithmetic ---
-        case IROp::NegI: case IROp::NegF: case IROp::NegD: {
+        case IROp::NegI:
+        case IROp::NegF:
+        case IROp::NegD: {
             out.append("    ");
             emit_value(inst->result, out);
             out.append(" = -");
@@ -1099,18 +1397,42 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         // --- Comparisons (integer) ---
         // Unsigned compares (LtU..GeU) emit the same C operators; correctness comes
         // from the operands being declared uint32_t/uint64_t (C makes `<` unsigned).
-        case IROp::EqI: case IROp::NeI: case IROp::LtI:
-        case IROp::LeI: case IROp::GtI: case IROp::GeI:
-        case IROp::LtU: case IROp::LeU: case IROp::GtU: case IROp::GeU: {
+        case IROp::EqI:
+        case IROp::NeI:
+        case IROp::LtI:
+        case IROp::LeI:
+        case IROp::GtI:
+        case IROp::GeI:
+        case IROp::LtU:
+        case IROp::LeU:
+        case IROp::GtU:
+        case IROp::GeU: {
             const char* op_str = nullptr;
             switch (inst->op) {
-                case IROp::EqI: op_str = " == "; break;
-                case IROp::NeI: op_str = " != "; break;
-                case IROp::LtI: case IROp::LtU: op_str = " < ";  break;
-                case IROp::LeI: case IROp::LeU: op_str = " <= "; break;
-                case IROp::GtI: case IROp::GtU: op_str = " > ";  break;
-                case IROp::GeI: case IROp::GeU: op_str = " >= "; break;
-                default: break;
+                case IROp::EqI:
+                    op_str = " == ";
+                    break;
+                case IROp::NeI:
+                    op_str = " != ";
+                    break;
+                case IROp::LtI:
+                case IROp::LtU:
+                    op_str = " < ";
+                    break;
+                case IROp::LeI:
+                case IROp::LeU:
+                    op_str = " <= ";
+                    break;
+                case IROp::GtI:
+                case IROp::GtU:
+                    op_str = " > ";
+                    break;
+                case IROp::GeI:
+                case IROp::GeU:
+                    op_str = " >= ";
+                    break;
+                default:
+                    break;
             }
             out.append("    ");
             emit_value(inst->result, out);
@@ -1123,17 +1445,34 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         }
 
         // --- Comparisons (f32) ---
-        case IROp::EqF: case IROp::NeF: case IROp::LtF:
-        case IROp::LeF: case IROp::GtF: case IROp::GeF: {
+        case IROp::EqF:
+        case IROp::NeF:
+        case IROp::LtF:
+        case IROp::LeF:
+        case IROp::GtF:
+        case IROp::GeF: {
             const char* op_str = nullptr;
             switch (inst->op) {
-                case IROp::EqF: op_str = " == "; break;
-                case IROp::NeF: op_str = " != "; break;
-                case IROp::LtF: op_str = " < ";  break;
-                case IROp::LeF: op_str = " <= "; break;
-                case IROp::GtF: op_str = " > ";  break;
-                case IROp::GeF: op_str = " >= "; break;
-                default: break;
+                case IROp::EqF:
+                    op_str = " == ";
+                    break;
+                case IROp::NeF:
+                    op_str = " != ";
+                    break;
+                case IROp::LtF:
+                    op_str = " < ";
+                    break;
+                case IROp::LeF:
+                    op_str = " <= ";
+                    break;
+                case IROp::GtF:
+                    op_str = " > ";
+                    break;
+                case IROp::GeF:
+                    op_str = " >= ";
+                    break;
+                default:
+                    break;
             }
             out.append("    ");
             emit_value(inst->result, out);
@@ -1146,17 +1485,34 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         }
 
         // --- Comparisons (f64) ---
-        case IROp::EqD: case IROp::NeD: case IROp::LtD:
-        case IROp::LeD: case IROp::GtD: case IROp::GeD: {
+        case IROp::EqD:
+        case IROp::NeD:
+        case IROp::LtD:
+        case IROp::LeD:
+        case IROp::GtD:
+        case IROp::GeD: {
             const char* op_str = nullptr;
             switch (inst->op) {
-                case IROp::EqD: op_str = " == "; break;
-                case IROp::NeD: op_str = " != "; break;
-                case IROp::LtD: op_str = " < ";  break;
-                case IROp::LeD: op_str = " <= "; break;
-                case IROp::GtD: op_str = " > ";  break;
-                case IROp::GeD: op_str = " >= "; break;
-                default: break;
+                case IROp::EqD:
+                    op_str = " == ";
+                    break;
+                case IROp::NeD:
+                    op_str = " != ";
+                    break;
+                case IROp::LtD:
+                    op_str = " < ";
+                    break;
+                case IROp::LeD:
+                    op_str = " <= ";
+                    break;
+                case IROp::GtD:
+                    op_str = " > ";
+                    break;
+                case IROp::GeD:
+                    op_str = " >= ";
+                    break;
+                default:
+                    break;
             }
             out.append("    ");
             emit_value(inst->result, out);
@@ -1201,16 +1557,32 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
         // --- Bitwise ---
         // UShr emits the same `>>`; it is only produced for u64 operands, whose
         // uint64_t C type makes `>>` a logical (zero-filling) shift.
-        case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor:
-        case IROp::Shl: case IROp::Shr: case IROp::UShr: {
+        case IROp::BitAnd:
+        case IROp::BitOr:
+        case IROp::BitXor:
+        case IROp::Shl:
+        case IROp::Shr:
+        case IROp::UShr: {
             const char* op_str = nullptr;
             switch (inst->op) {
-                case IROp::BitAnd: op_str = " & ";  break;
-                case IROp::BitOr:  op_str = " | ";  break;
-                case IROp::BitXor: op_str = " ^ ";  break;
-                case IROp::Shl:    op_str = " << "; break;
-                case IROp::Shr: case IROp::UShr: op_str = " >> "; break;
-                default: break;
+                case IROp::BitAnd:
+                    op_str = " & ";
+                    break;
+                case IROp::BitOr:
+                    op_str = " | ";
+                    break;
+                case IROp::BitXor:
+                    op_str = " ^ ";
+                    break;
+                case IROp::Shl:
+                    op_str = " << ";
+                    break;
+                case IROp::Shr:
+                case IROp::UShr:
+                    op_str = " >> ";
+                    break;
+                default:
+                    break;
             }
             out.append("    ");
             emit_value(inst->result, out);
@@ -1290,7 +1662,8 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             // value structs are moves (no copy); ref/uniq/inout params are
             // pointers (no copy). Returns the param type to copy into, else null.
             auto value_copy_type = [&](u32 i) -> Type* {
-                if (!callee || i >= callee->params.size()) return nullptr;
+                if (!callee || i >= callee->params.size())
+                    return nullptr;
                 // The hidden large-struct-return output pointer (last param) and
                 // out/inout params are pointer-semantics, not by-value — never copy.
                 if (callee->returns_large_struct() && i + 1 == callee->params.size())
@@ -1298,17 +1671,20 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                 if (i < callee->param_is_ptr.size() && callee->param_is_ptr[i])
                     return nullptr;
                 Type* pt = callee->params[i].type;
-                if (!pt || !pt->is_struct() || pt->noncopyable()) return nullptr;
+                if (!pt || !pt->is_struct() || pt->noncopyable())
+                    return nullptr;
                 Type* at = get_value_type(inst->call.args[i]);
                 Type* ai = (at && at->is_reference()) ? at->ref_info.inner_type : at;
-                if (ai != pt) return nullptr;  // same-type only (skip slicing)
+                if (ai != pt)
+                    return nullptr; // same-type only (skip slicing)
                 return pt;
             };
             u32 tmp_base = m_delete_tmp;
             m_delete_tmp += inst->call.args.size();
             for (u32 i = 0; i < inst->call.args.size(); i++) {
                 Type* ct = value_copy_type(i);
-                if (!ct) continue;
+                if (!ct)
+                    continue;
                 String tn = format("_vc{}", tmp_base + i);
                 // Declare without an initializer, then assign. The C backend's
                 // goto-based control flow can jump past this point, and C++
@@ -1321,15 +1697,16 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                 out.append(";\n    ");
                 ap(out, tn);
                 out.append(" = ");
-                if (is_pointer_value(inst->call.args[i])) out.append("*");
+                if (is_pointer_value(inst->call.args[i]))
+                    out.append("*");
                 emit_value(inst->call.args[i], out);
                 out.append(";\n");
             }
 
             out.append("    ");
             // Skip assignment if callee returns void (e.g., large struct return via hidden ptr)
-            bool assign_result = inst->result.is_valid() && inst->type &&
-                                 inst->type->kind != TypeKind::Void;
+            bool assign_result =
+                inst->result.is_valid() && inst->type && inst->type->kind != TypeKind::Void;
             if (assign_result && callee && callee->returns_large_struct()) {
                 assign_result = false;
             }
@@ -1340,7 +1717,8 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             emit_function_symbol(inst->call.func_name, out);
             out.push_back('(');
             for (u32 i = 0; i < inst->call.args.size(); i++) {
-                if (i > 0) out.append(", ");
+                if (i > 0)
+                    out.append(", ");
 
                 // By-value struct copy: pass the address of the call-site copy.
                 if (Type* ct = value_copy_type(i)) {
@@ -1367,8 +1745,9 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                     if (param_inner && param_inner->is_reference())
                         param_inner = param_inner->ref_info.inner_type;
 
-                    if (arg_inner && param_inner && arg_inner->is_struct() && param_inner->is_struct() &&
-                        arg_inner != param_inner && is_pointer_value(inst->call.args[i])) {
+                    if (arg_inner && param_inner && arg_inner->is_struct() &&
+                        param_inner->is_struct() && arg_inner != param_inner &&
+                        is_pointer_value(inst->call.args[i])) {
                         need_cast = true;
                         // Use the callee's param inner type for the cast
                         param_type = param_inner;
@@ -1380,8 +1759,7 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                     emit_type(param_type, out);
                     out.append("*)");
                 } else if (Type* at = get_value_type(inst->call.args[i]);
-                           at && at->is_struct() &&
-                           !is_pointer_value(inst->call.args[i])) {
+                           at && at->is_struct() && !is_pointer_value(inst->call.args[i])) {
                     // A by-value struct rvalue (e.g. the result of a Call
                     // returning a small struct by value, as produced by chained
                     // operator/method dispatch like `self.add(o).add(o)`) is a
@@ -1409,7 +1787,8 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             emit_mangled_name(inst->call_external.func_name, out);
             out.push_back('(');
             for (u32 i = 0; i < inst->call_external.args.size(); i++) {
-                if (i > 0) out.append(", ");
+                if (i > 0)
+                    out.append(", ");
                 emit_value(inst->call_external.args[i], out);
             }
             out.append(");\n");
@@ -1525,8 +1904,8 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             //   - a uniq/ref pointer field assigned a null (void*-typed) needs an
             //     explicit cast — e.g. cleanup nulling a promoted uniq field.
             {
-                bool field_is_ptr = field_type &&
-                    (field_type->kind == TypeKind::Uniq || field_type->kind == TypeKind::Ref);
+                bool field_is_ptr = field_type && (field_type->kind == TypeKind::Uniq ||
+                                                   field_type->kind == TypeKind::Ref);
                 if (field_type && field_type->is_struct() && is_pointer_value(inst->store_value)) {
                     out.append("*");
                     emit_value(inst->store_value, out);
@@ -1560,7 +1939,8 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             // of the result) — needs its address taken so memcpy receives a
             // pointer rather than the struct itself.
             auto emit_ptr_operand = [&](ValueId id) {
-                if (!is_pointer_value(id)) out.push_back('&');
+                if (!is_pointer_value(id))
+                    out.push_back('&');
                 emit_value(id, out);
             };
             out.append("    memcpy(");
@@ -1598,8 +1978,8 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             // pointee's logical type is the slot value's type (`uniq T` → `T*`).
             Type* val_type = get_value_type(inst->store_ptr.value);
             Type* slot_type = get_value_type(inst->store_ptr.ptr);
-            if (val_type && val_type->kind == TypeKind::Nil &&
-                slot_type && slot_type->is_reference()) {
+            if (val_type && val_type->kind == TypeKind::Nil && slot_type &&
+                slot_type->is_reference()) {
                 out.push_back('(');
                 emit_type(slot_type, out);
                 out.push_back(')');
@@ -1642,7 +2022,7 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             return;
         }
 
-        // --- Phase 3: Runtime library ops ---
+            // --- Phase 3: Runtime library ops ---
 
         case IROp::ConstString: {
             out.append("    ");
@@ -1711,7 +2091,8 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                 emit_value(inst->index_data.index, out);
             }
             out.append(");");
-            if (needs_key_temp) out.append(" }");
+            if (needs_key_temp)
+                out.append(" }");
             out.append("\n");
             return;
         }
@@ -1744,13 +2125,16 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             emit_value(inst->index_data.container, out);
             out.append(", ");
             if (is_map) {
-                if (key_is_struct) emit_value(inst->index_data.index, out);
-                else out.append("&_ktmp");
+                if (key_is_struct)
+                    emit_value(inst->index_data.index, out);
+                else
+                    out.append("&_ktmp");
             } else {
                 emit_value(inst->index_data.index, out);
             }
             out.append(");");
-            if (needs_key_temp) out.append(" }");
+            if (needs_key_temp)
+                out.append(" }");
             out.append("\n");
             return;
         }
@@ -1776,9 +2160,11 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             emit_value(inst->index_data.container, out);
             out.append(", ");
             out.append(key_is_struct ? "" : "&_ktmp");
-            if (key_is_struct) emit_value(inst->index_data.index, out);
+            if (key_is_struct)
+                emit_value(inst->index_data.index, out);
             out.append(", NULL);");
-            if (needs_key_temp) out.append(" }");
+            if (needs_key_temp)
+                out.append(" }");
             out.append("\n");
             return;
         }
@@ -1836,13 +2222,15 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                 out.append("&_vtmp");
             }
             out.append(");");
-            if (needs_brace) out.append(" }");
+            if (needs_brace)
+                out.append(" }");
             out.append("\n");
             return;
         }
 
         case IROp::New: {
-            // Allocate a new heap object: (StructType*)roxy_alloc(sizeof(StructType), TYPEID_StructType)
+            // Allocate a new heap object: (StructType*)roxy_alloc(sizeof(StructType),
+            // TYPEID_StructType)
             out.append("    ");
             emit_value(inst->result, out);
             out.append(" = (");
@@ -1888,8 +2276,8 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             // handles structs (run the destructor) and containers (iterate +
             // recurse + free buffers) recursively — the C analogue of the VM's
             // descriptor-driven delete_value.
-            bool is_heap = t->kind == TypeKind::Uniq || t->is_list()
-                || t->is_map() || t->is_coroutine();
+            bool is_heap =
+                t->kind == TypeKind::Uniq || t->is_list() || t->is_map() || t->is_coroutine();
             String ve;
             emit_value(inst->unary, ve);
             // A struct *value* local (e.g. one bound to a by-value call result) is
@@ -1909,10 +2297,15 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             // Pointers null to 0; a value struct is zeroed in place.
             if (m_cleanup_values.count(inst->unary.id)) {
                 if (value_struct) {
-                    out.append("    memset(&"); out.append(ve); out.append(", 0, sizeof(");
-                    out.append(ve); out.append("));\n");
+                    out.append("    memset(&");
+                    out.append(ve);
+                    out.append(", 0, sizeof(");
+                    out.append(ve);
+                    out.append("));\n");
                 } else {
-                    out.append("    "); out.append(ve); out.append(" = 0;\n");
+                    out.append("    ");
+                    out.append(ve);
+                    out.append(" = 0;\n");
                 }
             }
             return;
@@ -2003,7 +2396,7 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             // first slot (__call_idx), then the captures. The result is a
             // type-erased Function value (void*).
             StringView env_name = inst->closure.env_struct_name;
-            String env_c;  // mangled C type name for the env struct
+            String env_c; // mangled C type name for the env struct
             emit_mangled_name(env_name, env_c);
             StringView env_cv(env_c.data(), env_c.size());
 
@@ -2023,7 +2416,8 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             // __call_idx = dispatch index for the call function.
             u32 idx = 0;
             auto it = m_closure_fn_index.find(inst->closure.call_function_name);
-            if (it != m_closure_fn_index.end()) idx = it->second;
+            if (it != m_closure_fn_index.end())
+                idx = it->second;
             out.append("    ((");
             out.append(env_cv);
             out.append("*)");
@@ -2035,7 +2429,8 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             // Captures -> env fields [1..] (field 0 is __call_idx), by name.
             Type* env_type = find_struct_type(env_name);
             for (u32 c = 0; c < inst->closure.captures.size(); c++) {
-                if (!env_type || c + 1 >= env_type->struct_info.fields.size()) break;
+                if (!env_type || c + 1 >= env_type->struct_info.fields.size())
+                    break;
                 const FieldInfo& field = env_type->struct_info.fields[c + 1];
                 ValueId cap = inst->closure.captures[c];
                 out.append("    ((");
@@ -2057,8 +2452,8 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                 } else if (ft && ft->is_struct() && is_pointer_value(cap)) {
                     out.append("*");
                     emit_value(cap, out);
-                } else if (ft && (ft->kind == TypeKind::Uniq || ft->kind == TypeKind::Ref)
-                           && vt && vt->kind == TypeKind::Nil) {
+                } else if (ft && (ft->kind == TypeKind::Uniq || ft->kind == TypeKind::Ref) && vt &&
+                           vt->kind == TypeKind::Nil) {
                     out.append("(");
                     emit_type(ft, out);
                     out.append(")");
@@ -2078,16 +2473,18 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
             Type* ct = get_value_type(callee);
             bool callee_weak = ct && ct->kind == TypeKind::Weak;
             Type* ft = ct;
-            if (ft && ft->is_reference()) ft = ft->ref_info.inner_type;
+            if (ft && ft->is_reference())
+                ft = ft->ref_info.inner_type;
 
             String env_expr;
             emit_value(callee, env_expr);
-            if (callee_weak) env_expr.append(".ptr");
+            if (callee_weak)
+                env_expr.append(".ptr");
             StringView env_sv(env_expr.data(), env_expr.size());
 
             out.append("    ");
-            bool assign = inst->result.is_valid() && inst->type
-                && inst->type->kind != TypeKind::Void;
+            bool assign =
+                inst->result.is_valid() && inst->type && inst->type->kind != TypeKind::Void;
             if (assign) {
                 emit_value(inst->result, out);
                 out.append(" = ");
@@ -2153,28 +2550,32 @@ void CEmitter::emit_terminator(const IRBlock* block, const IRFunction* func, Str
             // Then branch
             for (u32 i = 0; i < term.branch.then_target.args.size(); i++) {
                 char buf[64];
-                format_to(buf, sizeof(buf), "        block{}_arg{} = ", term.branch.then_target.block.id, i);
+                format_to(buf, sizeof(buf),
+                          "        block{}_arg{} = ", term.branch.then_target.block.id, i);
                 out.append(buf);
                 emit_block_arg_value(func, term.branch.then_target, i, out);
                 out.append(";\n");
             }
             {
                 char buf[32];
-                format_to(buf, sizeof(buf), "        goto block{};\n", term.branch.then_target.block.id);
+                format_to(buf, sizeof(buf), "        goto block{};\n",
+                          term.branch.then_target.block.id);
                 out.append(buf);
             }
             out.append("    } else {\n");
             // Else branch
             for (u32 i = 0; i < term.branch.else_target.args.size(); i++) {
                 char buf[64];
-                format_to(buf, sizeof(buf), "        block{}_arg{} = ", term.branch.else_target.block.id, i);
+                format_to(buf, sizeof(buf),
+                          "        block{}_arg{} = ", term.branch.else_target.block.id, i);
                 out.append(buf);
                 emit_block_arg_value(func, term.branch.else_target, i, out);
                 out.append(";\n");
             }
             {
                 char buf[32];
-                format_to(buf, sizeof(buf), "        goto block{};\n", term.branch.else_target.block.id);
+                format_to(buf, sizeof(buf), "        goto block{};\n",
+                          term.branch.else_target.block.id);
                 out.append(buf);
             }
             out.append("    }\n");
@@ -2186,10 +2587,9 @@ void CEmitter::emit_terminator(const IRBlock* block, const IRFunction* func, Str
             // void-typed value (e.g. the coroutine $$delete sentinel) yields a
             // bare `return;`; otherwise return the value (a method returning a
             // closure has a void declared type but a real Function value).
-            Type* vt = term.return_value.is_valid()
-                ? get_value_type(term.return_value) : nullptr;
-            if (!func->returns_large_struct() && term.return_value.is_valid()
-                && vt && vt->kind != TypeKind::Void) {
+            Type* vt = term.return_value.is_valid() ? get_value_type(term.return_value) : nullptr;
+            if (!func->returns_large_struct() && term.return_value.is_valid() && vt &&
+                vt->kind != TypeKind::Void) {
                 Type* ret_type = func->return_type;
                 // A by-value struct return whose value is pointer-represented
                 // (a StackAlloc'd local, a struct PARAM, a struct IndexGet, …)
@@ -2250,22 +2650,26 @@ void CEmitter::emit_block(const IRBlock* block, const IRFunction* func, String& 
     auto uses_as_arg = [](const IRInst* in, u32 vid) -> bool {
         if (in->op == IROp::Call || in->op == IROp::CallNative) {
             for (u32 a = 0; a < in->call.args.size(); a++)
-                if (in->call.args[a].id == vid) return true;
+                if (in->call.args[a].id == vid)
+                    return true;
         } else if (in->op == IROp::CallExternal) {
             for (u32 a = 0; a < in->call_external.args.size(); a++)
-                if (in->call_external.args[a].id == vid) return true;
+                if (in->call_external.args[a].id == vid)
+                    return true;
         } else if (in->op == IROp::Closure) {
             // A [move]-captured value is consumed by the Closure op (its env
             // takes ownership); the nullify must run after the capture.
             for (u32 a = 0; a < in->closure.captures.size(); a++)
-                if (in->closure.captures[a].id == vid) return true;
+                if (in->closure.captures[a].id == vid)
+                    return true;
         }
         return false;
     };
-    tsl::robin_set<u32> deferred_nullify_idx;          // nullify insts handled after a call
-    tsl::robin_map<u32, Vector<ValueId>> flush_after;  // call inst idx -> values to null
+    tsl::robin_set<u32> deferred_nullify_idx;         // nullify insts handled after a call
+    tsl::robin_map<u32, Vector<ValueId>> flush_after; // call inst idx -> values to null
     for (u32 i = 0; i < block->instructions.size(); i++) {
-        if (block->instructions[i]->op != IROp::Nullify) continue;
+        if (block->instructions[i]->op != IROp::Nullify)
+            continue;
         u32 vid = block->instructions[i]->unary.id;
         // A move-nullify of the value the block RETURNS must not zero it before
         // the terminator reads it (`nullify v; return v` would otherwise emit
@@ -2274,14 +2678,14 @@ void CEmitter::emit_block(const IRBlock* block, const IRFunction* func, String& 
         // nullify is simply dropped — matching the VM, where `return` captures
         // the register value before the nullify marks the slot moved.
         if (block->terminator.kind == TerminatorKind::Return &&
-            block->terminator.return_value.is_valid() &&
-            block->terminator.return_value.id == vid) {
+            block->terminator.return_value.is_valid() && block->terminator.return_value.id == vid) {
             deferred_nullify_idx.insert(i);
             continue;
         }
         i32 last_use = -1;
         for (u32 j = i + 1; j < block->instructions.size(); j++) {
-            if (uses_as_arg(block->instructions[j], vid)) last_use = static_cast<i32>(j);
+            if (uses_as_arg(block->instructions[j], vid))
+                last_use = static_cast<i32>(j);
         }
         if (last_use >= 0) {
             deferred_nullify_idx.insert(i);
@@ -2323,21 +2727,25 @@ void CEmitter::emit_block(const IRBlock* block, const IRFunction* func, String& 
 
 Type* CEmitter::effective_return_type(const IRFunction* func) {
     Type* rt = func->return_type;
-    if (rt && rt->kind != TypeKind::Void) return rt;
+    if (rt && rt->kind != TypeKind::Void)
+        return rt;
     // Declared void/null but the function actually returns a value (e.g. a method
     // returning a closure — its IR return_type is left unset). Use the Return
     // value's type so the prototype matches the call sites.
     for (u32 b = 0; b < func->blocks.size(); b++) {
         const Terminator& t = func->blocks[b]->terminator;
-        if (t.kind != TerminatorKind::Return || !t.return_value.is_valid()) continue;
+        if (t.kind != TerminatorKind::Return || !t.return_value.is_valid())
+            continue;
         ValueId v = t.return_value;
         if (v.id < func->values_by_id.size() && func->values_by_id[v.id]) {
             Type* vt = func->values_by_id[v.id]->type;
-            if (vt && vt->kind != TypeKind::Void) return vt;
+            if (vt && vt->kind != TypeKind::Void)
+                return vt;
         }
         for (u32 bb = 0; bb < func->blocks.size(); bb++) {
             for (const auto& p : func->blocks[bb]->params) {
-                if (p.value.id == v.id && p.type && p.type->kind != TypeKind::Void) return p.type;
+                if (p.value.id == v.id && p.type && p.type->kind != TypeKind::Void)
+                    return p.type;
             }
         }
     }
@@ -2359,7 +2767,8 @@ void CEmitter::emit_function_prototype(const IRFunction* func, String& out) {
         out.append("void");
     } else {
         for (u32 i = 0; i < func->params.size(); i++) {
-            if (i > 0) out.append(", ");
+            if (i > 0)
+                out.append(", ");
             Type* param_type = func->params[i].type;
             emit_type(param_type, out);
             // Struct params are always passed by pointer in the IR
@@ -2396,11 +2805,13 @@ void CEmitter::emit_function_prototype(const IRFunction* func, String& out) {
 bool CEmitter::module_uses_exceptions(const IRModule* module) {
     for (u32 f = 0; f < module->functions.size(); f++) {
         const IRFunction* func = module->functions[f];
-        if (!func->exception_handlers.empty()) return true;
+        if (!func->exception_handlers.empty())
+            return true;
         for (u32 b = 0; b < func->blocks.size(); b++) {
             const IRBlock* block = func->blocks[b];
             for (u32 i = 0; i < block->instructions.size(); i++) {
-                if (block->instructions[i]->op == IROp::Throw) return true;
+                if (block->instructions[i]->op == IROp::Throw)
+                    return true;
             }
         }
     }
@@ -2420,14 +2831,18 @@ void CEmitter::compute_exception_routing(const IRFunction* func) {
         m_cleanup_values.insert(func->cleanup_info[i].value.id);
     }
 
-    if (!m_module_uses_exceptions) return;
+    if (!m_module_uses_exceptions)
+        return;
 
     // Group handlers sharing a try entry.
     for (u32 hi = 0; hi < func->exception_handlers.size(); hi++) {
         const IRExceptionHandler& h = func->exception_handlers[hi];
         u32 gi = UINT32_MAX;
         for (u32 g = 0; g < m_try_groups.size(); g++) {
-            if (m_try_groups[g].try_entry.id == h.try_entry.id) { gi = g; break; }
+            if (m_try_groups[g].try_entry.id == h.try_entry.id) {
+                gi = g;
+                break;
+            }
         }
         if (gi == UINT32_MAX) {
             TryGroup grp;
@@ -2448,10 +2863,14 @@ void CEmitter::compute_exception_routing(const IRFunction* func) {
         for (u32 g = 0; g < m_try_groups.size(); g++) {
             if (m_try_groups[g].body_blocks.count(bid)) {
                 u32 sz = static_cast<u32>(m_try_groups[g].body_blocks.size());
-                if (sz < best_size) { best_size = sz; best = g; }
+                if (sz < best_size) {
+                    best_size = sz;
+                    best = g;
+                }
             }
         }
-        if (best != UINT32_MAX) m_block_to_group[bid] = best;
+        if (best != UINT32_MAX)
+            m_block_to_group[bid] = best;
     }
 
     // For each group, the innermost OTHER group containing its try entry.
@@ -2459,10 +2878,14 @@ void CEmitter::compute_exception_routing(const IRFunction* func) {
         u32 entry = m_try_groups[g].try_entry.id;
         u32 best = UINT32_MAX, best_size = UINT32_MAX;
         for (u32 o = 0; o < m_try_groups.size(); o++) {
-            if (o == g) continue;
+            if (o == g)
+                continue;
             if (m_try_groups[o].body_blocks.count(entry)) {
                 u32 sz = static_cast<u32>(m_try_groups[o].body_blocks.size());
-                if (sz < best_size) { best_size = sz; best = o; }
+                if (sz < best_size) {
+                    best_size = sz;
+                    best = o;
+                }
             }
         }
         m_try_groups[g].outer_group = best;
@@ -2480,7 +2903,8 @@ void CEmitter::compute_exception_routing(const IRFunction* func) {
     // propagates, or any group's no-match path falls out of the function.
     for (u32 b = 0; b < func->blocks.size() && !m_func_needs_unwind; b++) {
         const IRBlock* block = func->blocks[b];
-        if (m_block_to_group.count(block->id.id)) continue;  // covered by a group
+        if (m_block_to_group.count(block->id.id))
+            continue; // covered by a group
         for (u32 i = 0; i < block->instructions.size(); i++) {
             IROp op = block->instructions[i]->op;
             if (op == IROp::Throw || op == IROp::Call || op == IROp::CallExternal) {
@@ -2513,24 +2937,32 @@ void CEmitter::emit_cleanup_records(const IRFunction* func, i32 body_group, Stri
         const IRCleanupInfo& ci = func->cleanup_info[i];
         // Bytecode-only tiling: this is the post-merge half of a pair whose
         // pre-merge half already names this local. See IRCleanupInfo.
-        if (ci.from_merge_rebind) continue;
-        if (body_group >= 0 &&
-            !m_try_groups[body_group].body_blocks.count(ci.start_block.id)) {
-            continue;  // dispatch path: only locals created inside this try body
+        if (ci.from_merge_rebind)
+            continue;
+        if (body_group >= 0 && !m_try_groups[body_group].body_blocks.count(ci.start_block.id)) {
+            continue; // dispatch path: only locals created inside this try body
         }
         String ve;
         emit_value(ci.value, ve);
-        out.append("    if ("); out.append(ve); out.append(") {\n");
+        out.append("    if (");
+        out.append(ve);
+        out.append(") {\n");
         if (ci.kind == IRCleanupKind::Unpin) {
-            out.append("    roxy_container_unpin((void*)"); out.append(ve); out.append(");\n");
+            out.append("    roxy_container_unpin((void*)");
+            out.append(ve);
+            out.append(");\n");
         } else if (ci.kind == IRCleanupKind::RefDec) {
-            out.append("    roxy_ref_dec("); out.append(ve); out.append(");\n");
+            out.append("    roxy_ref_dec(");
+            out.append(ve);
+            out.append(");\n");
         } else if (ci.kind == IRCleanupKind::StrRelease) {
             // Owned string local: release on the unwind path (finding 9b).
-            out.append("    roxy_string_release((void*)"); out.append(ve); out.append(");\n");
+            out.append("    roxy_string_release((void*)");
+            out.append(ve);
+            out.append(");\n");
         } else {
-            bool is_heap = ci.type && (ci.type->kind == TypeKind::Uniq || ci.type->is_list()
-                || ci.type->is_map() || ci.type->is_coroutine());
+            bool is_heap = ci.type && (ci.type->kind == TypeKind::Uniq || ci.type->is_list() ||
+                                       ci.type->is_map() || ci.type->is_coroutine());
             // In-flight guard (finding 9a): a caught exception is an owned local of
             // its catch scope, so a re-throw (`throw e`) routes through this
             // dispatch while `e` is still pending. Freeing it here would destroy
@@ -2539,12 +2971,15 @@ void CEmitter::emit_cleanup_records(const IRFunction* func, i32 body_group, Stri
             // eventual handler frees it exactly once. A ref/unpin never aliases the
             // pending exception, so only owned-value deletes need the guard. Mirrors
             // the VM's object_free / delete_value in-flight guard.
-            out.append("    if ((void*)"); out.append(ve);
+            out.append("    if ((void*)");
+            out.append(ve);
             out.append(" != roxy_exception_current()) {\n");
             emit_typed_delete(ci.type, StringView(ve.data(), ve.size()), is_heap, out);
             out.append("    }\n");
         }
-        out.append("    "); out.append(ve); out.append(" = 0;\n");
+        out.append("    ");
+        out.append(ve);
+        out.append(" = 0;\n");
         out.append("    }\n");
     }
 }
@@ -2562,12 +2997,13 @@ void CEmitter::emit_unwind_return(const IRFunction* func, String& out) {
         emit_type(rt, out);
         out.append(")0;\n");
     } else {
-        out.append("    return 0;\n");  // int / float / bool / pointer
+        out.append("    return 0;\n"); // int / float / bool / pointer
     }
 }
 
 void CEmitter::emit_exception_labels(const IRFunction* func, String& out) {
-    if (!m_module_uses_exceptions) return;
+    if (!m_module_uses_exceptions)
+        return;
 
     for (u32 g = 0; g < m_try_groups.size(); g++) {
         const TryGroup& grp = m_try_groups[g];
@@ -2584,17 +3020,23 @@ void CEmitter::emit_exception_labels(const IRFunction* func, String& out) {
             format_to(hb, sizeof(hb), "block{}", h.handler_block.id);
             if (h.type_name.empty()) {
                 // catch-all / finally.catch: matches unconditionally (last handler).
-                out.append("    "); out.append(hb);
+                out.append("    ");
+                out.append(hb);
                 out.append("_arg0 = roxy_exception_take();\n");
-                out.append("    goto "); out.append(hb); out.append(";\n");
+                out.append("    goto ");
+                out.append(hb);
+                out.append(";\n");
                 has_catch_all = true;
                 break;
             }
             out.append("    if (roxy_exception_type_id() == TYPEID_");
             emit_mangled_name(h.type_name, out);
-            out.append(") { "); out.append(hb); out.append("_arg0 = (");
+            out.append(") { ");
+            out.append(hb);
+            out.append("_arg0 = (");
             emit_mangled_name(h.type_name, out);
-            out.append("*)roxy_exception_take(); goto "); out.append(hb);
+            out.append("*)roxy_exception_take(); goto ");
+            out.append(hb);
             out.append("; }\n");
         }
         if (!has_catch_all) {
@@ -2612,7 +3054,7 @@ void CEmitter::emit_exception_labels(const IRFunction* func, String& out) {
 
     if (m_func_needs_unwind) {
         out.append("__unwind:;\n");
-        emit_cleanup_records(func, -1, out);  // whole-frame exit: all records
+        emit_cleanup_records(func, -1, out); // whole-frame exit: all records
         emit_unwind_return(func, out);
     }
 }
@@ -2620,10 +3062,12 @@ void CEmitter::emit_exception_labels(const IRFunction* func, String& out) {
 // --- Closure dispatch ---
 
 Type* CEmitter::find_struct_type(StringView name) {
-    if (!m_module) return nullptr;
+    if (!m_module)
+        return nullptr;
     for (u32 i = 0; i < m_module->struct_types.size(); i++) {
         Type* t = m_module->struct_types[i];
-        if (t && t->is_struct() && t->struct_info.name == name) return t;
+        if (t && t->is_struct() && t->struct_info.name == name)
+            return t;
     }
     return nullptr;
 }
@@ -2638,7 +3082,7 @@ static StringView coro_struct_name_from_resume(StringView resume_name) {
             return StringView(resume_name.data(), resume_name.size() - kSuffix.size());
         }
     }
-    return resume_name;  // unexpected shape — fall back (no dtor case will match)
+    return resume_name; // unexpected shape — fall back (no dtor case will match)
 }
 
 void CEmitter::collect_closure_dispatch(const IRModule* module) {
@@ -2653,7 +3097,8 @@ void CEmitter::collect_closure_dispatch(const IRModule* module) {
                 const IRInst* inst = block->instructions[i];
                 if (inst->op == IROp::Closure) {
                     StringView fn = inst->closure.call_function_name;
-                    if (m_closure_fn_index.find(fn) != m_closure_fn_index.end()) continue;
+                    if (m_closure_fn_index.find(fn) != m_closure_fn_index.end())
+                        continue;
                     m_closure_fn_index[fn] = static_cast<u32>(m_closure_fns.size());
                     m_closure_fns.push_back(fn);
                     m_closure_env_names.push_back(inst->closure.env_struct_name);
@@ -2664,7 +3109,8 @@ void CEmitter::collect_closure_dispatch(const IRModule* module) {
                     // `__coro_<fn>` (resume name minus the `$$resume` suffix), so
                     // __closure_delete can dispatch `__coro_<fn>$$delete`.
                     StringView fn = inst->func_index.func_name;
-                    if (m_closure_fn_index.find(fn) != m_closure_fn_index.end()) continue;
+                    if (m_closure_fn_index.find(fn) != m_closure_fn_index.end())
+                        continue;
                     m_closure_fn_index[fn] = static_cast<u32>(m_closure_fns.size());
                     m_closure_fns.push_back(fn);
                     m_closure_env_names.push_back(coro_struct_name_from_resume(fn));
@@ -2675,7 +3121,8 @@ void CEmitter::collect_closure_dispatch(const IRModule* module) {
 }
 
 void CEmitter::emit_closure_dispatch(String& out) {
-    if (m_closure_fns.empty()) return;
+    if (m_closure_fns.empty())
+        return;
 
     // Call-function pointer table — the AOT analogue of the VM's function_ptrs.
     out.append("typedef void (*roxy_closure_fn)(void);\n");
@@ -2695,7 +3142,8 @@ void CEmitter::emit_closure_dispatch(String& out) {
     for (u32 i = 0; i < m_closure_env_names.size(); i++) {
         StringView env_name = m_closure_env_names[i];
         String dtor = mangle_destructor_owned(env_name);
-        if (!find_function(StringView(dtor.data(), dtor.size()))) continue;  // no dtor
+        if (!find_function(StringView(dtor.data(), dtor.size())))
+            continue; // no dtor
         char cb[32];
         format_to(cb, sizeof(cb), "    case {}: ", i);
         out.append(cb);
@@ -2751,15 +3199,19 @@ void CEmitter::emit_function(const IRFunction* func, String& out) {
         const IRBlock* block = func->blocks[b];
         for (u32 i = 0; i < block->instructions.size(); i++) {
             const IRInst* inst = block->instructions[i];
-            if (inst->op == IROp::BlockArg) continue;
-            if (!inst->result.is_valid()) continue;
-            if (!inst->type || inst->type->kind == TypeKind::Void) continue;
+            if (inst->op == IROp::BlockArg)
+                continue;
+            if (!inst->result.is_valid())
+                continue;
+            if (!inst->type || inst->type->kind == TypeKind::Void)
+                continue;
 
             if (inst->op == IROp::StackAlloc) {
                 // StackAlloc needs TWO declarations: backing storage + pointer
                 Type* alloc_type = inst->type;
                 if (alloc_type && alloc_type->is_struct()) {
-                    // Backing storage: StructType v5_struct; memset(&v5_struct, 0, sizeof(v5_struct));
+                    // Backing storage: StructType v5_struct; memset(&v5_struct, 0,
+                    // sizeof(v5_struct));
                     out.append("    ");
                     emit_type(alloc_type, out);
                     out.push_back(' ');
@@ -2797,7 +3249,8 @@ void CEmitter::emit_function(const IRFunction* func, String& out) {
                     out.append("    uint8_t ");
                     emit_value(inst->result, out);
                     char buf[32];
-                    format_to(buf, sizeof(buf), "_struct[{}] = {{0}};\n", inst->stack_alloc.slot_count * 4);
+                    format_to(buf, sizeof(buf), "_struct[{}] = {{0}};\n",
+                              inst->stack_alloc.slot_count * 4);
                     out.append(buf);
                     out.append("    void* ");
                     emit_value(inst->result, out);
@@ -2840,7 +3293,8 @@ void CEmitter::emit_function(const IRFunction* func, String& out) {
             emit_type(inst->type, out);
             // Struct-typed results that are pointer-tracked (IndexGet of a
             // struct, getter natives) are stored as `StructType* vN;`.
-            bool ptr_struct = is_pointer_value(inst->result) && inst->type && inst->type->is_struct();
+            bool ptr_struct =
+                is_pointer_value(inst->result) && inst->type && inst->type->is_struct();
             if (ptr_struct) {
                 out.append("* ");
             } else {
@@ -2893,7 +3347,8 @@ void CEmitter::emit_function(const IRFunction* func, String& out) {
     for (u32 i = 0; i < func->params.size(); i++) {
         Type* pt = func->params[i].type;
         bool is_ptr = i < func->param_is_ptr.size() && func->param_is_ptr[i];
-        if (!pt || is_ptr || !pt->is_container() || pt->noncopyable()) continue;
+        if (!pt || is_ptr || !pt->is_container() || pt->noncopyable())
+            continue;
         out.append("    ");
         emit_value(func->params[i].value, out);
         out.append(pt->is_list() ? " = roxy_list_copy(" : " = roxy_map_copy(");
@@ -2917,19 +3372,22 @@ void CEmitter::emit_function(const IRFunction* func, String& out) {
 // --- Header emission helpers ---
 
 bool CEmitter::is_pub_struct(Type* struct_type) const {
-    if (!struct_type || !struct_type->is_struct()) return false;
+    if (!struct_type || !struct_type->is_struct())
+        return false;
     Decl* decl = struct_type->struct_info.decl;
     return decl && decl->struct_decl.is_pub;
 }
 
 bool CEmitter::is_pub_enum(Type* enum_type) const {
-    if (!enum_type || !enum_type->is_enum()) return false;
+    if (!enum_type || !enum_type->is_enum())
+        return false;
     Decl* decl = enum_type->enum_info.decl;
     return decl && decl->enum_decl.is_pub;
 }
 
 const IRFunction* CEmitter::find_function_by_mangled(StringView mangled) {
-    if (!m_module) return nullptr;
+    if (!m_module)
+        return nullptr;
     for (u32 i = 0; i < m_module->functions.size(); i++) {
         if (m_module->functions[i]->name == mangled) {
             return m_module->functions[i];
@@ -2971,25 +3429,26 @@ void CEmitter::emit_inline_method_wrapper(Type* struct_type, const MethodInfo& m
     }
     emit_type(method.return_type, out);
     out.push_back(' ');
-    emit_mangled_name(method.name, out);  // escape a method named like a C++ keyword
+    emit_mangled_name(method.name, out); // escape a method named like a C++ keyword
     out.push_back('(');
 
     if (method_decl) {
         for (u32 i = 0; i < method_decl->params.size(); i++) {
-            if (i > 0) out.append(", ");
+            if (i > 0)
+                out.append(", ");
             Type* param_type = method.param_types[i];
             emit_type(param_type, out);
             // Match the lowering convention: struct/out/inout params come in
             // through a pointer at the C ABI boundary.
             bool is_struct_param = param_type && param_type->is_struct();
             // For methods, params start at index 1 in the IRFunction (self is index 0).
-            bool is_ptr_param = (i + 1) < func->param_is_ptr.size()
-                && func->param_is_ptr[i + 1];
-            if (is_struct_param) out.push_back('*');
-            else if (is_ptr_param && param_type && !param_type->is_reference()) out.push_back('*');
+            bool is_ptr_param = (i + 1) < func->param_is_ptr.size() && func->param_is_ptr[i + 1];
+            if (is_struct_param)
+                out.push_back('*');
+            else if (is_ptr_param && param_type && !param_type->is_reference())
+                out.push_back('*');
             out.push_back(' ');
-            out.append(method_decl->params[i].name.data(),
-                       method_decl->params[i].name.size());
+            out.append(method_decl->params[i].name.data(), method_decl->params[i].name.size());
         }
     }
     out.append(") { ");
@@ -3001,16 +3460,14 @@ void CEmitter::emit_inline_method_wrapper(Type* struct_type, const MethodInfo& m
     if (method_decl) {
         for (u32 i = 0; i < method_decl->params.size(); i++) {
             out.append(", ");
-            out.append(method_decl->params[i].name.data(),
-                       method_decl->params[i].name.size());
+            out.append(method_decl->params[i].name.data(), method_decl->params[i].name.size());
         }
     }
     out.append("); }\n");
 }
 
-void CEmitter::emit_make_factory(Type* struct_type, u32 type_id,
-                                 const IRFunction* ctor, const IRFunction* dtor,
-                                 String& out) {
+void CEmitter::emit_make_factory(Type* struct_type, u32 type_id, const IRFunction* ctor,
+                                 const IRFunction* dtor, String& out) {
     StringView struct_name = struct_type->struct_info.name;
 
     // Resolve the user-facing factory name. For the default ctor the name
@@ -3018,7 +3475,7 @@ void CEmitter::emit_make_factory(Type* struct_type, u32 type_id,
     // becomes `__<name>` in the C identifier.
     StringView before, after;
     bool has_split = split_mangled(ctor->name, before, after);
-    StringView ctor_suffix;  // empty for default ctor
+    StringView ctor_suffix; // empty for default ctor
     if (has_split) {
         StringView dummy_before, after_inner;
         if (split_mangled(after, dummy_before, after_inner)) {
@@ -3061,18 +3518,19 @@ void CEmitter::emit_make_factory(Type* struct_type, u32 type_id,
     // ctor takes no args, so the loop simply produces nothing in that case).
     u32 user_param_count = ctor->params.size() > 0 ? ctor->params.size() - 1 : 0;
     for (u32 i = 0; i < user_param_count; i++) {
-        if (i > 0) out.append(", ");
+        if (i > 0)
+            out.append(", ");
         Type* param_type = ctor->params[i + 1].type;
         emit_type(param_type, out);
         bool is_struct_param = param_type && param_type->is_struct();
-        bool is_ptr_param = (i + 1) < ctor->param_is_ptr.size()
-            && ctor->param_is_ptr[i + 1];
-        if (is_struct_param) out.push_back('*');
-        else if (is_ptr_param && param_type && !param_type->is_reference()) out.push_back('*');
+        bool is_ptr_param = (i + 1) < ctor->param_is_ptr.size() && ctor->param_is_ptr[i + 1];
+        if (is_struct_param)
+            out.push_back('*');
+        else if (is_ptr_param && param_type && !param_type->is_reference())
+            out.push_back('*');
         out.push_back(' ');
         if (ctor_decl && i < ctor_decl->params.size()) {
-            out.append(ctor_decl->params[i].name.data(),
-                       ctor_decl->params[i].name.size());
+            out.append(ctor_decl->params[i].name.data(), ctor_decl->params[i].name.size());
         } else {
             char buf[16];
             format_to(buf, sizeof(buf), "arg{}", i);
@@ -3095,8 +3553,7 @@ void CEmitter::emit_make_factory(Type* struct_type, u32 type_id,
     for (u32 i = 0; i < user_param_count; i++) {
         out.append(", ");
         if (ctor_decl && i < ctor_decl->params.size()) {
-            out.append(ctor_decl->params[i].name.data(),
-                       ctor_decl->params[i].name.size());
+            out.append(ctor_decl->params[i].name.data(), ctor_decl->params[i].name.size());
         } else {
             char buf[16];
             format_to(buf, sizeof(buf), "arg{}", i);
@@ -3118,7 +3575,8 @@ void CEmitter::emit_pub_struct_definitions(const IRModule* module, String& out) 
     // Reuse the topological sort from emit_struct_typedefs to stay consistent
     // with field-dependency ordering, but only emit pub structs.
     u32 count = module->struct_types.size();
-    if (count == 0) return;
+    if (count == 0)
+        return;
 
     tsl::robin_map<Type*, u32> type_to_index;
     for (u32 i = 0; i < count; i++) {
@@ -3162,7 +3620,8 @@ void CEmitter::emit_pub_struct_definitions(const IRModule* module, String& out) 
     Vector<u32> order;
     Vector<u32> queue;
     for (u32 i = 0; i < count; i++) {
-        if (in_degree[i] == 0) queue.push_back(i);
+        if (in_degree[i] == 0)
+            queue.push_back(i);
     }
     while (!queue.empty()) {
         u32 current = queue.back();
@@ -3172,7 +3631,8 @@ void CEmitter::emit_pub_struct_definitions(const IRModule* module, String& out) 
             for (u32 d = 0; d < depends_on[i].size(); d++) {
                 if (depends_on[i][d] == current) {
                     in_degree[i]--;
-                    if (in_degree[i] == 0) queue.push_back(i);
+                    if (in_degree[i] == 0)
+                        queue.push_back(i);
                 }
             }
         }
@@ -3181,15 +3641,20 @@ void CEmitter::emit_pub_struct_definitions(const IRModule* module, String& out) 
         for (u32 i = 0; i < count; i++) {
             bool found = false;
             for (u32 j = 0; j < order.size(); j++) {
-                if (order[j] == i) { found = true; break; }
+                if (order[j] == i) {
+                    found = true;
+                    break;
+                }
             }
-            if (!found) order.push_back(i);
+            if (!found)
+                order.push_back(i);
         }
     }
 
     for (u32 o = 0; o < order.size(); o++) {
         Type* struct_type = module->struct_types[order[o]];
-        if (!is_pub_struct(struct_type)) continue;
+        if (!is_pub_struct(struct_type))
+            continue;
         const StructTypeInfo& info = struct_type->struct_info;
 
         out.append("struct ");
@@ -3210,7 +3675,8 @@ void CEmitter::emit_pub_struct_definitions(const IRModule* module, String& out) 
             out.append("    union {\n");
             for (u32 v = 0; v < clause.variants.size(); v++) {
                 const VariantInfo& variant = clause.variants[v];
-                if (variant.fields.size() == 0) continue;
+                if (variant.fields.size() == 0)
+                    continue;
                 out.append("        struct { ");
                 for (u32 vf = 0; vf < variant.fields.size(); vf++) {
                     emit_type(variant.fields[vf].type, out);
@@ -3229,13 +3695,17 @@ void CEmitter::emit_pub_struct_definitions(const IRModule* module, String& out) 
         bool any_method_emitted = false;
         for (u32 m = 0; m < info.methods.size(); m++) {
             const MethodInfo& method = info.methods[m];
-            if (!method.decl) continue;  // builtin methods have no Roxy decl
-            if (!method.decl->method_decl.is_pub) continue;
+            if (!method.decl)
+                continue; // builtin methods have no Roxy decl
+            if (!method.decl->method_decl.is_pub)
+                continue;
             StringView mangled = mangle_method(m_alloc, info.name, method.name);
 
             const IRFunction* func = find_function_by_mangled(mangled);
-            if (!func) continue;
-            if (!any_method_emitted) out.append("\n");
+            if (!func)
+                continue;
+            if (!any_method_emitted)
+                out.append("\n");
             any_method_emitted = true;
             emit_inline_method_wrapper(struct_type, method, func, out);
         }
@@ -3247,7 +3717,8 @@ void CEmitter::emit_pub_struct_definitions(const IRModule* module, String& out) 
 void CEmitter::emit_pub_make_factories(const IRModule* module, String& out) {
     for (u32 i = 0; i < module->struct_types.size(); i++) {
         Type* struct_type = module->struct_types[i];
-        if (!is_pub_struct(struct_type)) continue;
+        if (!is_pub_struct(struct_type))
+            continue;
 
         StringView struct_name = struct_type->struct_info.name;
         u32 type_id = 100 + i;
@@ -3256,15 +3727,19 @@ void CEmitter::emit_pub_make_factories(const IRModule* module, String& out) {
         // pass nullptr so `roxy::uniq` only frees without running a destructor.
         StringView dtor_mangled = mangle_destructor(m_alloc, struct_name);
         const IRFunction* dtor = find_function_by_mangled(dtor_mangled);
-        if (dtor && !dtor->is_pub) dtor = nullptr;
+        if (dtor && !dtor->is_pub)
+            dtor = nullptr;
 
         // Iterate IRFunctions matching `Struct$$new` or `Struct$$new$$<name>`.
         for (u32 f = 0; f < module->functions.size(); f++) {
             const IRFunction* func = module->functions[f];
-            if (!func->is_pub) continue;
+            if (!func->is_pub)
+                continue;
             StringView before, after;
-            if (!split_mangled(func->name, before, after)) continue;
-            if (before != struct_name) continue;
+            if (!split_mangled(func->name, before, after))
+                continue;
+            if (before != struct_name)
+                continue;
             if (after == StringView("new") ||
                 (after.size() > 5 && memcmp(after.data(), "new$$", 5) == 0)) {
                 emit_make_factory(struct_type, type_id, func, dtor, out);
@@ -3288,8 +3763,10 @@ void CEmitter::emit_header(const IRModule* module, String& out) {
     bool any_typeids = false;
     for (u32 i = 0; i < module->struct_types.size(); i++) {
         Type* st = module->struct_types[i];
-        if (!is_pub_struct(st)) continue;
-        if (!any_typeids) {}
+        if (!is_pub_struct(st))
+            continue;
+        if (!any_typeids) {
+        }
         any_typeids = true;
         out.append("#define TYPEID_");
         emit_mangled_name(st->struct_info.name, out);
@@ -3297,13 +3774,15 @@ void CEmitter::emit_header(const IRModule* module, String& out) {
         format_to(buf, sizeof(buf), " {}\n", 100 + i);
         out.append(buf);
     }
-    if (any_typeids) out.append("\n");
+    if (any_typeids)
+        out.append("\n");
 
     // Pub enum typedefs
     bool any_enum = false;
     for (u32 e = 0; e < module->enum_types.size(); e++) {
         Type* enum_type = module->enum_types[e];
-        if (!is_pub_enum(enum_type)) continue;
+        if (!is_pub_enum(enum_type))
+            continue;
         any_enum = true;
         const EnumTypeInfo& info = enum_type->enum_info;
         out.append("typedef enum { ");
@@ -3311,11 +3790,11 @@ void CEmitter::emit_header(const IRModule* module, String& out) {
             const EnumDecl& enum_decl = info.decl->enum_decl;
             i64 next_value = 0;
             for (u32 v = 0; v < enum_decl.variants.size(); v++) {
-                if (v > 0) out.append(", ");
+                if (v > 0)
+                    out.append(", ");
                 emit_mangled_name(info.name, out);
                 out.push_back('_');
-                out.append(enum_decl.variants[v].name.data(),
-                           enum_decl.variants[v].name.size());
+                out.append(enum_decl.variants[v].name.data(), enum_decl.variants[v].name.size());
                 i64 value = next_value;
                 if (enum_decl.variants[v].value) {
                     value = enum_decl.variants[v].value->literal.int_value;
@@ -3330,13 +3809,15 @@ void CEmitter::emit_header(const IRModule* module, String& out) {
         emit_mangled_name(info.name, out);
         out.append(";\n");
     }
-    if (any_enum) out.append("\n");
+    if (any_enum)
+        out.append("\n");
 
     // Pub struct forward declarations
     bool any_struct_fwd = false;
     for (u32 i = 0; i < module->struct_types.size(); i++) {
         Type* st = module->struct_types[i];
-        if (!is_pub_struct(st)) continue;
+        if (!is_pub_struct(st))
+            continue;
         any_struct_fwd = true;
         out.append("typedef struct ");
         emit_mangled_name(st->struct_info.name, out);
@@ -3344,7 +3825,8 @@ void CEmitter::emit_header(const IRModule* module, String& out) {
         emit_mangled_name(st->struct_info.name, out);
         out.append(";\n");
     }
-    if (any_struct_fwd) out.append("\n");
+    if (any_struct_fwd)
+        out.append("\n");
 
     // Forward declarations for all pub IRFunctions (free functions, ctors,
     // dtors, methods on pub structs). The inline method wrappers and factories
@@ -3354,8 +3836,10 @@ void CEmitter::emit_header(const IRModule* module, String& out) {
     bool any_proto = false;
     for (u32 i = 0; i < module->functions.size(); i++) {
         const IRFunction* func = module->functions[i];
-        if (!func->is_pub) continue;
-        if (m_config.emit_main_entry && func->name == StringView("main")) continue;
+        if (!func->is_pub)
+            continue;
+        if (m_config.emit_main_entry && func->name == StringView("main"))
+            continue;
         StringView before, after;
         if (split_mangled(func->name, before, after)) {
             // method/ctor/dtor — owner must be a pub struct in this module
@@ -3367,13 +3851,15 @@ void CEmitter::emit_header(const IRModule* module, String& out) {
                     break;
                 }
             }
-            if (!owner_is_pub) continue;
+            if (!owner_is_pub)
+                continue;
         }
         any_proto = true;
         emit_function_prototype(func, out);
         out.append(";\n");
     }
-    if (any_proto) out.append("\n");
+    if (any_proto)
+        out.append("\n");
 
     // Pub struct definitions with inline method wrappers
     emit_pub_struct_definitions(module, out);
@@ -3384,9 +3870,7 @@ void CEmitter::emit_header(const IRModule* module, String& out) {
 
 // --- Phase 3: Runtime library support ---
 
-void CEmitter::emit_runtime_include(String& out) {
-    out.append("#include \"roxy_rt.h\"\n");
-}
+void CEmitter::emit_runtime_include(String& out) { out.append("#include \"roxy_rt.h\"\n"); }
 
 void CEmitter::emit_type_id_defines(const IRModule* module, String& out) {
     // User-defined struct type IDs start at 100
@@ -3409,12 +3893,24 @@ void CEmitter::emit_escaped_string(StringView str, String& out) {
     for (u32 i = 0; i < len; i++) {
         char c = data[i];
         switch (c) {
-            case '\\': out.append("\\\\"); break;
-            case '"':  out.append("\\\""); break;
-            case '\n': out.append("\\n"); break;
-            case '\r': out.append("\\r"); break;
-            case '\t': out.append("\\t"); break;
-            case '\0': out.append("\\0"); break;
+            case '\\':
+                out.append("\\\\");
+                break;
+            case '"':
+                out.append("\\\"");
+                break;
+            case '\n':
+                out.append("\\n");
+                break;
+            case '\r':
+                out.append("\\r");
+                break;
+            case '\t':
+                out.append("\\t");
+                break;
+            case '\0':
+                out.append("\\0");
+                break;
             default:
                 if (c < 0x20) {
                     char buf[8];
@@ -3505,15 +4001,9 @@ static const char* lookup_static_native_mapping(StringView name) {
     // reduce to the method after the last "$$". Single source of truth, so a new
     // List/Map method is added in exactly one place.
     static const tsl::robin_map<StringView, const char*> list_methods = {
-        {"new", "roxy_list_init"},
-        {"delete", "roxy_list_delete"},
-        {"len", "roxy_list_len"},
-        {"cap", "roxy_list_cap"},
-        {"push", "roxy_list_push"},
-        {"pop", "roxy_list_pop"},
-        {"index", "roxy_list_get"},
-        {"index_mut", "roxy_list_set"},
-        {"copy", "roxy_list_copy"},
+        {"new", "roxy_list_init"},  {"delete", "roxy_list_delete"}, {"len", "roxy_list_len"},
+        {"cap", "roxy_list_cap"},   {"push", "roxy_list_push"},     {"pop", "roxy_list_pop"},
+        {"index", "roxy_list_get"}, {"index_mut", "roxy_list_set"}, {"copy", "roxy_list_copy"},
     };
     static const tsl::robin_map<StringView, const char*> map_methods = {
         {"new", "roxy_map_init"},
@@ -3555,14 +4045,18 @@ static const char* lookup_static_native_mapping(StringView name) {
     auto match_method = [&](const char* prefix,
                             const tsl::robin_map<StringView, const char*>& methods) -> const char* {
         u32 plen = static_cast<u32>(strlen(prefix));
-        if (name.size() <= plen) return nullptr;
-        if (StringView(name.data(), plen) != StringView(prefix)) return nullptr;
+        if (name.size() <= plen)
+            return nullptr;
+        if (StringView(name.data(), plen) != StringView(prefix))
+            return nullptr;
         auto it = methods.find(suffix_after_last_dollar_dollar(name));
         return it != methods.end() ? it->second : nullptr;
     };
 
-    if (const char* c = match_method("List", list_methods)) return c;
-    if (const char* c = match_method("Map", map_methods)) return c;
+    if (const char* c = match_method("List", list_methods))
+        return c;
+    if (const char* c = match_method("Map", map_methods))
+        return c;
 
     // Monomorphized list_alloc / list_copy / map_alloc / map_copy
     if (name.size() > 10 && StringView(name.data(), 10) == StringView("list_alloc"))
@@ -3592,10 +4086,10 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
         // `emit_extern_native_decls`) makes the linker happy whether the
         // user provided an inline header or a separately-compiled .cpp.
         // Otherwise fall back to a warning.
-        if (m_config.native_registry &&
-            m_config.native_registry->is_native(name)) {
+        if (m_config.native_registry && m_config.native_registry->is_native(name)) {
             i32 idx = m_config.native_registry->get_index(name);
-            const NativeFunctionEntry& entry = m_config.native_registry->get_entry(static_cast<u32>(idx));
+            const NativeFunctionEntry& entry =
+                m_config.native_registry->get_entry(static_cast<u32>(idx));
             out.append("    ");
             if (inst->result.is_valid() && inst->type && inst->type->kind != TypeKind::Void) {
                 emit_value(inst->result, out);
@@ -3604,7 +4098,8 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
             emit_mangled_name(entry.aot_symbol_name, out);
             out.push_back('(');
             for (u32 i = 0; i < inst->call.args.size(); i++) {
-                if (i > 0) out.append(", ");
+                if (i > 0)
+                    out.append(", ");
                 emit_value(inst->call.args[i], out);
             }
             out.append(");\n");
@@ -3622,7 +4117,8 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
         emit_mangled_name(name, out);
         out.push_back('(');
         for (u32 i = 0; i < inst->call.args.size(); i++) {
-            if (i > 0) out.append(", ");
+            if (i > 0)
+                out.append(", ");
             emit_value(inst->call.args[i], out);
         }
         out.append(");\n");
@@ -3653,24 +4149,32 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
     // Pointer-passing natives: which arg slots receive `const void*` to
     // bytes. Map keys live at index 1; values at index 2 (insert/index_mut).
     // List values at index 1 (push) or 2 (set).
-    int key_arg_idx = -1;     // map key arg (always idx 1)
-    int value_arg_idx = -1;   // value arg
-    if (is_list_push)                            value_arg_idx = 1;
-    else if (is_list_set)                        value_arg_idx = 2;
-    else if (is_map_insert || is_map_index_mut || is_map_get_or) { key_arg_idx = 1; value_arg_idx = 2; }
-    else if (is_map_contains || is_map_get || is_map_index || is_map_remove) { key_arg_idx = 1; }
+    int key_arg_idx = -1;   // map key arg (always idx 1)
+    int value_arg_idx = -1; // value arg
+    if (is_list_push)
+        value_arg_idx = 1;
+    else if (is_list_set)
+        value_arg_idx = 2;
+    else if (is_map_insert || is_map_index_mut || is_map_get_or) {
+        key_arg_idx = 1;
+        value_arg_idx = 2;
+    } else if (is_map_contains || is_map_get || is_map_index || is_map_remove) {
+        key_arg_idx = 1;
+    }
 
     Type* key_arg_type = nullptr;
     bool key_arg_is_struct = false;
     if (key_arg_idx >= 0 && static_cast<u32>(key_arg_idx) < inst->call.args.size()) {
         key_arg_type = get_value_type(inst->call.args[key_arg_idx]);
-        if (key_arg_type && key_arg_type->is_struct()) key_arg_is_struct = true;
+        if (key_arg_type && key_arg_type->is_struct())
+            key_arg_is_struct = true;
     }
     Type* value_arg_type = nullptr;
     bool value_arg_is_struct = false;
     if (value_arg_idx >= 0 && static_cast<u32>(value_arg_idx) < inst->call.args.size()) {
         value_arg_type = get_value_type(inst->call.args[value_arg_idx]);
-        if (value_arg_type && value_arg_type->is_struct()) value_arg_is_struct = true;
+        if (value_arg_type && value_arg_type->is_struct())
+            value_arg_is_struct = true;
     }
 
     // Pointer-returning natives: result is `void*` from runtime.
@@ -3713,7 +4217,8 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
     // A packed-u64 iter native whose result is a float carries the float's
     // BITS in the u64 — `(float)pack` would value-convert. Bounce through a
     // memcpy instead (matches the VM, whose register holds the raw bits).
-    bool u64_bits_to_float = has_result && returns_value_u64 && inst->type &&
+    bool u64_bits_to_float =
+        has_result && returns_value_u64 && inst->type &&
         (inst->type->kind == TypeKind::F32 || inst->type->kind == TypeKind::F64);
     if (u64_bits_to_float) {
         out.append("{ uint64_t _pk = ");
@@ -3739,7 +4244,8 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
     out.append(c_func_name);
     out.push_back('(');
     for (u32 i = 0; i < inst->call.args.size(); i++) {
-        if (i > 0) out.append(", ");
+        if (i > 0)
+            out.append(", ");
 
         // Key arg: struct keys pass pointer directly; primitive keys → &_ktmp.
         if (static_cast<int>(i) == key_arg_idx) {
@@ -3803,12 +4309,14 @@ void CEmitter::emit_native_call(const IRInst* inst, String& out) {
         emit_value(inst->result, out);
         out.append(")); }");
     }
-    if (needs_brace) out.append(" }");
+    if (needs_brace)
+        out.append(" }");
     out.append("\n");
 }
 
 void CEmitter::collect_extern_native_decls(const IRModule* module) {
-    if (!m_config.native_registry) return;
+    if (!m_config.native_registry)
+        return;
 
     for (u32 fi = 0; fi < module->functions.size(); fi++) {
         const IRFunction* func = module->functions[fi];
@@ -3819,18 +4327,21 @@ void CEmitter::collect_extern_native_decls(const IRModule* module) {
             const IRBlock* block = func->blocks[b];
             for (u32 j = 0; j < block->instructions.size(); j++) {
                 const IRInst* inst = block->instructions[j];
-                if (inst->op != IROp::CallNative) continue;
+                if (inst->op != IROp::CallNative)
+                    continue;
 
                 StringView name = inst->call.func_name;
-                if (is_static_mapped_native(name)) continue;
+                if (is_static_mapped_native(name))
+                    continue;
                 i32 idx = m_config.native_registry->get_index(name);
-                if (idx < 0) continue;
+                if (idx < 0)
+                    continue;
 
                 const NativeFunctionEntry& entry =
                     m_config.native_registry->get_entry(static_cast<u32>(idx));
-                if (m_extern_native_decls.find(entry.aot_symbol_name)
-                    != m_extern_native_decls.end()) {
-                    continue;  // already collected
+                if (m_extern_native_decls.find(entry.aot_symbol_name) !=
+                    m_extern_native_decls.end()) {
+                    continue; // already collected
                 }
 
                 ExternNativeDecl decl;
@@ -3846,13 +4357,13 @@ void CEmitter::collect_extern_native_decls(const IRModule* module) {
 }
 
 void CEmitter::emit_extern_native_decls(String& out) {
-    if (m_extern_native_decls.empty()) return;
+    if (m_extern_native_decls.empty())
+        return;
 
     out.append("/* Embedder-registered native functions (declared here so the\n"
                " * AOT binary links against either an inline-defined header or a\n"
                " * separately-compiled .cpp containing the definition). */\n");
-    for (auto it = m_extern_native_decls.begin();
-         it != m_extern_native_decls.end(); ++it) {
+    for (auto it = m_extern_native_decls.begin(); it != m_extern_native_decls.end(); ++it) {
         const ExternNativeDecl& decl = it->second;
         out.append("extern ");
         if (!decl.return_type || decl.return_type->kind == TypeKind::Void) {
@@ -3867,12 +4378,14 @@ void CEmitter::emit_extern_native_decls(String& out) {
             out.append("void");
         } else {
             for (u32 i = 0; i < decl.arg_types.size(); i++) {
-                if (i > 0) out.append(", ");
+                if (i > 0)
+                    out.append(", ");
                 Type* t = decl.arg_types[i];
                 emit_type(t, out);
                 // Match `emit_function_prototype`'s convention: struct args
                 // are passed by pointer at the C ABI boundary.
-                if (t && t->is_struct()) out.push_back('*');
+                if (t && t->is_struct())
+                    out.push_back('*');
             }
         }
         out.append(");\n");
@@ -3974,8 +4487,8 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
             }
         }
         if (user_main) {
-            bool main_returns_void = !user_main->return_type
-                || user_main->return_type->kind == TypeKind::Void;
+            bool main_returns_void =
+                !user_main->return_type || user_main->return_type->kind == TypeKind::Void;
             // Module globals: run the synthesized initializer after the ctx is
             // active (so allocations/constructors work) but before user code,
             // and the teardown after user code, before the ctx is destroyed (so
@@ -3991,16 +4504,19 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
             output.append("    roxy_ctx ctx;\n");
             output.append("    roxy_ctx_init(&ctx);\n");
             output.append("    roxy_set_ctx(&ctx);\n");
-            if (has_init) output.append("    __module_init();\n");
+            if (has_init)
+                output.append("    __module_init();\n");
             // An exception that propagates out of main_entry is unhandled: report
             // it and exit nonzero (matches the VM's "Unhandled exception" path).
-            const char* unhandled_check = m_module_uses_exceptions
-                ? "    if (roxy_exception_pending()) { fprintf(stderr, \"Unhandled exception\\n\"); return 1; }\n"
-                : "";
+            const char* unhandled_check =
+                m_module_uses_exceptions ? "    if (roxy_exception_pending()) { fprintf(stderr, "
+                                           "\"Unhandled exception\\n\"); return 1; }\n"
+                                         : "";
             if (main_returns_void) {
                 output.append("    main_entry();\n");
                 output.append(unhandled_check);
-                if (has_shutdown) output.append("    __module_shutdown();\n");
+                if (has_shutdown)
+                    output.append("    __module_shutdown();\n");
                 output.append("    roxy_ctx_destroy(&ctx);\n");
                 output.append("    roxy_set_ctx(NULL);\n");
                 output.append("    roxy_rt_shutdown();\n");
@@ -4010,7 +4526,8 @@ void CEmitter::emit_source(const IRModule* module, String& output) {
                 emit_type(user_main->return_type, output);
                 output.append(" result = main_entry();\n");
                 output.append(unhandled_check);
-                if (has_shutdown) output.append("    __module_shutdown();\n");
+                if (has_shutdown)
+                    output.append("    __module_shutdown();\n");
                 output.append("    roxy_ctx_destroy(&ctx);\n");
                 output.append("    roxy_set_ctx(NULL);\n");
                 output.append("    roxy_rt_shutdown();\n");

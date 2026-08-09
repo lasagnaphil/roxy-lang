@@ -1,15 +1,15 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
-#include "roxy/core/string.hpp"
-#include "roxy/core/vector.hpp"
 #include "roxy/core/json.hpp"
+#include "roxy/core/string.hpp"
 #include "roxy/core/tsl/robin_map.h"
-#include "roxy/lsp/transport.hpp"
-#include "roxy/lsp/protocol.hpp"
-#include "roxy/lsp/indexer.hpp"
+#include "roxy/core/types.hpp"
+#include "roxy/core/vector.hpp"
 #include "roxy/lsp/global_index.hpp"
+#include "roxy/lsp/indexer.hpp"
 #include "roxy/lsp/lsp_analysis_context.hpp"
+#include "roxy/lsp/protocol.hpp"
+#include "roxy/lsp/transport.hpp"
 
 namespace rx {
 

@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -174,7 +174,8 @@ TEST_SUITE("E2E Unsigned Arithmetic") {
         CHECK(result.stdout_output == "1\n4294967294\n");
     }
 
-    TEST_CASE_TEMPLATE("u32 unsigned comparison / division / shift with high bit set", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("u32 unsigned comparison / division / shift with high bit set", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var a: u32 = 0x80000000u;
@@ -258,7 +259,7 @@ TEST_SUITE("E2E Unsigned Arithmetic") {
     )";
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "4294967295\n");  // not -1
+        CHECK(result.stdout_output == "4294967295\n"); // not -1
     }
 
-}  // TEST_SUITE("E2E Unsigned Arithmetic")
+} // TEST_SUITE("E2E Unsigned Arithmetic")

@@ -1,7 +1,7 @@
 #include "roxy/core/doctest/doctest.h"
 
-#include "roxy/lsp/lsp_parser.hpp"
 #include "roxy/core/bump_allocator.hpp"
+#include "roxy/lsp/lsp_parser.hpp"
 
 #include <cstring>
 
@@ -19,7 +19,8 @@ static SyntaxTree parse_source(const char* source, BumpAllocator& allocator) {
 static u32 count_children(SyntaxNode* node, SyntaxKind kind) {
     u32 count = 0;
     for (u32 i = 0; i < node->children.size(); i++) {
-        if (node->children[i]->kind == kind) count++;
+        if (node->children[i]->kind == kind)
+            count++;
     }
     return count;
 }
@@ -46,7 +47,8 @@ TEST_SUITE("LSP Parser") {
         }
 
         SUBCASE("Simple function declaration") {
-            SyntaxTree tree = parse_source("fun add(a: i32, b: i32): i32 { return a + b; }", allocator);
+            SyntaxTree tree =
+                parse_source("fun add(a: i32, b: i32): i32 { return a + b; }", allocator);
             CHECK(tree.root != nullptr);
             CHECK(tree.diagnostics.empty());
             CHECK(tree.root->children.size() == 1);
@@ -228,7 +230,8 @@ TEST_SUITE("LSP Parser") {
         }
 
         SUBCASE("For statement") {
-            SyntaxTree tree = parse_source("for (var i = 0; i < 10; i = i + 1) { x = x + i; }", allocator);
+            SyntaxTree tree =
+                parse_source("for (var i = 0; i < 10; i = i + 1) { x = x + i; }", allocator);
             CHECK(tree.root != nullptr);
             CHECK(tree.diagnostics.empty());
         }
@@ -276,8 +279,7 @@ TEST_SUITE("LSP Parser") {
         BumpAllocator allocator(4096);
 
         SyntaxTree tree = parse_source(
-            "try { throw x; } catch (e: MyError) { var y = 1; } finally { var z = 2; }",
-            allocator);
+            "try { throw x; } catch (e: MyError) { var y = 1; } finally { var z = 2; }", allocator);
         CHECK(tree.root != nullptr);
         CHECK(tree.diagnostics.empty());
     }
@@ -304,4 +306,4 @@ TEST_SUITE("LSP Parser") {
         CHECK(var_decl->range.end == 10);
     }
 
-}  // TEST_SUITE("LSP Parser")
+} // TEST_SUITE("LSP Parser")

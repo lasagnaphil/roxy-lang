@@ -1,6 +1,6 @@
 #include "roxy/lsp/lsp_analysis_context.hpp"
-#include "roxy/lsp/cst_lowering.hpp"
 #include "roxy/compiler/sema/semantic.hpp"
+#include "roxy/lsp/cst_lowering.hpp"
 #include "roxy/vm/binding/registry.hpp"
 #include "roxy/vm/natives.hpp"
 
@@ -9,12 +9,10 @@
 namespace rx {
 
 LspAnalysisContext::LspAnalysisContext()
-    : m_type_allocator(new BumpAllocator(32768))
-    , m_type_env(new TypeEnv(*m_type_allocator))
-    , m_module_registry(new ModuleRegistry(*m_type_allocator))
-    , m_builtin_registry(new NativeRegistry(*m_type_allocator, m_type_env->types()))
-    , m_decl_symbols(nullptr)
-{
+    : m_type_allocator(new BumpAllocator(32768)), m_type_env(new TypeEnv(*m_type_allocator)),
+      m_module_registry(new ModuleRegistry(*m_type_allocator)),
+      m_builtin_registry(new NativeRegistry(*m_type_allocator, m_type_env->types())),
+      m_decl_symbols(nullptr) {
     init_builtins();
 }
 
@@ -23,8 +21,8 @@ LspAnalysisContext::~LspAnalysisContext() = default;
 void LspAnalysisContext::init_builtins() {
     // Register built-in natives and add as "builtin" module (auto-imported as prelude)
     register_builtin_natives(*m_builtin_registry);
-    m_module_registry->register_native_module(
-        BUILTIN_MODULE_NAME, m_builtin_registry.get(), m_type_env->types());
+    m_module_registry->register_native_module(BUILTIN_MODULE_NAME, m_builtin_registry.get(),
+                                              m_type_env->types());
 }
 
 void LspAnalysisContext::rebuild_declarations(Span<SourceFile> files) {
@@ -37,7 +35,8 @@ void LspAnalysisContext::rebuild_declarations(Span<SourceFile> files) {
     m_module_registry.reset();
     m_module_registry = UniquePtr<ModuleRegistry>(new ModuleRegistry(*m_type_allocator));
     m_builtin_registry.reset();
-    m_builtin_registry = UniquePtr<NativeRegistry>(new NativeRegistry(*m_type_allocator, m_type_env->types()));
+    m_builtin_registry =
+        UniquePtr<NativeRegistry>(new NativeRegistry(*m_type_allocator, m_type_env->types()));
     init_builtins();
 
     // Lower all CSTs to a combined AST program (using the same allocator)
@@ -47,10 +46,12 @@ void LspAnalysisContext::rebuild_declarations(Span<SourceFile> files) {
     Vector<Decl*> all_declarations;
     for (u32 i = 0; i < files.size(); i++) {
         const SourceFile& file = files[i];
-        if (!file.cst_root) continue;
+        if (!file.cst_root)
+            continue;
 
         Program* file_program = lowering.lower(file.cst_root);
-        if (!file_program) continue;
+        if (!file_program)
+            continue;
 
         for (auto* decl : file_program->declarations) {
             if (decl) {
@@ -61,11 +62,10 @@ void LspAnalysisContext::rebuild_declarations(Span<SourceFile> files) {
 
     // Build combined program
     auto* program = m_type_allocator->emplace<Program>();
-    program->module_name = ""_sv;  // LSP uses a single unnamed module
+    program->module_name = ""_sv; // LSP uses a single unnamed module
     if (!all_declarations.empty()) {
         Decl** decl_data = reinterpret_cast<Decl**>(
-            m_type_allocator->alloc_bytes(
-                sizeof(Decl*) * all_declarations.size(), alignof(Decl*)));
+            m_type_allocator->alloc_bytes(sizeof(Decl*) * all_declarations.size(), alignof(Decl*)));
         for (u32 i = 0; i < all_declarations.size(); i++) {
             decl_data[i] = all_declarations[i];
         }
@@ -79,8 +79,8 @@ void LspAnalysisContext::rebuild_declarations(Span<SourceFile> files) {
     m_decl_symbols = UniquePtr<SymbolTable>(new SymbolTable(*m_type_allocator));
 
     // Run declaration passes (0-2) using SemanticAnalyzer in LSP mode
-    SemanticAnalyzer analyzer(*m_type_allocator, *m_type_env, *m_module_registry,
-                              *m_decl_symbols, nullptr);
+    SemanticAnalyzer analyzer(*m_type_allocator, *m_type_env, *m_module_registry, *m_decl_symbols,
+                              nullptr);
     analyzer.set_lsp_mode(true);
     analyzer.run_declaration_passes(program);
 
@@ -89,16 +89,17 @@ void LspAnalysisContext::rebuild_declarations(Span<SourceFile> files) {
     m_initialized = true;
 }
 
-BodyAnalysisResult LspAnalysisContext::analyze_function_body(
-    SyntaxNode* fn_cst, BumpAllocator& ast_allocator)
-{
+BodyAnalysisResult LspAnalysisContext::analyze_function_body(SyntaxNode* fn_cst,
+                                                             BumpAllocator& ast_allocator) {
     BodyAnalysisResult result;
-    if (!fn_cst || !m_initialized) return result;
+    if (!fn_cst || !m_initialized)
+        return result;
 
     // Lower the CST function node to AST
     CstLowering lowering(ast_allocator);
     Decl* ast_decl = lowering.lower_decl(fn_cst);
-    if (!ast_decl) return result;
+    if (!ast_decl)
+        return result;
 
     result.decl = ast_decl;
 
@@ -107,8 +108,8 @@ BodyAnalysisResult LspAnalysisContext::analyze_function_body(
 
     // Copy declaration-level symbols into the new table
     // We re-run a minimal SemanticAnalyzer that shares the populated TypeEnv
-    SemanticAnalyzer analyzer(ast_allocator, *m_type_env, *m_module_registry,
-                              *body_symbols, nullptr);
+    SemanticAnalyzer analyzer(ast_allocator, *m_type_env, *m_module_registry, *body_symbols,
+                              nullptr);
     analyzer.set_lsp_mode(true);
 
     // Import builtin prelude and declaration-level symbols
@@ -123,25 +124,42 @@ BodyAnalysisResult LspAnalysisContext::analyze_function_body(
 }
 
 String LspAnalysisContext::type_to_string(Type* type) {
-    if (!type) return String("unknown");
+    if (!type)
+        return String("unknown");
 
     switch (type->kind) {
-        case TypeKind::Void:    return String("void");
-        case TypeKind::Bool:    return String("bool");
-        case TypeKind::I8:      return String("i8");
-        case TypeKind::I16:     return String("i16");
-        case TypeKind::I32:     return String("i32");
-        case TypeKind::I64:     return String("i64");
-        case TypeKind::U8:      return String("u8");
-        case TypeKind::U16:     return String("u16");
-        case TypeKind::U32:     return String("u32");
-        case TypeKind::U64:     return String("u64");
-        case TypeKind::F32:     return String("f32");
-        case TypeKind::F64:     return String("f64");
-        case TypeKind::String:  return String("string");
-        case TypeKind::Nil:     return String("nil");
-        case TypeKind::Error:   return String("<error>");
-        case TypeKind::IntLiteral: return String("int");
+        case TypeKind::Void:
+            return String("void");
+        case TypeKind::Bool:
+            return String("bool");
+        case TypeKind::I8:
+            return String("i8");
+        case TypeKind::I16:
+            return String("i16");
+        case TypeKind::I32:
+            return String("i32");
+        case TypeKind::I64:
+            return String("i64");
+        case TypeKind::U8:
+            return String("u8");
+        case TypeKind::U16:
+            return String("u16");
+        case TypeKind::U32:
+            return String("u32");
+        case TypeKind::U64:
+            return String("u64");
+        case TypeKind::F32:
+            return String("f32");
+        case TypeKind::F64:
+            return String("f64");
+        case TypeKind::String:
+            return String("string");
+        case TypeKind::Nil:
+            return String("nil");
+        case TypeKind::Error:
+            return String("<error>");
+        case TypeKind::IntLiteral:
+            return String("int");
 
         case TypeKind::Struct: {
             String result(type->struct_info.name.data(), type->struct_info.name.size());
@@ -209,7 +227,8 @@ String LspAnalysisContext::type_to_string(Type* type) {
         case TypeKind::Function: {
             String result("fun(");
             for (u32 i = 0; i < type->func_info.param_types.size(); i++) {
-                if (i > 0) result.append(", ", 2);
+                if (i > 0)
+                    result.append(", ", 2);
                 String param = type_to_string(type->func_info.param_types[i]);
                 result.append(param.data(), param.size());
             }
@@ -239,20 +258,21 @@ String LspAnalysisContext::type_to_string(Type* type) {
 
 // Check if an AstKind is a statement (not a declaration)
 static bool is_stmt_kind(AstKind kind) {
-    return kind == AstKind::StmtExpr || kind == AstKind::StmtBlock ||
-           kind == AstKind::StmtIf || kind == AstKind::StmtWhile ||
-           kind == AstKind::StmtFor || kind == AstKind::StmtReturn ||
+    return kind == AstKind::StmtExpr || kind == AstKind::StmtBlock || kind == AstKind::StmtIf ||
+           kind == AstKind::StmtWhile || kind == AstKind::StmtFor || kind == AstKind::StmtReturn ||
            kind == AstKind::StmtTry;
 }
 
 // Walk an AST statement recursively, collecting variable declarations
 static void collect_vars_from_stmt(Stmt* stmt, tsl::robin_map<String, Type*>& out) {
-    if (!stmt) return;
+    if (!stmt)
+        return;
 
     switch (stmt->kind) {
         case AstKind::StmtBlock:
             for (auto* decl : stmt->block.declarations) {
-                if (!decl) continue;
+                if (!decl)
+                    continue;
                 if (decl->kind == AstKind::DeclVar) {
                     if (!decl->var_decl.name.empty() && decl->var_decl.resolved_type) {
                         out[String(decl->var_decl.name)] = decl->var_decl.resolved_type;
@@ -270,7 +290,8 @@ static void collect_vars_from_stmt(Stmt* stmt, tsl::robin_map<String, Type*>& ou
             collect_vars_from_stmt(stmt->while_stmt.body, out);
             break;
         case AstKind::StmtFor:
-            if (stmt->for_stmt.initializer && stmt->for_stmt.initializer->kind == AstKind::DeclVar) {
+            if (stmt->for_stmt.initializer &&
+                stmt->for_stmt.initializer->kind == AstKind::DeclVar) {
                 Decl* init = stmt->for_stmt.initializer;
                 if (!init->var_decl.name.empty() && init->var_decl.resolved_type) {
                     out[String(init->var_decl.name)] = init->var_decl.resolved_type;
@@ -303,10 +324,9 @@ static void collect_params(Span<Param> params, tsl::robin_map<String, Type*>& ou
     }
 }
 
-void LspAnalysisContext::collect_local_variables(
-    Decl* decl, tsl::robin_map<String, Type*>& out)
-{
-    if (!decl) return;
+void LspAnalysisContext::collect_local_variables(Decl* decl, tsl::robin_map<String, Type*>& out) {
+    if (!decl)
+        return;
 
     switch (decl->kind) {
         case AstKind::DeclFun: {
@@ -350,12 +370,14 @@ void LspAnalysisContext::collect_local_variables(
 // --- Local variable name collection (lightweight, no types) ---
 
 static void collect_names_from_stmt(Stmt* stmt, tsl::robin_set<String>& out) {
-    if (!stmt) return;
+    if (!stmt)
+        return;
 
     switch (stmt->kind) {
         case AstKind::StmtBlock:
             for (auto* decl : stmt->block.declarations) {
-                if (!decl) continue;
+                if (!decl)
+                    continue;
                 if (decl->kind == AstKind::DeclVar && !decl->var_decl.name.empty()) {
                     out.insert(String(decl->var_decl.name));
                 } else if (is_stmt_kind(decl->kind)) {
@@ -371,7 +393,8 @@ static void collect_names_from_stmt(Stmt* stmt, tsl::robin_set<String>& out) {
             collect_names_from_stmt(stmt->while_stmt.body, out);
             break;
         case AstKind::StmtFor:
-            if (stmt->for_stmt.initializer && stmt->for_stmt.initializer->kind == AstKind::DeclVar) {
+            if (stmt->for_stmt.initializer &&
+                stmt->for_stmt.initializer->kind == AstKind::DeclVar) {
                 if (!stmt->for_stmt.initializer->var_decl.name.empty()) {
                     out.insert(String(stmt->for_stmt.initializer->var_decl.name));
                 }
@@ -401,10 +424,9 @@ static void collect_param_names(Span<Param> params, tsl::robin_set<String>& out)
     }
 }
 
-void LspAnalysisContext::collect_local_var_names(
-    Decl* decl, tsl::robin_set<String>& out)
-{
-    if (!decl) return;
+void LspAnalysisContext::collect_local_var_names(Decl* decl, tsl::robin_set<String>& out) {
+    if (!decl)
+        return;
 
     switch (decl->kind) {
         case AstKind::DeclFun:
@@ -439,25 +461,26 @@ static Type* find_field_type_in_hierarchy(Type* struct_type, StringView field_na
     u32 depth = 0;
     while (current && current->kind == TypeKind::Struct && depth < 16) {
         const FieldInfo* field = current->struct_info.find_field(field_name);
-        if (field) return field->type;
+        if (field)
+            return field->type;
         current = current->struct_info.parent;
         depth++;
     }
     return nullptr;
 }
 
-Type* LspAnalysisContext::resolve_cst_expr_type(
-    SyntaxNode* expr_node,
-    const tsl::robin_map<String, Type*>& local_vars)
-{
-    if (!expr_node) return nullptr;
+Type* LspAnalysisContext::resolve_cst_expr_type(SyntaxNode* expr_node,
+                                                const tsl::robin_map<String, Type*>& local_vars) {
+    if (!expr_node)
+        return nullptr;
 
     switch (expr_node->kind) {
         case SyntaxKind::NodeIdentifierExpr: {
             for (u32 i = 0; i < expr_node->children.size(); i++) {
                 if (expr_node->children[i]->kind == SyntaxKind::TokenIdentifier) {
                     auto it = local_vars.find(String(expr_node->children[i]->token.text()));
-                    if (it != local_vars.end()) return it->second;
+                    if (it != local_vars.end())
+                        return it->second;
                     break;
                 }
             }
@@ -465,19 +488,22 @@ Type* LspAnalysisContext::resolve_cst_expr_type(
         }
         case SyntaxKind::TokenIdentifier: {
             auto it = local_vars.find(String(expr_node->token.text()));
-            if (it != local_vars.end()) return it->second;
+            if (it != local_vars.end())
+                return it->second;
             return nullptr;
         }
         case SyntaxKind::NodeSelfExpr:
         case SyntaxKind::TokenKwSelf: {
             auto it = local_vars.find(String("self"));
-            if (it != local_vars.end()) return it->second;
+            if (it != local_vars.end())
+                return it->second;
             return nullptr;
         }
         case SyntaxKind::NodeGetExpr: {
             if (expr_node->children.size() >= 3) {
                 Type* receiver = resolve_cst_expr_type(expr_node->children[0], local_vars);
-                if (!receiver) return nullptr;
+                if (!receiver)
+                    return nullptr;
 
                 // Unwrap reference types to get the inner type
                 if (receiver->is_reference()) {
@@ -491,14 +517,16 @@ Type* LspAnalysisContext::resolve_cst_expr_type(
                     // Check fields first
                     if (receiver->kind == TypeKind::Struct) {
                         Type* field_type = find_field_type_in_hierarchy(receiver, field_name);
-                        if (field_type) return field_type;
+                        if (field_type)
+                            return field_type;
                     }
 
                     // Check methods
                     Type* found_in = nullptr;
-                    const MethodInfo* method = m_type_env->types().lookup_method(
-                        receiver, field_name, &found_in);
-                    if (method) return method->return_type;
+                    const MethodInfo* method =
+                        m_type_env->types().lookup_method(receiver, field_name, &found_in);
+                    if (method)
+                        return method->return_type;
                 }
             }
             return nullptr;
@@ -535,13 +563,13 @@ Type* LspAnalysisContext::resolve_cst_expr_type(
                             if (receiver->is_reference()) {
                                 receiver = receiver->ref_info.inner_type;
                             }
-                            SyntaxNode* method_node =
-                                callee->children[callee->children.size() - 1];
+                            SyntaxNode* method_node = callee->children[callee->children.size() - 1];
                             if (method_node->kind == SyntaxKind::TokenIdentifier) {
                                 Type* found_in = nullptr;
                                 const MethodInfo* method = m_type_env->types().lookup_method(
                                     receiver, method_node->token.text(), &found_in);
-                                if (method) return method->return_type;
+                                if (method)
+                                    return method->return_type;
                             }
                         }
                     }

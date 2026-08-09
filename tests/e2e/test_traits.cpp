@@ -1,9 +1,9 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
-#include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
+#include "roxy/vm/vm.hpp"
 
 using namespace rx;
 
@@ -323,7 +323,8 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.stdout_output == "42\n99\n");
     }
 
-    TEST_CASE_TEMPLATE("Struct method takes priority over trait default", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Struct method takes priority over trait default", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Greetable;
         fun Greetable.greet(): i32 {
@@ -493,7 +494,8 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.stdout_output == "21\n");
     }
 
-    TEST_CASE_TEMPLATE("Generic trait default type param (Rhs defaults to Self)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic trait default type param (Rhs defaults to Self)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
@@ -516,7 +518,8 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.success);
     }
 
-    TEST_CASE_TEMPLATE("Generic trait error: type args on non-generic trait", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic trait error: type args on non-generic trait", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Eq;
         fun Eq.eq(other: Self): bool;
@@ -582,7 +585,8 @@ TEST_SUITE("E2E Traits") {
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE_TEMPLATE("Trait error: wrong parameter type (generic trait)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Trait error: wrong parameter type (generic trait)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Mul<Rhs>;
         fun Mul.mul(other: Rhs): Self;
@@ -888,7 +892,8 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.stdout_output == "240\n16\n32\n");
     }
 
-    TEST_CASE_TEMPLATE("New compound assignments on primitives (&= |= ^= <<= >>=)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("New compound assignments on primitives (&= |= ^= <<= >>=)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var a: i32 = 0xFF;
@@ -920,7 +925,8 @@ TEST_SUITE("E2E Traits") {
         CHECK(result.stdout_output == "15\n255\n240\n256\n32\n");
     }
 
-    TEST_CASE_TEMPLATE("Default type param (for Add without explicit <Vec2>)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Default type param (for Add without explicit <Vec2>)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Add<Rhs>;
         fun Add.add(other: Rhs): Self;
@@ -1189,7 +1195,7 @@ TEST_SUITE("E2E Traits") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE("Index error: Idx type arg mismatches index parameter") {
@@ -1209,7 +1215,7 @@ TEST_SUITE("E2E Traits") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
-}  // TEST_SUITE("E2E Traits")
+} // TEST_SUITE("E2E Traits")

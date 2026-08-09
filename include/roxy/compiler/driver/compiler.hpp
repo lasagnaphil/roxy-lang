@@ -1,17 +1,17 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
-#include "roxy/core/vector.hpp"
-#include "roxy/core/string_view.hpp"
-#include "roxy/core/tsl/robin_map.h"
-#include "roxy/core/bump_allocator.hpp"
-#include "roxy/core/unique_ptr.hpp"
-#include "roxy/core/format.hpp"
-#include "roxy/compiler/types/type_env.hpp"
 #include "roxy/compiler/driver/module_registry.hpp"
 #include "roxy/compiler/types/symbol_table.hpp"
-#include "roxy/vm/bytecode.hpp"
+#include "roxy/compiler/types/type_env.hpp"
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/format.hpp"
+#include "roxy/core/string_view.hpp"
+#include "roxy/core/tsl/robin_map.h"
+#include "roxy/core/types.hpp"
+#include "roxy/core/unique_ptr.hpp"
+#include "roxy/core/vector.hpp"
 #include "roxy/vm/binding/registry.hpp"
+#include "roxy/vm/bytecode.hpp"
 
 namespace rx {
 
@@ -21,9 +21,9 @@ struct IRModule;
 
 // Source module - represents a single source file with its module name
 struct SourceModule {
-    StringView name;        // Module name (e.g., "math", "utils")
-    const char* source;     // Source code
-    u32 length;             // Source length
+    StringView name;    // Module name (e.g., "math", "utils")
+    const char* source; // Source code
+    u32 length;         // Source length
 };
 
 // Per-compile wall-clock breakdown, in nanoseconds. Always populated by
@@ -32,15 +32,15 @@ struct SourceModule {
 // phases sum to slightly less than it — the remainder (merge, native binding,
 // registry setup) is the pipeline's "other" bucket. See `roxy --time`.
 struct CompileTimings {
-    u64 parse_ns = 0;        // Phase 1: lexer + parser, all modules
-    u64 topo_ns = 0;         // Phase 2: topological sort by imports
-    u64 sema_ns = 0;         // Phase 3: semantic analysis, all modules
-    u64 ir_build_ns = 0;     // Phase 4: AST -> SSA IR, all modules
-    u64 coro_lower_ns = 0;   // Phase 5a: coroutine state-machine lowering
-    u64 ir_optimize_ns = 0;  // Phase 5b: SSA IR optimization passes
-    u64 ir_validate_ns = 0;  // Phase 5c: IR structural validation
-    u64 bc_lower_ns = 0;     // Phase 5d: SSA IR -> bytecode (incl. regalloc)
-    u64 total_ns = 0;        // Whole compile() call
+    u64 parse_ns = 0;       // Phase 1: lexer + parser, all modules
+    u64 topo_ns = 0;        // Phase 2: topological sort by imports
+    u64 sema_ns = 0;        // Phase 3: semantic analysis, all modules
+    u64 ir_build_ns = 0;    // Phase 4: AST -> SSA IR, all modules
+    u64 coro_lower_ns = 0;  // Phase 5a: coroutine state-machine lowering
+    u64 ir_optimize_ns = 0; // Phase 5b: SSA IR optimization passes
+    u64 ir_validate_ns = 0; // Phase 5c: IR structural validation
+    u64 bc_lower_ns = 0;    // Phase 5d: SSA IR -> bytecode (incl. regalloc)
+    u64 total_ns = 0;       // Whole compile() call
 };
 
 // Compiler - compiles multiple source modules into a single linked BCModule
@@ -94,7 +94,7 @@ private:
 
     // Error reporting
     void add_error(const char* message);
-    template<typename... Args>
+    template <typename... Args>
     void add_error_fmt(fmt_string<sizeof...(Args)> fmt, const Args&... args) {
         char buffer[512];
         format_to(buffer, sizeof(buffer), runtime_format_string{fmt.str}, args...);
@@ -113,11 +113,11 @@ private:
 
     // Per-module compilation state (parallel to m_sources)
     struct ModuleState {
-        Program* program = nullptr;           // Parsed AST
-        IRModule* ir_module = nullptr;        // Generated IR
-        Vector<StringView> imports;           // Module names this module imports
-        SymbolTable* symbols = nullptr;       // Persisted from analysis (owned)
-        Vector<Decl*> synthetic_decls;        // Persisted from analysis
+        Program* program = nullptr;     // Parsed AST
+        IRModule* ir_module = nullptr;  // Generated IR
+        Vector<StringView> imports;     // Module names this module imports
+        SymbolTable* symbols = nullptr; // Persisted from analysis (owned)
+        Vector<Decl*> synthetic_decls;  // Persisted from analysis
     };
     Vector<ModuleState> m_module_states;
 
@@ -137,4 +137,4 @@ private:
     Vector<const char*> m_errors;
 };
 
-}
+} // namespace rx

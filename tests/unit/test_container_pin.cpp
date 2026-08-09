@@ -24,7 +24,8 @@ TEST_SUITE("Container Pin") {
             void* lst = roxy_list_alloc(1, 1);
             REQUIRE(lst != nullptr);
             roxy_list_init(lst, 0);
-            for (uint32_t i = 0; i < 3; i++) roxy_list_push(lst, &i);  // [0,1,2]
+            for (uint32_t i = 0; i < 3; i++)
+                roxy_list_push(lst, &i); // [0,1,2]
             REQUIRE(roxy_list_len(lst) == 3);
             REQUIRE(!roxy_runtime_error_pending());
 
@@ -36,7 +37,7 @@ TEST_SUITE("Container Pin") {
             roxy_list_push(lst, &v);
             CHECK(roxy_runtime_error_pending());
             CHECK(roxy_runtime_error_message() != nullptr);
-            CHECK(roxy_list_len(lst) == 3);  // push did not take effect
+            CHECK(roxy_list_len(lst) == 3); // push did not take effect
 
             roxy_runtime_error_clear();
 
@@ -77,16 +78,16 @@ TEST_SUITE("Container Pin") {
             REQUIRE(roxy_list_len(lst) == 1);
 
             roxy_list_pin(lst);
-            roxy_list_pin(lst);   // two outstanding borrows
+            roxy_list_pin(lst); // two outstanding borrows
 
             uint32_t v = 7;
-            roxy_list_unpin(lst);  // one released — still pinned
+            roxy_list_unpin(lst); // one released — still pinned
             roxy_list_push(lst, &v);
             CHECK(roxy_runtime_error_pending());
             CHECK(roxy_list_len(lst) == 1);
             roxy_runtime_error_clear();
 
-            roxy_list_unpin(lst);  // last released — unpinned
+            roxy_list_unpin(lst); // last released — unpinned
             roxy_list_push(lst, &v);
             CHECK(!roxy_runtime_error_pending());
             CHECK(roxy_list_len(lst) == 2);
@@ -111,12 +112,12 @@ TEST_SUITE("Container Pin") {
             uint32_t a = 1;
             roxy_list_push(lst, &a);
 
-            roxy_list_pin(lst);                 // original pinned
-            void* copy = roxy_list_copy(lst);   // fresh object, borrow_count = 0
+            roxy_list_pin(lst);               // original pinned
+            void* copy = roxy_list_copy(lst); // fresh object, borrow_count = 0
             REQUIRE(copy != nullptr);
 
             uint32_t b = 2;
-            roxy_list_push(copy, &b);           // copy is not pinned → works
+            roxy_list_push(copy, &b); // copy is not pinned → works
             CHECK(!roxy_runtime_error_pending());
             CHECK(roxy_list_len(copy) == 2);
 

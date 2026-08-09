@@ -1,7 +1,7 @@
 #include "roxy/core/doctest/doctest.h"
 
-#include "roxy/core/bump_allocator.hpp"
 #include "roxy/compiler/types/types.hpp"
+#include "roxy/core/bump_allocator.hpp"
 
 using namespace rx;
 
@@ -29,8 +29,7 @@ TEST_SUITE("Lifecycle Predicates") {
     TEST_CASE("primitives are trivial") {
         BumpAllocator allocator(4096);
         TypeCache types(allocator);
-        Type* prims[] = { types.i32_type(), types.i64_type(), types.bool_type(),
-                          types.f64_type() };
+        Type* prims[] = {types.i32_type(), types.i64_type(), types.bool_type(), types.f64_type()};
         for (Type* t : prims) {
             CHECK(t->is_copy());
             CHECK_FALSE(t->needs_drop());
@@ -45,9 +44,9 @@ TEST_SUITE("Lifecycle Predicates") {
         BumpAllocator allocator(4096);
         TypeCache types(allocator);
         Type* s = types.string_type();
-        CHECK(s->is_copy());        // freely (implicitly) copyable
-        CHECK(s->needs_drop());     // ... but each drop must release
-        CHECK(s->needs_retain());   // ... and each copy must retain
+        CHECK(s->is_copy());      // freely (implicitly) copyable
+        CHECK(s->needs_drop());   // ... but each drop must release
+        CHECK(s->needs_retain()); // ... and each copy must retain
         CHECK_FALSE(s->is_trivial());
     }
 
@@ -55,9 +54,9 @@ TEST_SUITE("Lifecycle Predicates") {
         BumpAllocator allocator(4096);
         TypeCache types(allocator);
         Type* r = types.ref_type(types.i32_type());
-        CHECK(r->is_copy());        // a ref is freely (implicitly) copyable
-        CHECK(r->needs_drop());     // ... but each drop must ref_dec
-        CHECK(r->needs_retain());   // ... and each copy must ref_inc
+        CHECK(r->is_copy());      // a ref is freely (implicitly) copyable
+        CHECK(r->needs_drop());   // ... but each drop must ref_dec
+        CHECK(r->needs_retain()); // ... and each copy must ref_inc
         CHECK_FALSE(r->is_trivial());
     }
 
@@ -77,7 +76,7 @@ TEST_SUITE("Lifecycle Predicates") {
         Type* u = types.uniq_type(types.i32_type());
         CHECK_FALSE(u->is_copy());
         CHECK(u->needs_drop());
-        CHECK_FALSE(u->needs_retain());  // move-only → no implicit-copy path
+        CHECK_FALSE(u->needs_retain()); // move-only → no implicit-copy path
         CHECK_FALSE(u->is_trivial());
     }
 
@@ -87,10 +86,10 @@ TEST_SUITE("Lifecycle Predicates") {
         Type* lst = types.list_type(types.i32_type());
         Type* m = types.map_type(types.i32_type(), types.i32_type());
         Type* m_refval = types.map_type(types.i32_type(), types.ref_type(types.i32_type()));
-        for (Type* c : { lst, m, m_refval }) {
+        for (Type* c : {lst, m, m_refval}) {
             CHECK_FALSE(c->is_copy());
             CHECK(c->needs_drop());
-            CHECK_FALSE(c->needs_retain());  // the container itself is not a borrow
+            CHECK_FALSE(c->needs_retain()); // the container itself is not a borrow
             CHECK_FALSE(c->is_trivial());
         }
     }
@@ -125,24 +124,28 @@ TEST_SUITE("Lifecycle Predicates") {
         Type* has_ref = types.struct_type("HasRef"_sv, nullptr);
         auto* rf = reinterpret_cast<FieldInfo*>(
             allocator.alloc_bytes(sizeof(FieldInfo), alignof(FieldInfo)));
-        rf[0] = FieldInfo{ "r"_sv, types.ref_type(types.i32_type()),
-                           /*is_pub=*/true, /*index=*/0, /*slot_offset=*/0, /*slot_count=*/2 };
+        rf[0] = FieldInfo{"r"_sv,
+                          types.ref_type(types.i32_type()),
+                          /*is_pub=*/true,
+                          /*index=*/0,
+                          /*slot_offset=*/0,
+                          /*slot_count=*/2};
         has_ref->struct_info.fields = Span<FieldInfo>(rf, 1);
         has_ref->struct_info.when_clauses = Span<WhenClauseInfo>();
         has_ref->struct_info.destructors = Span<DestructorInfo>();
         derive_struct_move_only(has_ref->struct_info);
 
-        CHECK(has_ref->is_copy());        // a `ref` is a borrow, not an owner → copyable
-        CHECK(has_ref->needs_drop());     // ... but the ref field must be released
-        CHECK(has_ref->needs_retain());   // ... and re-borrowed on copy
+        CHECK(has_ref->is_copy());      // a `ref` is a borrow, not an owner → copyable
+        CHECK(has_ref->needs_drop());   // ... but the ref field must be released
+        CHECK(has_ref->needs_retain()); // ... and re-borrowed on copy
         CHECK_FALSE(has_ref->is_trivial());
 
         // A struct of only plain fields stays trivial.
         Type* plain = types.struct_type("Plain"_sv, nullptr);
         auto* pf = reinterpret_cast<FieldInfo*>(
             allocator.alloc_bytes(sizeof(FieldInfo) * 2, alignof(FieldInfo)));
-        pf[0] = FieldInfo{ "x"_sv, types.i32_type(), true, 0, 0, 1 };
-        pf[1] = FieldInfo{ "y"_sv, types.f64_type(), true, 1, 1, 2 };
+        pf[0] = FieldInfo{"x"_sv, types.i32_type(), true, 0, 0, 1};
+        pf[1] = FieldInfo{"y"_sv, types.f64_type(), true, 1, 1, 2};
         plain->struct_info.fields = Span<FieldInfo>(pf, 2);
         plain->struct_info.when_clauses = Span<WhenClauseInfo>();
         plain->struct_info.destructors = Span<DestructorInfo>();
@@ -160,7 +163,7 @@ TEST_SUITE("Lifecycle Predicates") {
     // destructor. These pin both directions of the split that used to be one bit.
 
     // Helper: build a struct with the given fields and destructors, derived.
-    static Type* make_struct(BumpAllocator& allocator, TypeCache& types, const char* name,
+    static Type* make_struct(BumpAllocator & allocator, TypeCache & types, const char* name,
                              Span<FieldInfo> fields, Span<DestructorInfo> dtors) {
         Type* t = types.struct_type(StringView(name, (u32)strlen(name)), nullptr);
         t->struct_info.fields = fields;
@@ -170,10 +173,10 @@ TEST_SUITE("Lifecycle Predicates") {
         return t;
     }
 
-    static Span<FieldInfo> one_field(BumpAllocator& allocator, const char* name, Type* type) {
+    static Span<FieldInfo> one_field(BumpAllocator & allocator, const char* name, Type* type) {
         auto* f = reinterpret_cast<FieldInfo*>(
             allocator.alloc_bytes(sizeof(FieldInfo), alignof(FieldInfo)));
-        f[0] = FieldInfo{ StringView(name, (u32)strlen(name)), type, true, 0, 0, 2 };
+        f[0] = FieldInfo{StringView(name, (u32)strlen(name)), type, true, 0, 0, 2};
         return Span<FieldInfo>(f, 1);
     }
 
@@ -187,22 +190,27 @@ TEST_SUITE("Lifecycle Predicates") {
         // `string` field being treated as move-only is what broke reading a
         // plain data record out of a `List`.
         CHECK(make_struct(allocator, types, "HasString",
-                          one_field(allocator, "s", types.string_type()), no_dtor)->is_copy());
+                          one_field(allocator, "s", types.string_type()), no_dtor)
+                  ->is_copy());
         CHECK(make_struct(allocator, types, "HasRef",
-                          one_field(allocator, "r", types.ref_type(types.i32_type())),
-                          no_dtor)->is_copy());
+                          one_field(allocator, "r", types.ref_type(types.i32_type())), no_dtor)
+                  ->is_copy());
 
         // Owning members have no inverse — duplicating would hand two owners the
         // same resource — so holding one is exactly what makes a struct move-only.
-        Type* uniq_holder = make_struct(allocator, types, "HasUniq",
-            one_field(allocator, "u", types.uniq_type(types.i32_type())), no_dtor);
+        Type* uniq_holder =
+            make_struct(allocator, types, "HasUniq",
+                        one_field(allocator, "u", types.uniq_type(types.i32_type())), no_dtor);
         CHECK_FALSE(uniq_holder->is_copy());
         CHECK_FALSE(make_struct(allocator, types, "HasList",
-            one_field(allocator, "xs", types.list_type(types.i32_type())), no_dtor)->is_copy());
+                                one_field(allocator, "xs", types.list_type(types.i32_type())),
+                                no_dtor)
+                        ->is_copy());
 
         // ... and it propagates through embedding.
         CHECK_FALSE(make_struct(allocator, types, "Outer2",
-            one_field(allocator, "inner", uniq_holder), no_dtor)->is_copy());
+                                one_field(allocator, "inner", uniq_holder), no_dtor)
+                        ->is_copy());
     }
 
     TEST_CASE("only a USER-WRITTEN default destructor implies move-only") {
@@ -221,15 +229,15 @@ TEST_SUITE("Lifecycle Predicates") {
         // hold, so it says nothing the fields do not already say. Reading it as
         // "move-only" is the conflation this derivation removes.
         CHECK(make_struct(allocator, types, "SyntheticDtor",
-                          one_field(allocator, "s", types.string_type()),
-                          make_dtor(nullptr))->is_copy());
+                          one_field(allocator, "s", types.string_type()), make_dtor(nullptr))
+                  ->is_copy());
 
         // A user-written one has a body with arbitrary effects, and running it
         // twice for one logical value is precisely what move-only prevents.
         auto* body = reinterpret_cast<Decl*>(allocator.alloc_bytes(sizeof(void*), alignof(void*)));
         CHECK_FALSE(make_struct(allocator, types, "UserDtor",
-                                one_field(allocator, "n", types.i32_type()),
-                                make_dtor(body))->is_copy());
+                                one_field(allocator, "n", types.i32_type()), make_dtor(body))
+                        ->is_copy());
     }
 
     // ---- compute_retain_plan: the mirror of compute_drop_plan --------------
@@ -242,8 +250,8 @@ TEST_SUITE("Lifecycle Predicates") {
     TEST_CASE("retain plan: trivial types acquire nothing") {
         BumpAllocator allocator(4096);
         TypeCache types(allocator);
-        Type* trivial[] = { types.i32_type(), types.i64_type(), types.bool_type(),
-                            types.f64_type(), types.weak_type(types.i32_type()) };
+        Type* trivial[] = {types.i32_type(), types.i64_type(), types.bool_type(), types.f64_type(),
+                           types.weak_type(types.i32_type())};
         for (Type* t : trivial) {
             CHECK(compute_retain_plan(t).kind == RetainKind::None);
             CHECK(compute_drop_plan(t).kind == DropKind::None);
@@ -258,7 +266,7 @@ TEST_SUITE("Lifecycle Predicates") {
         Type* s = types.string_type();
         CHECK(compute_retain_plan(s).kind == RetainKind::StrRetain);
         CHECK(compute_drop_plan(s).kind == DropKind::StrRelease);
-        CHECK(s->is_copy());   // copyable *because* the drop has an inverse
+        CHECK(s->is_copy()); // copyable *because* the drop has an inverse
 
         Type* r = types.ref_type(types.i32_type());
         CHECK(compute_retain_plan(r).kind == RetainKind::RefInc);
@@ -292,7 +300,7 @@ TEST_SUITE("Lifecycle Predicates") {
         Type* boxed = types.struct_type("Boxed"_sv, nullptr);
         auto* bf = reinterpret_cast<FieldInfo*>(
             allocator.alloc_bytes(sizeof(FieldInfo), alignof(FieldInfo)));
-        bf[0] = FieldInfo{ "s"_sv, types.string_type(), true, 0, 0, 2 };
+        bf[0] = FieldInfo{"s"_sv, types.string_type(), true, 0, 0, 2};
         boxed->struct_info.fields = Span<FieldInfo>(bf, 1);
         boxed->struct_info.when_clauses = Span<WhenClauseInfo>();
         boxed->struct_info.destructors = Span<DestructorInfo>();
@@ -308,7 +316,7 @@ TEST_SUITE("Lifecycle Predicates") {
         Type* outer = types.struct_type("Outer"_sv, nullptr);
         auto* of = reinterpret_cast<FieldInfo*>(
             allocator.alloc_bytes(sizeof(FieldInfo), alignof(FieldInfo)));
-        of[0] = FieldInfo{ "inner"_sv, boxed, true, 0, 0, 2 };
+        of[0] = FieldInfo{"inner"_sv, boxed, true, 0, 0, 2};
         outer->struct_info.fields = Span<FieldInfo>(of, 1);
         outer->struct_info.when_clauses = Span<WhenClauseInfo>();
         outer->struct_info.destructors = Span<DestructorInfo>();
@@ -319,7 +327,7 @@ TEST_SUITE("Lifecycle Predicates") {
         Type* plain = types.struct_type("PlainR"_sv, nullptr);
         auto* pf = reinterpret_cast<FieldInfo*>(
             allocator.alloc_bytes(sizeof(FieldInfo), alignof(FieldInfo)));
-        pf[0] = FieldInfo{ "x"_sv, types.i32_type(), true, 0, 0, 1 };
+        pf[0] = FieldInfo{"x"_sv, types.i32_type(), true, 0, 0, 1};
         plain->struct_info.fields = Span<FieldInfo>(pf, 1);
         plain->struct_info.when_clauses = Span<WhenClauseInfo>();
         plain->struct_info.destructors = Span<DestructorInfo>();
@@ -333,14 +341,14 @@ TEST_SUITE("Lifecycle Predicates") {
         Type* owned = types.struct_type("OwnedR"_sv, nullptr);
         auto* wf = reinterpret_cast<FieldInfo*>(
             allocator.alloc_bytes(sizeof(FieldInfo), alignof(FieldInfo)));
-        wf[0] = FieldInfo{ "s"_sv, types.string_type(), true, 0, 0, 2 };
+        wf[0] = FieldInfo{"s"_sv, types.string_type(), true, 0, 0, 2};
         owned->struct_info.fields = Span<FieldInfo>(wf, 1);
         owned->struct_info.when_clauses = Span<WhenClauseInfo>();
         auto* dt = reinterpret_cast<DestructorInfo*>(
             allocator.alloc_bytes(sizeof(DestructorInfo), alignof(DestructorInfo)));
         dt[0] = DestructorInfo{};
         dt[0].decl = reinterpret_cast<Decl*>(
-            allocator.alloc_bytes(sizeof(void*), alignof(void*)));  // stands in for a body
+            allocator.alloc_bytes(sizeof(void*), alignof(void*))); // stands in for a body
         owned->struct_info.destructors = Span<DestructorInfo>(dt, 1);
         derive_struct_move_only(owned->struct_info);
         CHECK_FALSE(owned->is_copy());

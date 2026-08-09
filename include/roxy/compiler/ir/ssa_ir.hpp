@@ -1,13 +1,13 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
+#include "roxy/compiler/types/types.hpp"
+#include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/span.hpp"
 #include "roxy/core/string.hpp"
 #include "roxy/core/string_view.hpp"
-#include "roxy/core/vector.hpp"
-#include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/tsl/robin_map.h"
-#include "roxy/compiler/types/types.hpp"
+#include "roxy/core/types.hpp"
+#include "roxy/core/vector.hpp"
 
 namespace rx {
 
@@ -17,7 +17,7 @@ struct IRInst;
 struct IRBlock;
 struct IRFunction;
 struct IRModule;
-struct Expr;   // AST node (compiler/ast.hpp); IRGlobal holds a global's initializer
+struct Expr; // AST node (compiler/ast.hpp); IRGlobal holds a global's initializer
 
 // Value ID - uniquely identifies an SSA value within a function
 struct ValueId {
@@ -44,12 +44,12 @@ struct BlockId {
 // IR instruction opcodes
 enum class IROp : u8 {
     // Constants
-    ConstNull,      // null constant
-    ConstBool,      // boolean constant
-    ConstInt,       // integer constant
-    ConstF,         // f32 constant (stores f32 bits as u32)
-    ConstD,         // f64 constant (stores f64 bits)
-    ConstString,    // string constant
+    ConstNull,   // null constant
+    ConstBool,   // boolean constant
+    ConstInt,    // integer constant
+    ConstF,      // f32 constant (stores f32 bits as u32)
+    ConstD,      // f64 constant (stores f64 bits)
+    ConstString, // string constant
 
     // Arithmetic (integer)
     AddI,
@@ -57,8 +57,8 @@ enum class IROp : u8 {
     MulI,
     DivI,
     ModI,
-    DivU,           // unsigned division
-    ModU,           // unsigned modulo
+    DivU, // unsigned division
+    ModU, // unsigned modulo
     NegI,
 
     // Arithmetic (f32)
@@ -117,31 +117,31 @@ enum class IROp : u8 {
     BitNot,
     Shl,
     Shr,
-    UShr,           // logical (unsigned) shift right; kept last of the [AddI, UShr] binary span
+    UShr, // logical (unsigned) shift right; kept last of the [AddI, UShr] binary span
 
     // Type conversions
-    I_TO_F64,       // int to f64
-    F64_TO_I,       // f64 to int
-    I_TO_B,         // int to bool
-    B_TO_I,         // bool to int
+    I_TO_F64, // int to f64
+    F64_TO_I, // f64 to int
+    I_TO_B,   // int to bool
+    B_TO_I,   // bool to int
 
     // Memory operations
-    StackAlloc,     // allocate slots on local stack, returns pointer
-    GlobalAddr,     // &globals[slot_offset] (address of a module-global slot)
-    GetField,       // obj.field (load value)
-    GetFieldAddr,   // &obj.field (compute address, for nested struct access)
-    SetField,       // obj.field = value
+    StackAlloc,   // allocate slots on local stack, returns pointer
+    GlobalAddr,   // &globals[slot_offset] (address of a module-global slot)
+    GetField,     // obj.field (load value)
+    GetFieldAddr, // &obj.field (compute address, for nested struct access)
+    SetField,     // obj.field = value
     // Reference operations
-    RefInc,         // increment ref count
-    RefDec,         // decrement ref count
-    StrRetain,      // retain a reference-counted string (owner++; no-op if immortal)
-    StrRelease,     // release a reference-counted string (owner--; free at zero)
-    WeakCheck,      // check if weak ref is valid
-    WeakCreate,     // create weak ref from pointer (extracts generation)
+    RefInc,     // increment ref count
+    RefDec,     // decrement ref count
+    StrRetain,  // retain a reference-counted string (owner++; no-op if immortal)
+    StrRelease, // release a reference-counted string (owner--; free at zero)
+    WeakCheck,  // check if weak ref is valid
+    WeakCreate, // create weak ref from pointer (extracts generation)
 
     // Object lifecycle
-    New,            // allocate new object
-    Delete,         // deallocate object
+    New,    // allocate new object
+    Delete, // deallocate object
 
     // Closure construction: allocate env struct, store call_idx in first u32 field,
     // store capture values in subsequent fields. Result is the env pointer typed as
@@ -162,45 +162,49 @@ enum class IROp : u8 {
     AssertHeap,
 
     // Function call
-    Call,           // call function
-    CallNative,     // call native function
-    CallExternal,   // call function in another module
-    CallIndirect,   // call closure: read __call_idx from env's first u32 field, dispatch with env as first arg
+    Call,         // call function
+    CallNative,   // call native function
+    CallExternal, // call function in another module
+    CallIndirect, // call closure: read __call_idx from env's first u32 field, dispatch with env as
+                  // first arg
 
     // Container indexing (List/Map)
-    IndexGet,       // container[index] — for List/Map
-    IndexSet,       // container[index] = value — for List/Map
-    IndexAddr,      // &container[index] — element lvalue address (out/inout args; lifetimes.md "Container element lvalues")
-    IndexTryAddr,   // &map[key] value slot, or null if absent (no trap) — powers the single-lookup `m[k]` KeyError throw
-    ContainerPin,   // pin a container for a call (borrow_count++) — blocks realloc/free while an element is borrowed
+    IndexGet,     // container[index] — for List/Map
+    IndexSet,     // container[index] = value — for List/Map
+    IndexAddr,    // &container[index] — element lvalue address (out/inout args; lifetimes.md
+                  // "Container element lvalues")
+    IndexTryAddr, // &map[key] value slot, or null if absent (no trap) — powers the single-lookup
+                  // `m[k]` KeyError throw
+    ContainerPin, // pin a container for a call (borrow_count++) — blocks realloc/free while an
+                  // element is borrowed
     ContainerUnpin, // unpin a container after a call (borrow_count--)
 
     // Block argument (phi-like)
-    BlockArg,       // Block parameter - receives value from predecessor
+    BlockArg, // Block parameter - receives value from predecessor
 
     // Copy (for SSA value passing)
-    Copy,           // Simple copy of a value
+    Copy, // Simple copy of a value
 
     // Struct operations
-    StructCopy,     // Memory-to-memory struct copy
+    StructCopy, // Memory-to-memory struct copy
 
     // Pointer operations (for out/inout parameters)
-    LoadPtr,        // Load value through pointer: dst = *ptr
-    StorePtr,       // Store value through pointer: *ptr = val
+    LoadPtr,  // Load value through pointer: dst = *ptr
+    StorePtr, // Store value through pointer: *ptr = val
 
     // Type casting
-    Cast,           // Generic cast - uses source_type in CastData
+    Cast, // Generic cast - uses source_type in CastData
 
     // Cleanup support
-    Nullify,        // Zero the register of a specified value (for move null-ification).
-                    // unary = the value whose register should be zeroed.
-                    // Used to invalidate cleanup records after ownership transfer.
+    Nullify, // Zero the register of a specified value (for move null-ification).
+             // unary = the value whose register should be zeroed.
+             // Used to invalidate cleanup records after ownership transfer.
 
     // Exception handling
-    Throw,          // Throw exception: unary = exception object pointer. Block terminator.
+    Throw, // Throw exception: unary = exception object pointer. Block terminator.
 
     // Coroutine
-    Yield,          // Yield a value from coroutine: unary = yielded value. Block terminator.
+    Yield, // Yield a value from coroutine: unary = yielded value. Block terminator.
 };
 
 // Constant data for ConstXxx instructions
@@ -208,8 +212,8 @@ struct ConstData {
     union {
         bool bool_val;
         i64 int_val;
-        f32 f32_val;       // For ConstF
-        f64 f64_val;       // For ConstD
+        f32 f32_val; // For ConstF
+        f64 f64_val; // For ConstD
         StringView string_val;
     };
 
@@ -220,7 +224,7 @@ struct ConstData {
 struct CallData {
     StringView func_name;
     Span<ValueId> args;
-    u32 native_index;  // For CallNative: index into module's native_functions
+    u32 native_index; // For CallNative: index into module's native_functions
 };
 
 // External call instruction data (for cross-module calls)
@@ -234,8 +238,8 @@ struct CallExternalData {
 // the runtime loads __call_idx from the env's first u32 field and dispatches with the
 // env pointer prepended as the first argument.
 struct CallIndirectData {
-    ValueId callee;           // SSA value: env pointer (Function<sig>-typed)
-    Span<ValueId> args;       // Explicit arguments (do NOT include the env pointer)
+    ValueId callee;     // SSA value: env pointer (Function<sig>-typed)
+    Span<ValueId> args; // Explicit arguments (do NOT include the env pointer)
 };
 
 // Closure construction data: lowering expands to NEW_OBJ(env_struct_name) plus a
@@ -257,8 +261,8 @@ struct FuncIndexData {
 struct FieldData {
     ValueId object;
     StringView field_name;
-    u32 slot_offset;   // Offset in u32 slots from struct start
-    u32 slot_count;    // Number of u32 slots (1 for 32-bit, 2 for 64-bit)
+    u32 slot_offset; // Offset in u32 slots from struct start
+    u32 slot_count;  // Number of u32 slots (1 for 32-bit, 2 for 64-bit)
 };
 
 // New object data
@@ -269,12 +273,12 @@ struct NewData {
 
 // Stack allocation data
 struct StackAllocData {
-    u32 slot_count;     // Number of u32 slots to allocate
+    u32 slot_count; // Number of u32 slots to allocate
 };
 
 // Global address data (for GlobalAddr)
 struct GlobalData {
-    u32 slot_offset;    // Offset into the module's global slot array
+    u32 slot_offset; // Offset into the module's global slot array
 };
 
 // Whether a struct copy DUPLICATES its source or MOVES it
@@ -312,14 +316,14 @@ struct StructCopyData {
 // Load through pointer data
 struct LoadPtrData {
     ValueId ptr;
-    u32 slot_count;  // Number of slots to load (1 or 2 for primitives)
+    u32 slot_count; // Number of slots to load (1 or 2 for primitives)
 };
 
 // Store through pointer data
 struct StorePtrData {
     ValueId ptr;
     ValueId value;
-    u32 slot_count;  // Number of slots to store (1 or 2 for primitives)
+    u32 slot_count; // Number of slots to store (1 or 2 for primitives)
 };
 
 // Container kind for IndexGet/IndexSet
@@ -328,22 +332,22 @@ enum class ContainerKind : u8 { List, Map };
 // Index access data (for IndexGet/IndexSet)
 struct IndexData {
     ValueId container;
-    ValueId index;       // index for List, key for Map
-    ValueId value;       // only used by IndexSet
+    ValueId index; // index for List, key for Map
+    ValueId value; // only used by IndexSet
     ContainerKind kind;
 };
 
 // Cast data
 struct CastData {
     ValueId source;
-    Type* source_type;  // Source type for determining conversion strategy
+    Type* source_type; // Source type for determining conversion strategy
 };
 
 // IR Instruction - represents a single operation that produces a value
 struct IRInst {
     IROp op;
-    ValueId result;     // The SSA value this instruction produces
-    Type* type;         // Result type
+    ValueId result; // The SSA value this instruction produces
+    Type* type;     // Result type
 
     // 1-indexed source line of the AST node that produced this instruction.
     // Populated by `IRBuilder::emit_inst` from `m_current_source_line`,
@@ -355,7 +359,7 @@ struct IRInst {
 
     // Operands (usage depends on op)
     union {
-        ConstData const_data;           // For Const* ops
+        ConstData const_data; // For Const* ops
         struct {
             ValueId left;
             ValueId right;
@@ -382,13 +386,15 @@ struct IRInst {
     ValueId store_value;
 
     // Pinned `Copy`: copy propagation must NOT collapse this Copy into its
-    // source. Used by call-site receiver borrows (lifetimes.md "Counting mechanics" / "Promotion") to mint a
-    // distinct SSA value/register for a heap receiver, so the borrow's RefDec +
-    // Nullify cleanup can't collide with the owned-local's own Delete record
-    // (which shares the receiver's value). Only ever set on IROp::Copy.
+    // source. Used by call-site receiver borrows (lifetimes.md "Counting mechanics" / "Promotion")
+    // to mint a distinct SSA value/register for a heap receiver, so the borrow's RefDec + Nullify
+    // cleanup can't collide with the owned-local's own Delete record (which shares the receiver's
+    // value). Only ever set on IROp::Copy.
     bool no_copy_prop = false;
 
-    IRInst() : op(IROp::ConstNull), result(ValueId::invalid()), type(nullptr), store_value(ValueId::invalid()) {
+    IRInst()
+        : op(IROp::ConstNull), result(ValueId::invalid()), type(nullptr),
+          store_value(ValueId::invalid()) {
         const_data = ConstData();
     }
     ~IRInst() {}
@@ -396,22 +402,22 @@ struct IRInst {
 
 // Terminator kinds
 enum class TerminatorKind : u8 {
-    None,           // Block not yet terminated
-    Goto,           // Unconditional jump
-    Branch,         // Conditional branch
-    Return,         // Function return
-    Unreachable,    // Unreachable code
+    None,        // Block not yet terminated
+    Goto,        // Unconditional jump
+    Branch,      // Conditional branch
+    Return,      // Function return
+    Unreachable, // Unreachable code
 };
 
 // Block argument passed to successor
 struct BlockArgPair {
-    ValueId value;  // The value being passed
+    ValueId value; // The value being passed
 };
 
 // Goto/Branch target with block arguments
 struct JumpTarget {
     BlockId block;
-    Span<BlockArgPair> args;  // Values passed as block arguments
+    Span<BlockArgPair> args; // Values passed as block arguments
 };
 
 // Block terminator
@@ -419,13 +425,13 @@ struct Terminator {
     TerminatorKind kind;
 
     union {
-        JumpTarget goto_target;              // For Goto
+        JumpTarget goto_target; // For Goto
         struct {
             ValueId condition;
             JumpTarget then_target;
             JumpTarget else_target;
-        } branch;                            // For Branch
-        ValueId return_value;                // For Return (invalid if void)
+        } branch;             // For Branch
+        ValueId return_value; // For Return (invalid if void)
     };
 
     Terminator() : kind(TerminatorKind::None) {}
@@ -433,18 +439,18 @@ struct Terminator {
 
 // Block parameter (receives value from predecessors)
 struct BlockParam {
-    ValueId value;      // The SSA value representing this parameter
+    ValueId value; // The SSA value representing this parameter
     Type* type;
-    StringView name;    // Optional debug name
+    StringView name; // Optional debug name
 };
 
 // Basic block with block arguments
 struct IRBlock {
     BlockId id;
-    StringView name;                    // Optional debug name (e.g., "entry", "loop", "exit")
-    Vector<BlockParam> params;          // Block parameters (block arguments)
-    Vector<IRInst*> instructions;       // Non-terminating instructions
-    Terminator terminator;              // Block terminator
+    StringView name;              // Optional debug name (e.g., "entry", "loop", "exit")
+    Vector<BlockParam> params;    // Block parameters (block arguments)
+    Vector<IRInst*> instructions; // Non-terminating instructions
+    Terminator terminator;        // Block terminator
 
     // Predecessors (computed during analysis)
     Vector<BlockId> predecessors;
@@ -454,11 +460,12 @@ struct IRBlock {
 
 // Exception handler metadata for IR
 struct IRExceptionHandler {
-    BlockId try_entry;       // First block of try body
-    BlockId try_exit;        // Last block of try body (inclusive)
-    BlockId handler_block;   // Catch handler entry block
-    u32 type_id = 0;         // Concrete type_id to match (0 = catch-all)
-    StringView type_name = StringView(nullptr, 0);  // Struct name for the catch type (empty for catch-all)
+    BlockId try_entry;     // First block of try body
+    BlockId try_exit;      // Last block of try body (inclusive)
+    BlockId handler_block; // Catch handler entry block
+    u32 type_id = 0;       // Concrete type_id to match (0 = catch-all)
+    StringView type_name =
+        StringView(nullptr, 0); // Struct name for the catch type (empty for catch-all)
     // Every IR block that belongs to the try body. Populated in creation order
     // in gen_try_stmt (before RPO reorder), then remapped by reorder_blocks_rpo.
     // Lowering turns this set into one BCExceptionHandler per contiguous run
@@ -473,7 +480,7 @@ struct IRFinallyInfo {
     BlockId try_entry;
     BlockId try_exit;
     BlockId finally_block;
-    BlockId finally_end_block;  // Block after finally (for normal flow)
+    BlockId finally_end_block; // Block after finally (for normal flow)
 };
 
 // Cleanup action for an exception-path cleanup record.
@@ -485,22 +492,22 @@ enum class IRCleanupKind : u8 { Delete, RefDec, Unpin, StrRelease };
 // Cleanup info for owned locals and ref borrows (used to generate bytecode
 // cleanup records for the exception-unwind path).
 struct IRCleanupInfo {
-    ValueId value;        // The SSA value to clean up
-    Type* type;           // Determines cleanup kind (uniq, struct w/ dtor, list, map)
-    BlockId start_block;  // First block where variable is live
-    BlockId end_block;    // Last block where variable is live (scope exit)
-    IRCleanupKind kind = IRCleanupKind::Delete;  // Delete owned value vs RefDec a borrow
+    ValueId value;       // The SSA value to clean up
+    Type* type;          // Determines cleanup kind (uniq, struct w/ dtor, list, map)
+    BlockId start_block; // First block where variable is live
+    BlockId end_block;   // Last block where variable is live (scope exit)
+    IRCleanupKind kind = IRCleanupKind::Delete; // Delete owned value vs RefDec a borrow
     // Ref *parameters* are borrows live for the whole function; their cleanup
     // record spans [0, code.size()) and their register is pinned to the final
     // point (the block-derived scope is unreliable when every path returns or
     // throws). Ref *locals* and owned locals are block-scoped (false).
     bool whole_function_scope = false;
-    // Call-site receiver borrow (lifetimes.md "Counting mechanics" / "Promotion"): a heap receiver counted
-    // for one method call's duration. The borrow lives only [RefInc, RefDec)
-    // around a single call, so lowering narrows scope_start to the RefInc's PC
-    // (via m_ref_inc_pcs) in addition to the Nullify end-narrowing — the
-    // block-derived start would wrongly cover earlier-in-block argument
-    // evaluation, firing a RefDec on a not-yet-initialized register on throw.
+    // Call-site receiver borrow (lifetimes.md "Counting mechanics" / "Promotion"): a heap receiver
+    // counted for one method call's duration. The borrow lives only [RefInc, RefDec) around a
+    // single call, so lowering narrows scope_start to the RefInc's PC (via m_ref_inc_pcs) in
+    // addition to the Nullify end-narrowing — the block-derived start would wrongly cover
+    // earlier-in-block argument evaluation, firing a RefDec on a not-yet-initialized register on
+    // throw.
     bool call_borrow = false;
     // The range ends at the START of end_block, not after it. Used where a
     // tracked local changes SSA value at a control-flow merge: the pre-merge
@@ -519,10 +526,10 @@ struct IRCleanupInfo {
 struct IRFunction {
     StringView name;
     Type* return_type;
-    Vector<BlockParam> params;          // Function parameters (become entry block args)
-    Vector<bool> param_is_ptr;          // True if param is a pointer (out/inout parameter)
-    Vector<IRBlock*> blocks;            // Basic blocks, blocks[0] is entry
-    u32 next_value_id;                  // Counter for generating unique value IDs
+    Vector<BlockParam> params; // Function parameters (become entry block args)
+    Vector<bool> param_is_ptr; // True if param is a pointer (out/inout parameter)
+    Vector<IRBlock*> blocks;   // Basic blocks, blocks[0] is entry
+    u32 next_value_id;         // Counter for generating unique value IDs
 
     // Defining instruction for each ValueId (indexed by id). Slot is nullptr for
     // ValueIds that don't correspond to an emitted IRInst* (function params, block
@@ -551,9 +558,9 @@ struct IRFunction {
 
     // Coroutine metadata (set by IR builder for functions returning Coro<T>)
     bool is_coroutine = false;
-    Type* coro_yield_type = nullptr;     // T in Coro<T>
-    Type* coro_struct_type = nullptr;    // The synthetic struct holding coroutine state
-    Type* coro_type = nullptr;           // The Coro<T> type itself
+    Type* coro_yield_type = nullptr;  // T in Coro<T>
+    Type* coro_struct_type = nullptr; // The synthetic struct holding coroutine state
+    Type* coro_type = nullptr;        // The Coro<T> type itself
 
     IRFunction() : return_type(nullptr), next_value_id(0) {}
 
@@ -578,15 +585,15 @@ struct IRFunction {
     }
 
     IRInst* inst_for(ValueId v) const {
-        if (!v.is_valid() || v.id >= values_by_id.size()) return nullptr;
+        if (!v.is_valid() || v.id >= values_by_id.size())
+            return nullptr;
         return values_by_id[v.id];
     }
 
     // Check if this function returns a large struct (>4 slots, >16 bytes)
     // Large structs are returned via hidden output pointer
     bool returns_large_struct() const {
-        return return_type && return_type->is_struct() &&
-               return_type->struct_info.slot_count > 4;
+        return return_type && return_type->is_struct() && return_type->struct_info.slot_count > 4;
     }
 
     /// Reorder blocks to reverse postorder and remap all BlockId references.
@@ -600,9 +607,9 @@ struct IRFunction {
 struct IRGlobal {
     StringView name;
     Type* type;
-    u32 slot_offset;     // Offset into the module's global slot array
-    u32 slot_count;      // Slots this global occupies
-    Expr* initializer;   // Initializer expression (may be null)
+    u32 slot_offset;   // Offset into the module's global slot array
+    u32 slot_count;    // Slots this global occupies
+    Expr* initializer; // Initializer expression (may be null)
 };
 
 // IR Module - collection of functions
@@ -615,8 +622,8 @@ struct IRModule {
     u32 global_slot_count = 0;
 
     // Type lists for C backend code generation
-    Vector<Type*> struct_types;  // All struct types (incl. monomorphized generics)
-    Vector<Type*> enum_types;    // All enum types
+    Vector<Type*> struct_types; // All struct types (incl. monomorphized generics)
+    Vector<Type*> enum_types;   // All enum types
 
     // Cleanup wrapper functions for noncopyable List/Map types in coroutines.
     // Key: interned Type* (List or Map), Value: wrapper function name.
@@ -631,4 +638,4 @@ void ir_block_to_string(const IRBlock* block, String& out);
 void ir_function_to_string(const IRFunction* func, String& out);
 void ir_module_to_string(const IRModule* module, String& out);
 
-}
+} // namespace rx

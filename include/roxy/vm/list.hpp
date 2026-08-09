@@ -17,9 +17,7 @@ struct RoxyVM;
 using ListHeader = roxy_list_header;
 
 // Get the ListHeader from list data pointer (data is right after ObjectHeader)
-inline ListHeader* get_list_header(void* data) {
-    return static_cast<ListHeader*>(data);
-}
+inline ListHeader* get_list_header(void* data) { return static_cast<ListHeader*>(data); }
 
 inline const ListHeader* get_list_header(const void* data) {
     return static_cast<const ListHeader*>(data);
@@ -35,19 +33,16 @@ inline const u32* list_element_ptr(const ListHeader* header, u32 index) {
 }
 
 // Allocate a new list with given capacity and element slot count (length starts at 0)
-// element_is_inline: true for primitives (value in register), false for structs (pointer in register)
-// Returns pointer to list data (ListHeader)
-void* list_alloc(RoxyVM* vm, u32 capacity, u32 element_slot_count = 2, bool element_is_inline = true);
+// element_is_inline: true for primitives (value in register), false for structs (pointer in
+// register) Returns pointer to list data (ListHeader)
+void* list_alloc(RoxyVM* vm, u32 capacity, u32 element_slot_count = 2,
+                 bool element_is_inline = true);
 
 // Get list length
-inline u32 list_length(const void* data) {
-    return get_list_header(data)->length;
-}
+inline u32 list_length(const void* data) { return get_list_header(data)->length; }
 
 // Get list capacity
-inline u32 list_capacity(const void* data) {
-    return get_list_header(data)->capacity;
-}
+inline u32 list_capacity(const void* data) { return get_list_header(data)->capacity; }
 
 // ── Slot-based API (used by interpreter and native functions) ──
 
@@ -88,4 +83,4 @@ u32 register_list_type();
 // Get the registered list type ID
 u32 get_list_type_id();
 
-}
+} // namespace rx

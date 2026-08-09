@@ -1,18 +1,18 @@
 #pragma once
 
+#include "roxy/compiler/parse/ast.hpp"
+#include "roxy/compiler/sema/function_context.hpp"
+#include "roxy/compiler/sema/lifetime_checker.hpp"
+#include "roxy/compiler/sema/sema_context.hpp"
+#include "roxy/compiler/support/error_reporter.hpp"
+#include "roxy/compiler/types/symbol_table.hpp"
+#include "roxy/compiler/types/type_env.hpp"
+#include "roxy/compiler/types/types.hpp"
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/tsl/robin_map.h"
 #include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
-#include "roxy/core/bump_allocator.hpp"
 #include "roxy/shared/token.hpp"
-#include "roxy/compiler/parse/ast.hpp"
-#include "roxy/compiler/types/types.hpp"
-#include "roxy/compiler/types/type_env.hpp"
-#include "roxy/compiler/types/symbol_table.hpp"
-#include "roxy/compiler/support/error_reporter.hpp"
-#include "roxy/compiler/sema/sema_context.hpp"
-#include "roxy/compiler/sema/lifetime_checker.hpp"
-#include "roxy/compiler/sema/function_context.hpp"
-#include "roxy/core/tsl/robin_map.h"
 
 namespace rx {
 
@@ -31,15 +31,10 @@ class LambdaLifter {
 public:
     LambdaLifter(SemaContext& context, LifetimeChecker& lifetimes,
                  FunctionContext& function_context, Vector<Decl*>& synthetic_decls)
-        : m_context(context)
-        , m_allocator(context.allocator)
-        , m_type_env(context.type_env)
-        , m_types(context.types)
-        , m_symbols(context.symbols)
-        , m_reporter(context.reporter)
-        , m_lifetimes(lifetimes)
-        , m_function_context(function_context)
-        , m_synthetic_decls(synthetic_decls) {}
+        : m_context(context), m_allocator(context.allocator), m_type_env(context.type_env),
+          m_types(context.types), m_symbols(context.symbols), m_reporter(context.reporter),
+          m_lifetimes(lifetimes), m_function_context(function_context),
+          m_synthetic_decls(synthetic_decls) {}
 
     // Analyze a lambda expression: validate captures, synthesize the lifted
     // call FunDecl (pushed onto the analyzer's synthetic decls) and the env
@@ -66,10 +61,10 @@ private:
     // captures (the symbol's defining scope sits past a ScopeKind::Lambda boundary).
     // For nested closures, multiple contexts are stacked (innermost on top).
     struct LambdaCaptureContext {
-        Scope* boundary_scope;                       // the ScopeKind::Lambda for this lambda
-        Type* env_struct_type;                       // the env struct (for cross-context __env typing)
-        Vector<CaptureInfo> captures;                // ordered, env-field order
-        tsl::robin_map<Symbol*, u32> by_symbol;      // dedup + index lookup
+        Scope* boundary_scope;                  // the ScopeKind::Lambda for this lambda
+        Type* env_struct_type;                  // the env struct (for cross-context __env typing)
+        Vector<CaptureInfo> captures;           // ordered, env-field order
+        tsl::robin_map<Symbol*, u32> by_symbol; // dedup + index lookup
         // Self-capture state. Tracks whether `self` has been captured into this
         // lambda's env (and where in `captures`). When set by a [copy self] or
         // [weak self] entry pre-validation, body references to `self` route
@@ -93,9 +88,9 @@ private:
     //   captures into `context` (false on error). synthesize: build the lifted
     //   call FunDecl and analyze its body. backfill: lay out the env struct.
     bool validate_lambda_captures(LambdaExpr& le, LambdaCaptureContext& context);
-    Decl* synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le,
-                                    StringView fun_name, StringView env_name,
-                                    Type* ret_type, LambdaCaptureContext& context);
+    Decl* synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le, StringView fun_name,
+                                    StringView env_name, Type* ret_type,
+                                    LambdaCaptureContext& context);
     void backfill_lambda_env(Type* env_type, const LambdaCaptureContext& context);
 
     // Builders for synthetic AST nodes (capture lowering and self-capture
@@ -109,8 +104,7 @@ private:
     // 0..target_idx (inclusive). Outermost reads `self` directly via ExprThis;
     // every inner one reads via ExprGet(__env, __self) on the next-outer env.
     // Idempotent (skips contexts that already have has_self_capture set).
-    void ensure_self_captured_through(u32 target_idx, Type* struct_type,
-                                      SourceLocation loc);
+    void ensure_self_captured_through(u32 target_idx, Type* struct_type, SourceLocation loc);
 
     SemaContext& m_context;
     BumpAllocator& m_allocator;
@@ -128,4 +122,4 @@ private:
     Vector<LambdaCaptureContext*> m_lambda_contexts;
 };
 
-}
+} // namespace rx

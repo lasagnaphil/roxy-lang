@@ -20,7 +20,8 @@ namespace rx {
 using namespace ir_builder_detail;
 
 IRInst* IRBuilder::emit_inst(IROp op, Type* result_type) {
-    if (!m_current_block) return nullptr;
+    if (!m_current_block)
+        return nullptr;
 
     IRInst* inst = m_allocator.emplace<IRInst>();
     inst->op = op;
@@ -46,7 +47,8 @@ ValueId IRBuilder::emit_const_bool(bool value) {
 }
 
 ValueId IRBuilder::emit_const_int(i64 value, Type* type) {
-    if (!type) type = m_types.i64_type();
+    if (!type)
+        type = m_types.i64_type();
     // Keep u32 constants canonically zero-extended: constant-folded u32 arithmetic
     // can overflow 32 bits (e.g. 0xFFFFFFFF + 1 -> 0x100000000), and this ConstInt
     // is materialized straight to a register via LOAD_CONST (bypassing lowering's
@@ -63,7 +65,8 @@ ValueId IRBuilder::emit_const_int(i64 value, Type* type) {
 }
 
 ValueId IRBuilder::emit_const_float(f64 value, Type* type) {
-    if (!type) type = m_types.f64_type();
+    if (!type)
+        type = m_types.f64_type();
 
     // Check if this is an f32 - if so, emit ConstF
     if (type->kind == TypeKind::F32) {
@@ -95,25 +98,30 @@ ValueId IRBuilder::emit_const_string(StringView value) {
 
 ValueId IRBuilder::emit_folded_const(const FoldedConst& folded, Type* result_type) {
     switch (folded.kind) {
-        case FoldedConst::Kind::Int:   return emit_const_int(folded.int_val, result_type);
-        case FoldedConst::Kind::Bool:  return emit_const_bool(folded.bool_val);
-        case FoldedConst::Kind::Float: return emit_const_float(folded.float_val, result_type);
+        case FoldedConst::Kind::Int:
+            return emit_const_int(folded.int_val, result_type);
+        case FoldedConst::Kind::Bool:
+            return emit_const_bool(folded.bool_val);
+        case FoldedConst::Kind::Float:
+            return emit_const_float(folded.float_val, result_type);
     }
     return ValueId::invalid();
 }
 
 ValueId IRBuilder::try_fold_binary(IROp op, ValueId left, ValueId right, Type* result_type) {
-    if (!m_current_func) return ValueId::invalid();
+    if (!m_current_func)
+        return ValueId::invalid();
     FoldedConst folded;
-    if (!fold_binary_const(op, m_current_func->inst_for(left),
-                           m_current_func->inst_for(right), folded)) {
+    if (!fold_binary_const(op, m_current_func->inst_for(left), m_current_func->inst_for(right),
+                           folded)) {
         return ValueId::invalid();
     }
     return emit_folded_const(folded, result_type);
 }
 
 ValueId IRBuilder::try_simplify_binary(IROp op, ValueId left, ValueId right, Type* result_type) {
-    if (!m_current_func) return ValueId::invalid();
+    if (!m_current_func)
+        return ValueId::invalid();
     IRInst* l = m_current_func->inst_for(left);
     IRInst* r = m_current_func->inst_for(right);
 
@@ -122,56 +130,79 @@ ValueId IRBuilder::try_simplify_binary(IROp op, ValueId left, ValueId right, Typ
     };
 
     switch (op) {
-    case IROp::AddI:
-        if (is_ci(r, 0)) return left;
-        if (is_ci(l, 0)) return right;
-        return ValueId::invalid();
+        case IROp::AddI:
+            if (is_ci(r, 0))
+                return left;
+            if (is_ci(l, 0))
+                return right;
+            return ValueId::invalid();
 
-    case IROp::SubI:
-        if (is_ci(r, 0)) return left;
-        if (left == right) return emit_const_int(0, result_type);
-        return ValueId::invalid();
+        case IROp::SubI:
+            if (is_ci(r, 0))
+                return left;
+            if (left == right)
+                return emit_const_int(0, result_type);
+            return ValueId::invalid();
 
-    case IROp::MulI:
-        if (is_ci(r, 0)) return emit_const_int(0, result_type);
-        if (is_ci(l, 0)) return emit_const_int(0, result_type);
-        if (is_ci(r, 1)) return left;
-        if (is_ci(l, 1)) return right;
-        if (is_ci(r, 2)) return emit_binary(IROp::AddI, left, left, result_type);
-        if (is_ci(l, 2)) return emit_binary(IROp::AddI, right, right, result_type);
-        return ValueId::invalid();
+        case IROp::MulI:
+            if (is_ci(r, 0))
+                return emit_const_int(0, result_type);
+            if (is_ci(l, 0))
+                return emit_const_int(0, result_type);
+            if (is_ci(r, 1))
+                return left;
+            if (is_ci(l, 1))
+                return right;
+            if (is_ci(r, 2))
+                return emit_binary(IROp::AddI, left, left, result_type);
+            if (is_ci(l, 2))
+                return emit_binary(IROp::AddI, right, right, result_type);
+            return ValueId::invalid();
 
-    case IROp::DivI:
-        if (is_ci(r, 1)) return left;
-        return ValueId::invalid();
+        case IROp::DivI:
+            if (is_ci(r, 1))
+                return left;
+            return ValueId::invalid();
 
-    case IROp::BitAnd:
-        if (is_ci(r, 0)) return emit_const_int(0, result_type);
-        if (is_ci(l, 0)) return emit_const_int(0, result_type);
-        if (is_ci(r, -1)) return left;
-        if (is_ci(l, -1)) return right;
-        return ValueId::invalid();
+        case IROp::BitAnd:
+            if (is_ci(r, 0))
+                return emit_const_int(0, result_type);
+            if (is_ci(l, 0))
+                return emit_const_int(0, result_type);
+            if (is_ci(r, -1))
+                return left;
+            if (is_ci(l, -1))
+                return right;
+            return ValueId::invalid();
 
-    case IROp::BitOr:
-        if (is_ci(r, 0)) return left;
-        if (is_ci(l, 0)) return right;
-        if (is_ci(r, -1)) return emit_const_int(-1, result_type);
-        if (is_ci(l, -1)) return emit_const_int(-1, result_type);
-        return ValueId::invalid();
+        case IROp::BitOr:
+            if (is_ci(r, 0))
+                return left;
+            if (is_ci(l, 0))
+                return right;
+            if (is_ci(r, -1))
+                return emit_const_int(-1, result_type);
+            if (is_ci(l, -1))
+                return emit_const_int(-1, result_type);
+            return ValueId::invalid();
 
-    case IROp::BitXor:
-        if (is_ci(r, 0)) return left;
-        if (is_ci(l, 0)) return right;
-        if (left == right) return emit_const_int(0, result_type);
-        return ValueId::invalid();
+        case IROp::BitXor:
+            if (is_ci(r, 0))
+                return left;
+            if (is_ci(l, 0))
+                return right;
+            if (left == right)
+                return emit_const_int(0, result_type);
+            return ValueId::invalid();
 
-    case IROp::Shl:
-    case IROp::Shr:
-        if (is_ci(r, 0)) return left;
-        return ValueId::invalid();
+        case IROp::Shl:
+        case IROp::Shr:
+            if (is_ci(r, 0))
+                return left;
+            return ValueId::invalid();
 
-    default:
-        return ValueId::invalid();
+        default:
+            return ValueId::invalid();
     }
 }
 
@@ -179,7 +210,8 @@ ValueId IRBuilder::emit_binary(IROp op, ValueId left, ValueId right, Type* resul
     if (ValueId folded = try_fold_binary(op, left, right, result_type); folded.is_valid()) {
         return folded;
     }
-    if (ValueId simplified = try_simplify_binary(op, left, right, result_type); simplified.is_valid()) {
+    if (ValueId simplified = try_simplify_binary(op, left, right, result_type);
+        simplified.is_valid()) {
         return simplified;
     }
     IRInst* inst = emit_inst(op, result_type);
@@ -192,7 +224,8 @@ ValueId IRBuilder::emit_binary(IROp op, ValueId left, ValueId right, Type* resul
 }
 
 ValueId IRBuilder::try_fold_unary(IROp op, ValueId operand, Type* result_type) {
-    if (!m_current_func) return ValueId::invalid();
+    if (!m_current_func)
+        return ValueId::invalid();
     FoldedConst folded;
     if (!fold_unary_const(op, m_current_func->inst_for(operand), folded)) {
         return ValueId::invalid();
@@ -202,14 +235,15 @@ ValueId IRBuilder::try_fold_unary(IROp op, ValueId operand, Type* result_type) {
 
 ValueId IRBuilder::try_simplify_unary(IROp op, ValueId operand, Type* result_type) {
     (void)result_type;
-    if (!m_current_func) return ValueId::invalid();
+    if (!m_current_func)
+        return ValueId::invalid();
     IRInst* o = m_current_func->inst_for(operand);
-    if (!o) return ValueId::invalid();
+    if (!o)
+        return ValueId::invalid();
 
     // Double-negation: only safe for integer / bool / bitwise. Float Neg is
     // skipped because -(-0.0) = 0.0 distinguishes from -0.0 in IEEE-754.
-    if ((op == IROp::NegI && o->op == IROp::NegI) ||
-        (op == IROp::Not && o->op == IROp::Not) ||
+    if ((op == IROp::NegI && o->op == IROp::NegI) || (op == IROp::Not && o->op == IROp::Not) ||
         (op == IROp::BitNot && o->op == IROp::BitNot)) {
         return o->unary;
     }
@@ -251,7 +285,8 @@ ValueId IRBuilder::emit_call(StringView func_name, Span<ValueId> args, Type* res
     return ValueId::invalid();
 }
 
-ValueId IRBuilder::emit_call_native(StringView func_name, Span<ValueId> args, Type* result_type, u32 native_index) {
+ValueId IRBuilder::emit_call_native(StringView func_name, Span<ValueId> args, Type* result_type,
+                                    u32 native_index) {
     IRInst* inst = emit_inst(IROp::CallNative, result_type);
     if (inst) {
         inst->call.func_name = func_name;
@@ -262,7 +297,8 @@ ValueId IRBuilder::emit_call_native(StringView func_name, Span<ValueId> args, Ty
     return ValueId::invalid();
 }
 
-ValueId IRBuilder::emit_call_external(StringView module_name, StringView func_name, Span<ValueId> args, Type* result_type) {
+ValueId IRBuilder::emit_call_external(StringView module_name, StringView func_name,
+                                      Span<ValueId> args, Type* result_type) {
     IRInst* inst = emit_inst(IROp::CallExternal, result_type);
     if (inst) {
         inst->call_external.module_name = module_name;
@@ -273,7 +309,8 @@ ValueId IRBuilder::emit_call_external(StringView module_name, StringView func_na
     return ValueId::invalid();
 }
 
-ValueId IRBuilder::emit_index_get(ValueId container, ValueId index, ContainerKind kind, Type* result_type) {
+ValueId IRBuilder::emit_index_get(ValueId container, ValueId index, ContainerKind kind,
+                                  Type* result_type) {
     IRInst* inst = emit_inst(IROp::IndexGet, result_type);
     if (inst) {
         inst->index_data.container = container;
@@ -285,7 +322,8 @@ ValueId IRBuilder::emit_index_get(ValueId container, ValueId index, ContainerKin
     return ValueId::invalid();
 }
 
-void IRBuilder::emit_index_set(ValueId container, ValueId index, ValueId value, ContainerKind kind) {
+void IRBuilder::emit_index_set(ValueId container, ValueId index, ValueId value,
+                               ContainerKind kind) {
     IRInst* inst = emit_inst(IROp::IndexSet, m_types.void_type());
     if (inst) {
         inst->index_data.container = container;
@@ -295,7 +333,8 @@ void IRBuilder::emit_index_set(ValueId container, ValueId index, ValueId value, 
     }
 }
 
-ValueId IRBuilder::emit_index_addr(ValueId container, ValueId index, ContainerKind kind, Type* result_type) {
+ValueId IRBuilder::emit_index_addr(ValueId container, ValueId index, ContainerKind kind,
+                                   Type* result_type) {
     IRInst* inst = emit_inst(IROp::IndexAddr, result_type);
     if (inst) {
         inst->index_data.container = container;
@@ -341,7 +380,8 @@ ValueId IRBuilder::emit_stack_alloc(u32 slot_count, Type* result_type) {
     return ValueId::invalid();
 }
 
-ValueId IRBuilder::emit_get_field(ValueId object, StringView field_name, u32 slot_offset, u32 slot_count, Type* result_type) {
+ValueId IRBuilder::emit_get_field(ValueId object, StringView field_name, u32 slot_offset,
+                                  u32 slot_count, Type* result_type) {
     IRInst* inst = emit_inst(IROp::GetField, result_type);
     if (inst) {
         inst->field.object = object;
@@ -353,19 +393,21 @@ ValueId IRBuilder::emit_get_field(ValueId object, StringView field_name, u32 slo
     return ValueId::invalid();
 }
 
-ValueId IRBuilder::emit_get_field_addr(ValueId object, StringView field_name, u32 slot_offset, Type* result_type) {
+ValueId IRBuilder::emit_get_field_addr(ValueId object, StringView field_name, u32 slot_offset,
+                                       Type* result_type) {
     IRInst* inst = emit_inst(IROp::GetFieldAddr, result_type);
     if (inst) {
         inst->field.object = object;
         inst->field.field_name = field_name;
         inst->field.slot_offset = slot_offset;
-        inst->field.slot_count = 0;  // Not used for address computation
+        inst->field.slot_count = 0; // Not used for address computation
         return inst->result;
     }
     return ValueId::invalid();
 }
 
-ValueId IRBuilder::emit_set_field(ValueId object, StringView field_name, u32 slot_offset, u32 slot_count, ValueId value, Type* result_type) {
+ValueId IRBuilder::emit_set_field(ValueId object, StringView field_name, u32 slot_offset,
+                                  u32 slot_count, ValueId value, Type* result_type) {
     IRInst* inst = emit_inst(IROp::SetField, result_type);
     if (inst) {
         inst->field.object = object;
@@ -411,48 +453,58 @@ void IRBuilder::emit_struct_copy(ValueId dest_ptr, ValueId source_ptr, u32 slot_
     }
     // The glue follows the copy: it reads the counted members out of the
     // destination, which only holds them once the slots have been written.
-    if (kind == StructCopyKind::Clone) emit_struct_clone_glue(dest_ptr, struct_type);
+    if (kind == StructCopyKind::Clone)
+        emit_struct_clone_glue(dest_ptr, struct_type);
 }
 
 void IRBuilder::emit_delete(ValueId value, Type* type) {
     IRInst* inst = emit_inst(IROp::Delete, type);
-    if (inst) inst->unary = value;
+    if (inst)
+        inst->unary = value;
 }
 
 void IRBuilder::emit_nullify(ValueId value) {
     IRInst* inst = emit_inst(IROp::Nullify, m_types.void_type());
-    if (inst) inst->unary = value;
+    if (inst)
+        inst->unary = value;
 }
 
 void IRBuilder::emit_assert_heap(ValueId value) {
     IRInst* inst = emit_inst(IROp::AssertHeap, m_types.void_type());
-    if (inst) inst->unary = value;
+    if (inst)
+        inst->unary = value;
 }
 
 void IRBuilder::pin_tracked_value(ValueId value) {
-    if (!m_current_func) return;
+    if (!m_current_func)
+        return;
     IRInst* def = m_current_func->inst_for(value);
-    if (def && def->op == IROp::Copy) def->no_copy_prop = true;
+    if (def && def->op == IROp::Copy)
+        def->no_copy_prop = true;
 }
 
 void IRBuilder::emit_ref_inc(ValueId ptr) {
     IRInst* inst = emit_inst(IROp::RefInc, m_types.void_type());
-    if (inst) inst->unary = ptr;
+    if (inst)
+        inst->unary = ptr;
 }
 
 void IRBuilder::emit_ref_dec(ValueId ptr) {
     IRInst* inst = emit_inst(IROp::RefDec, m_types.void_type());
-    if (inst) inst->unary = ptr;
+    if (inst)
+        inst->unary = ptr;
 }
 
 void IRBuilder::emit_str_retain(ValueId ptr) {
     IRInst* inst = emit_inst(IROp::StrRetain, m_types.void_type());
-    if (inst) inst->unary = ptr;
+    if (inst)
+        inst->unary = ptr;
 }
 
 void IRBuilder::emit_str_release(ValueId ptr) {
     IRInst* inst = emit_inst(IROp::StrRelease, m_types.void_type());
-    if (inst) inst->unary = ptr;
+    if (inst)
+        inst->unary = ptr;
 }
 
 // Whether the compiler is responsible for a map value's counts.
@@ -465,9 +517,10 @@ static bool map_value_is_compiler_counted(Type* value_type) {
     return value_type && !counted_by_runtime(value_type);
 }
 
-void IRBuilder::emit_map_value_ownership(ValueId map_obj, Type* map_type,
-                                         ValueId key_val, ValueId value_val) {
-    if (!map_type || !map_type->is_map()) return;
+void IRBuilder::emit_map_value_ownership(ValueId map_obj, Type* map_type, ValueId key_val,
+                                         ValueId value_val) {
+    if (!map_type || !map_type->is_map())
+        return;
     Type* value_type = map_type->map_info.value_type;
 
     // Storing into a map slot makes the map an owner, so the value must acquire
@@ -487,20 +540,26 @@ void IRBuilder::emit_map_value_ownership(ValueId map_obj, Type* map_type,
 }
 
 void IRBuilder::emit_map_value_delete_if_present(ValueId map_obj, Type* map_type, ValueId key_val) {
-    if (!map_type || !map_type->is_map()) return;
+    if (!map_type || !map_type->is_map())
+        return;
     Type* value_type = map_type->map_info.value_type;
     // A typed Delete covers both shapes the stored value can have: a move-only
     // value is destroyed, a counted one is released. The gate is `member_needs_drop`
     // — the same one map teardown uses — so an overwrite releases exactly what
     // teardown would have.
-    if (!map_value_is_compiler_counted(value_type) || !member_needs_drop(value_type)) return;
+    if (!map_value_is_compiler_counted(value_type) || !member_needs_drop(value_type))
+        return;
 
     StringView contains_native;
     for (const MethodInfo& method : map_type->map_info.methods) {
-        if (method.name == "contains"_sv) { contains_native = method.native_name; break; }
+        if (method.name == "contains"_sv) {
+            contains_native = method.native_name;
+            break;
+        }
     }
     i32 contains_idx = contains_native.empty() ? -1 : m_registry.get_index(contains_native);
-    if (contains_idx < 0) return;
+    if (contains_idx < 0)
+        return;
 
     // if (map.contains(key)) { delete map[key]; }
     ValueId present = emit_call_native(contains_native, alloc_span({map_obj, key_val}),
@@ -525,8 +584,8 @@ void IRBuilder::emit_map_value_delete_if_present(ValueId map_obj, Type* map_type
 //
 // Returns false (emitting nothing) when the iteration natives are unavailable.
 template <typename OnValue>
-bool IRBuilder::emit_map_value_walk(ValueId map_obj, Type* value_type,
-                                    StringView tag, OnValue&& on_value) {
+bool IRBuilder::emit_map_value_walk(ValueId map_obj, Type* value_type, StringView tag,
+                                    OnValue&& on_value) {
     StringView cap_name("__map_iter_capacity", 19);
     StringView next_name("__map_iter_next_occupied", 24);
     // A value struct lives INLINE in the bucket, so its "value" is the address of
@@ -538,13 +597,14 @@ bool IRBuilder::emit_map_value_walk(ValueId map_obj, Type* value_type,
     i32 cap_idx = m_registry.get_index(cap_name);
     i32 next_idx = m_registry.get_index(next_name);
     i32 val_idx = m_registry.get_index(val_name);
-    if (cap_idx < 0 || next_idx < 0 || val_idx < 0) return false;
+    if (cap_idx < 0 || next_idx < 0 || val_idx < 0)
+        return false;
 
     Type* i32_type = m_types.i32_type();
 
     // cap = __map_iter_capacity(map)   (loop-invariant; dominates the loop)
-    ValueId cap = emit_call_native(cap_name, alloc_span({map_obj}), i32_type,
-                                   static_cast<u32>(cap_idx));
+    ValueId cap =
+        emit_call_native(cap_name, alloc_span({map_obj}), i32_type, static_cast<u32>(cap_idx));
 
     // Counted loop over occupied buckets:
     //   for (idx = 0; (next = next_occupied(map, idx)) < cap; idx = next + 1)
@@ -559,13 +619,14 @@ bool IRBuilder::emit_map_value_walk(ValueId map_obj, Type* value_type,
     ValueId idx_param = m_current_func->new_value();
     header->params.push_back({idx_param, i32_type, tag});
 
-    Vector<BlockArgPair> init_args; init_args.push_back({zero});
+    Vector<BlockArgPair> init_args;
+    init_args.push_back({zero});
     finish_block_goto(header->id, alloc_span(init_args));
 
     set_current_block(header);
     ValueId next = emit_call_native(next_name, alloc_span({map_obj, idx_param}), i32_type,
                                     static_cast<u32>(next_idx));
-    ValueId cond = emit_binary(IROp::LtI, next, cap, m_types.bool_type());  // next < cap
+    ValueId cond = emit_binary(IROp::LtI, next, cap, m_types.bool_type()); // next < cap
     finish_block_branch(cond, body->id, exit_block->id);
 
     set_current_block(body);
@@ -576,7 +637,8 @@ bool IRBuilder::emit_map_value_walk(ValueId map_obj, Type* value_type,
     on_value(vp);
     ValueId one = emit_const_int(1, i32_type);
     ValueId idx_next = emit_binary(IROp::AddI, next, one, i32_type);
-    Vector<BlockArgPair> back_args; back_args.push_back({idx_next});
+    Vector<BlockArgPair> back_args;
+    back_args.push_back({idx_next});
     finish_block_goto(header->id, alloc_span(back_args));
 
     set_current_block(exit_block);
@@ -592,17 +654,20 @@ bool IRBuilder::emit_map_value_walk(ValueId map_obj, Type* value_type,
 // `ref` elements are excluded (counted by the runtime), and move-only elements
 // by `member_needs_retain`, since a container of those is deep-copied.
 void IRBuilder::emit_list_elements_retain(ValueId list_val, Type* list_type) {
-    if (!list_type || !list_type->is_list() || !m_current_block) return;
+    if (!list_type || !list_type->is_list() || !m_current_block)
+        return;
     Type* elem_type = list_type->list_info.element_type;
-    if (counted_by_runtime(elem_type) || !member_needs_retain(elem_type)) return;
+    if (counted_by_runtime(elem_type) || !member_needs_retain(elem_type))
+        return;
 
     StringView len_name = "List$$len"_sv;
     i32 len_idx = m_registry.get_index(len_name);
-    if (len_idx < 0) return;
+    if (len_idx < 0)
+        return;
 
     Type* i32_type = m_types.i32_type();
-    ValueId len = emit_call_native(len_name, alloc_span({list_val}), i32_type,
-                                   static_cast<u32>(len_idx));
+    ValueId len =
+        emit_call_native(len_name, alloc_span({list_val}), i32_type, static_cast<u32>(len_idx));
 
     // for (i = 0; i < len; i++) retain(list[i]);
     // `i` is the header's one block param; `len` is used by dominance.
@@ -614,7 +679,8 @@ void IRBuilder::emit_list_elements_retain(ValueId list_val, Type* list_type) {
     ValueId idx_param = m_current_func->new_value();
     header->params.push_back({idx_param, i32_type, "__lstretain_idx"_sv});
 
-    Vector<BlockArgPair> init_args; init_args.push_back({zero});
+    Vector<BlockArgPair> init_args;
+    init_args.push_back({zero});
     finish_block_goto(header->id, alloc_span(init_args));
 
     set_current_block(header);
@@ -629,20 +695,23 @@ void IRBuilder::emit_list_elements_retain(ValueId list_val, Type* list_type) {
     emit_value_retain(elem, elem_type);
     ValueId one = emit_const_int(1, i32_type);
     ValueId idx_next = emit_binary(IROp::AddI, idx_param, one, i32_type);
-    Vector<BlockArgPair> back_args; back_args.push_back({idx_next});
+    Vector<BlockArgPair> back_args;
+    back_args.push_back({idx_next});
     finish_block_goto(header->id, alloc_span(back_args));
 
     set_current_block(exit_block);
 }
 
 void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
-    if (!map_type || !map_type->is_map()) return;
+    if (!map_type || !map_type->is_map())
+        return;
     Type* value_type = map_type->map_info.value_type;
     // The same gate as teardown and as `remove` (member_needs_drop), so clearing
     // releases exactly what destroying the map would have. Gating on
     // move-only-ness instead leaked every counted value a `clear()` discarded.
     // `ref` values are released by the runtime's value_is_ref path.
-    if (!map_value_is_compiler_counted(value_type) || !member_needs_drop(value_type)) return;
+    if (!map_value_is_compiler_counted(value_type) || !member_needs_drop(value_type))
+        return;
     emit_map_value_walk(map_obj, value_type, "mapclr"_sv,
                         [&](ValueId vp) { emit_delete(vp, value_type); });
 }
@@ -651,37 +720,45 @@ void IRBuilder::emit_map_clear_value_cleanup(ValueId map_obj, Type* map_type) {
 // here — they are counted by the runtime, which duplicates them inside
 // roxy_map_copy.
 void IRBuilder::emit_map_values_retain(ValueId map_obj, Type* map_type) {
-    if (!map_type || !map_type->is_map() || !m_current_block) return;
+    if (!map_type || !map_type->is_map() || !m_current_block)
+        return;
     Type* value_type = map_type->map_info.value_type;
-    if (!map_value_is_compiler_counted(value_type) || !member_needs_retain(value_type)) return;
+    if (!map_value_is_compiler_counted(value_type) || !member_needs_retain(value_type))
+        return;
     emit_map_value_walk(map_obj, value_type, "mapretain"_sv,
                         [&](ValueId vp) { emit_value_retain(vp, value_type); });
 }
 
 bool IRBuilder::is_map_insert_noncopyable_value(CallExpr& call_expr) const {
-    if (!call_expr.callee || call_expr.callee->kind != AstKind::ExprGet) return false;
+    if (!call_expr.callee || call_expr.callee->kind != AstKind::ExprGet)
+        return false;
     GetExpr& get_expr = call_expr.callee->get;
-    if (get_expr.name != "insert"_sv) return false;
+    if (get_expr.name != "insert"_sv)
+        return false;
     Type* obj_type = get_expr.object ? get_expr.object->resolved_type : nullptr;
     Type* base = obj_type ? obj_type->base_type() : nullptr;
-    if (!base || !base->is_map()) return false;
+    if (!base || !base->is_map())
+        return false;
     Type* vt = base->map_info.value_type;
     return vt && vt->noncopyable();
 }
 
 void IRBuilder::emit_container_pin(ValueId container) {
     IRInst* inst = emit_inst(IROp::ContainerPin, m_types.void_type());
-    if (inst) inst->unary = container;
+    if (inst)
+        inst->unary = container;
 }
 
 void IRBuilder::emit_container_unpin(ValueId container) {
     IRInst* inst = emit_inst(IROp::ContainerUnpin, m_types.void_type());
-    if (inst) inst->unary = container;
+    if (inst)
+        inst->unary = container;
 }
 
 ValueId IRBuilder::emit_pinned_copy(ValueId src, Type* type) {
     IRInst* inst = emit_inst(IROp::Copy, type);
-    if (!inst) return src;
+    if (!inst)
+        return src;
     inst->unary = src;
     inst->no_copy_prop = true;
     return inst->result;
@@ -703,7 +780,8 @@ ValueId IRBuilder::emit_weak_create(ValueId ptr, Type* weak_type) {
 
 ValueId IRBuilder::maybe_wrap_weak(ValueId value, Type* source_type, Type* target_type,
                                    Expr* source_expr) {
-    if (!source_type || !target_type) return value;
+    if (!source_type || !target_type)
+        return value;
     // A function value is a heap env pointer with a header, so `fun -> weak fun`
     // is created the same way as uniq/ref -> weak.
     if (target_type->kind == TypeKind::Weak &&
@@ -735,7 +813,8 @@ void IRBuilder::emit_ref_borrow_inc(ValueId val, Expr* source) {
 }
 
 ValueId IRBuilder::gen_expr(Expr* expr) {
-    if (!expr) return ValueId::invalid();
+    if (!expr)
+        return ValueId::invalid();
 
     switch (expr->kind) {
         case AstKind::ExprLiteral:
@@ -836,9 +915,13 @@ ValueId IRBuilder::gen_lambda_expr(Expr* expr) {
     if (le.env_struct_type && le.env_struct_type->is_struct()) {
         bool seen = false;
         for (Type* t : m_env_struct_types) {
-            if (t == le.env_struct_type) { seen = true; break; }
+            if (t == le.env_struct_type) {
+                seen = true;
+                break;
+            }
         }
-        if (!seen) m_env_struct_types.push_back(le.env_struct_type);
+        if (!seen)
+            m_env_struct_types.push_back(le.env_struct_type);
     }
 
     // The lambda expression's resolved type is `Function<sig>`. Lowering treats it
@@ -922,7 +1005,8 @@ ValueId IRBuilder::gen_lambda_expr(Expr* expr) {
     }
 
     IRInst* inst = emit_inst(IROp::Closure, expr->resolved_type);
-    if (!inst) return ValueId::invalid();
+    if (!inst)
+        return ValueId::invalid();
     inst->closure.env_struct_name = le.env_struct_name;
     inst->closure.call_function_name = mangle_module_local(le.call_function_name);
     inst->closure.captures = m_allocator.alloc_span(capture_values);
@@ -947,7 +1031,8 @@ ValueId IRBuilder::gen_function_ref(Expr* expr, const FunctionRefTarget& target)
         u32 total = mod_len + 2 + nm_len;
         char* buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(total, 1));
         memcpy(buf, target.module_name.data(), mod_len);
-        buf[mod_len] = ':'; buf[mod_len + 1] = ':';
+        buf[mod_len] = ':';
+        buf[mod_len + 1] = ':';
         memcpy(buf + mod_len + 2, target.name.data(), nm_len);
         cache_key = StringView(buf, total);
         ext_module_name = target.module_name;
@@ -985,7 +1070,7 @@ ValueId IRBuilder::gen_function_ref(Expr* expr, const FunctionRefTarget& target)
         env_type->struct_info.implemented_traits = Span<TraitImplRecord>();
         env_type->struct_info.parent = nullptr;
         env_type->struct_info.module_name = StringView(nullptr, 0);
-        derive_struct_move_only(env_type->struct_info);   // only __call_idx: copyable
+        derive_struct_move_only(env_type->struct_info); // only __call_idx: copyable
         m_type_env.register_named_type(env_struct_name, env_type);
         // Track for the C backend (typedef + TYPEID), like lambda env structs.
         m_env_struct_types.push_back(env_type);
@@ -1079,7 +1164,8 @@ ValueId IRBuilder::gen_function_ref(Expr* expr, const FunctionRefTarget& target)
     }
 
     IRInst* inst = emit_inst(IROp::Closure, expr->resolved_type);
-    if (!inst) return ValueId::invalid();
+    if (!inst)
+        return ValueId::invalid();
     inst->closure.env_struct_name = env_struct_name;
     inst->closure.call_function_name = trampoline_name;
     inst->closure.captures = Span<ValueId>();
@@ -1150,13 +1236,13 @@ ValueId IRBuilder::gen_identifier_expr(Expr* expr) {
             FunctionRefTarget target;
             target.function_type = expr->resolved_type;
             bool member_is_native = member->kind == SymbolKind::ImportedFunction
-                ? member->imported_func.is_native
-                : (member->decl && member->decl->kind == AstKind::DeclFun &&
-                   member->decl->fun_decl.is_native);
+                                        ? member->imported_func.is_native
+                                        : (member->decl && member->decl->kind == AstKind::DeclFun &&
+                                           member->decl->fun_decl.is_native);
             if (member_is_native) {
                 target.kind = member->kind == SymbolKind::ImportedFunction
-                    ? FunctionRefTarget::Kind::ImportedNative
-                    : FunctionRefTarget::Kind::Native;
+                                  ? FunctionRefTarget::Kind::ImportedNative
+                                  : FunctionRefTarget::Kind::Native;
                 target.name = id.mangled_name;
                 i32 idx = m_registry.get_index(id.mangled_name);
                 if (idx < 0) {
@@ -1170,8 +1256,8 @@ ValueId IRBuilder::gen_identifier_expr(Expr* expr) {
                 target.module_name = member->imported_func.module_name;
             } else {
                 target.kind = FunctionRefTarget::Kind::Script;
-                target.name = member->is_pub ? id.mangled_name
-                                             : mangle_module_local(id.mangled_name);
+                target.name =
+                    member->is_pub ? id.mangled_name : mangle_module_local(id.mangled_name);
             }
             return gen_function_ref(expr, target);
         }
@@ -1189,17 +1275,15 @@ ValueId IRBuilder::gen_identifier_expr(Expr* expr) {
                 tdecl && tdecl->kind == AstKind::DeclFun) {
                 template_is_pub = tdecl->fun_decl.is_pub;
             }
-            target.name = template_is_pub
-                ? id.mangled_name
-                : mangle_module_local(id.mangled_name);
+            target.name = template_is_pub ? id.mangled_name : mangle_module_local(id.mangled_name);
             return gen_function_ref(expr, target);
         }
         Symbol* sym = m_symbols.lookup(id.name);
         if (sym && sym->kind == SymbolKind::Function) {
             FunctionRefTarget target;
             target.function_type = sym->type;
-            bool is_native = sym->decl && sym->decl->kind == AstKind::DeclFun
-                && sym->decl->fun_decl.is_native;
+            bool is_native =
+                sym->decl && sym->decl->kind == AstKind::DeclFun && sym->decl->fun_decl.is_native;
             if (is_native) {
                 target.kind = FunctionRefTarget::Kind::Native;
                 target.name = sym->name;
@@ -1404,8 +1488,7 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
 
         set_current_block(merge_block);
         return result_param;
-    }
-    else if (binary_expr.op == BinaryOp::Or) {
+    } else if (binary_expr.op == BinaryOp::Or) {
         ValueId left = gen_expr(binary_expr.left);
 
         IRBlock* right_block = create_block("or.rhs");
@@ -1506,7 +1589,8 @@ ValueId IRBuilder::emit_call_resolved(StringView name, Span<ValueId> args, Type*
     return emit_call(name, args, result_type);
 }
 
-ValueId IRBuilder::emit_native(StringView name, std::initializer_list<ValueId> args, Type* result_type) {
+ValueId IRBuilder::emit_native(StringView name, std::initializer_list<ValueId> args,
+                               Type* result_type) {
     i32 native_idx = m_registry.get_index(name);
     if (native_idx < 0) {
         report_error("Internal error: native function not in registry");
@@ -1522,7 +1606,8 @@ ValueId IRBuilder::emit_native(StringView name, std::initializer_list<ValueId> a
 
 ValueId IRBuilder::emit_call_indirect(ValueId callee_val, Span<ValueId> args, Type* result_type) {
     IRInst* call_inst = emit_inst(IROp::CallIndirect, result_type);
-    if (!call_inst) return ValueId::invalid();
+    if (!call_inst)
+        return ValueId::invalid();
     call_inst->call_indirect.callee = callee_val;
     call_inst->call_indirect.args = args;
     return call_inst->result;
@@ -1543,10 +1628,12 @@ Span<ValueId> IRBuilder::prepend_self(ValueId self, Span<ValueId> args, ValueId 
 }
 
 i32 IRBuilder::find_method_fn_index(Type* struct_type, StringView method_name) {
-    if (!m_module) return -1;
+    if (!m_module)
+        return -1;
     Type* found_in = nullptr;
     const MethodInfo* method_info = m_types.lookup_method(struct_type, method_name, &found_in);
-    if (!method_info || !found_in) return -1;
+    if (!method_info || !found_in)
+        return -1;
     StringView mangled = mangle_method(found_in->struct_info.name, method_name);
     for (u32 fi = 0; fi < m_module->functions.size(); fi++) {
         if (m_module->functions[fi]->name == mangled) {
@@ -1580,7 +1667,7 @@ ValueId IRBuilder::gen_list_constructor(Expr* expr) {
     ValueId list_ptr = emit_native(alloc_name, {esc_val, inline_val}, expr->resolved_type);
 
     // Step 2: Call constructor method with [self, user_args...]
-    StringView ctor_name = call_expr.mangled_name;  // "List$$new"
+    StringView ctor_name = call_expr.mangled_name; // "List$$new"
     i32 ctor_idx = m_registry.get_index(ctor_name);
     Span<ValueId> ctor_args = prepend_self(list_ptr, user_args);
     emit_call_native(ctor_name, ctor_args, m_types.void_type(), static_cast<u32>(ctor_idx));
@@ -1650,13 +1737,12 @@ ValueId IRBuilder::gen_map_constructor(Expr* expr) {
     ValueId vii_val = emit_const_int(value_is_inline ? 1 : 0, m_types.i32_type());
     ValueId hash_val = emit_const_int(static_cast<i64>(hash_fn_index), m_types.i32_type());
     ValueId eq_val = emit_const_int(static_cast<i64>(eq_fn_index), m_types.i32_type());
-    ValueId map_ptr = emit_native(alloc_name,
-                                  {ksc_val, kii_val, vsc_val, vii_val, hash_val, eq_val},
-                                  expr->resolved_type);
+    ValueId map_ptr = emit_native(
+        alloc_name, {ksc_val, kii_val, vsc_val, vii_val, hash_val, eq_val}, expr->resolved_type);
 
     // Step 2: Call constructor with [self, key_kind, user_args...]. Determine
     // MapKeyKind from the key type.
-    i32 key_kind_val = static_cast<i32>(MapKeyKind::Integer);  // default
+    i32 key_kind_val = static_cast<i32>(MapKeyKind::Integer); // default
     if (key_type->kind == TypeKind::F32) {
         key_kind_val = static_cast<i32>(MapKeyKind::Float32);
     } else if (key_type->kind == TypeKind::F64) {
@@ -1668,12 +1754,12 @@ ValueId IRBuilder::gen_map_constructor(Expr* expr) {
     }
     ValueId key_kind_const = emit_const_int(static_cast<i64>(key_kind_val), m_types.i32_type());
 
-    StringView ctor_name = call_expr.mangled_name;  // "Map$$new"
+    StringView ctor_name = call_expr.mangled_name; // "Map$$new"
     i32 ctor_idx = m_registry.get_index(ctor_name);
     // Constructor args: [self, key_kind, optional_capacity]
     Span<ValueId> ctor_args = alloc_span<ValueId>(user_argc + 2);
-    ctor_args[0] = map_ptr;           // self
-    ctor_args[1] = key_kind_const;    // key_kind (hidden)
+    ctor_args[0] = map_ptr;        // self
+    ctor_args[1] = key_kind_const; // key_kind (hidden)
     for (u32 i = 0; i < user_argc; i++) {
         ctor_args[i + 2] = user_args[i];
     }
@@ -1717,10 +1803,13 @@ Span<ValueId> IRBuilder::lower_simple_args(Span<CallArg> arguments) {
 void IRBuilder::mark_simple_args_moved(Span<CallArg> arguments) {
     for (u32 i = 0; i < arguments.size(); i++) {
         const CallArg& arg = arguments[i];
-        if (arg.modifier != ParamModifier::None) continue;
-        if (arg.expr->kind != AstKind::ExprIdentifier) continue;
+        if (arg.modifier != ParamModifier::None)
+            continue;
+        if (arg.expr->kind != AstKind::ExprIdentifier)
+            continue;
         Type* arg_type = arg.expr->resolved_type;
-        if (!arg_type || arg_type->is_copy()) continue;
+        if (!arg_type || arg_type->is_copy())
+            continue;
         mark_moved_from(arg.expr->identifier.name);
     }
 }
@@ -1731,12 +1820,11 @@ IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
 
     // Callee returning a large struct gets a hidden output pointer (stack slot).
     Type* callee_return_type = expr->resolved_type;
-    lowered.returns_large_struct = callee_return_type &&
-        callee_return_type->is_struct() &&
-        callee_return_type->struct_info.slot_count > 4;
+    lowered.returns_large_struct = callee_return_type && callee_return_type->is_struct() &&
+                                   callee_return_type->struct_info.slot_count > 4;
     if (lowered.returns_large_struct) {
-        lowered.output_ptr = emit_stack_alloc(callee_return_type->struct_info.slot_count,
-                                              callee_return_type);
+        lowered.output_ptr =
+            emit_stack_alloc(callee_return_type->struct_info.slot_count, callee_return_type);
     }
 
     // Evaluate arguments - for out/inout args, pass address instead of value
@@ -1750,7 +1838,8 @@ IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
             // Track primitive inout/out identifiers for post-call reload. Structs are
             // modified in place through the pointer, so they need no reload.
             if (arg.modifier == ParamModifier::Inout || arg.modifier == ParamModifier::Out) {
-                if (arg.expr->kind == AstKind::ExprIdentifier && !m_param_is_ptr.count(arg.expr->identifier.name)) {
+                if (arg.expr->kind == AstKind::ExprIdentifier &&
+                    !m_param_is_ptr.count(arg.expr->identifier.name)) {
                     Type* type = arg.expr->resolved_type;
                     if (type && type->is_struct()) {
                         continue;
@@ -1758,7 +1847,8 @@ IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
                     // Structs skipped above; get_type_slot_count gives the correct width
                     // for every remaining type (weak=4, uniq/ref/list/map/string/fn=2).
                     u32 slot_count = slot_count_or_1(type);
-                    lowered.inout_args.push_back({arg.expr->identifier.name, args[i], type, slot_count});
+                    lowered.inout_args.push_back(
+                        {arg.expr->identifier.name, args[i], type, slot_count});
                 }
             }
         } else {
@@ -1770,8 +1860,7 @@ IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
             // Exception: a `Map<_, noncopyable V>.insert(k, v)` defers its value-arg
             // consume to gen_call_member (after the insert), so the contains-guard
             // branch can't strand the value-Nullify before the insert (step 4).
-            bool defer_map_insert_value =
-                i == 1 && is_map_insert_noncopyable_value(call_expr);
+            bool defer_map_insert_value = i == 1 && is_map_insert_noncopyable_value(call_expr);
 
             // Whether this argument is *moved* is a property of the PARAMETER,
             // not of the argument: sema marks the move from
@@ -1787,8 +1876,8 @@ IRBuilder::CallLowering IRBuilder::lower_call_args(Expr* expr) {
             // this site did unconditionally before.
             Type* param_type = callee_param_type(call_expr, i);
             Type* move_decider = param_type ? param_type : arg.expr->resolved_type;
-            if (!defer_map_insert_value && move_decider && move_decider->noncopyable()
-                && arg.expr->resolved_type && arg.expr->resolved_type->noncopyable()) {
+            if (!defer_map_insert_value && move_decider && move_decider->noncopyable() &&
+                arg.expr->resolved_type && arg.expr->resolved_type->noncopyable()) {
                 consume_temp_noncopyable(args[i]);
                 // `f(o.field)`: null the moved-out field in the root (args[i]
                 // already read its value above) so the root's destructor no-ops it.
@@ -1861,13 +1950,15 @@ ValueId IRBuilder::gen_call_direct(Expr* expr, const CallLowering& lowered) {
     ValueId result;
     // Indirect call: callee is a local holding a closure value (Function-typed).
     // Detect via the local scope map — symbol lookups don't see function-body locals.
-    if (LocalVar* lv = find_local(orig_name); lv && lv->type && lv->type->base_type()->is_function()) {
+    if (LocalVar* lv = find_local(orig_name);
+        lv && lv->type && lv->type->base_type()->is_function()) {
         ValueId closure_val = gen_identifier_expr(call_expr.callee);
         result = emit_call_indirect(closure_val, final_args, expr->resolved_type);
     }
     // Native function
     else if (i32 native_idx = m_registry.get_index(lookup_name); native_idx >= 0) {
-        result = emit_call_native(lookup_name, final_args, expr->resolved_type, static_cast<u32>(native_idx));
+        result = emit_call_native(lookup_name, final_args, expr->resolved_type,
+                                  static_cast<u32>(native_idx));
     } else {
         // Module-scope non-pub functions are mangled at definition (see build_function);
         // calls to them must use the mangled name so they resolve within the same module.
@@ -1888,8 +1979,7 @@ ValueId IRBuilder::gen_call_direct(Expr* expr, const CallLowering& lowered) {
                 is_pub = template_decl->fun_decl.is_pub;
             }
         }
-        if (is_function_symbol && !is_pub
-            && orig_name != "main"_sv) {
+        if (is_function_symbol && !is_pub && orig_name != "main"_sv) {
             emit_name = mangle_module_local(func_name);
         }
         result = emit_call(emit_name, final_args, expr->resolved_type);
@@ -1910,18 +2000,21 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
 
     // Module-qualified call: module.function(). The object's resolved_type is null
     // for module references.
-    if (get_expr.object->kind == AstKind::ExprIdentifier && get_expr.object->resolved_type == nullptr) {
+    if (get_expr.object->kind == AstKind::ExprIdentifier &&
+        get_expr.object->resolved_type == nullptr) {
         StringView module_name = get_expr.object->identifier.name;
         StringView func_name = get_expr.name;
         // The function name is just the member name for the native registry.
         i32 native_idx = m_registry.get_index(func_name);
         ValueId result;
         if (native_idx >= 0) {
-            result = emit_call_native(func_name, final_args, expr->resolved_type, static_cast<u32>(native_idx));
+            result = emit_call_native(func_name, final_args, expr->resolved_type,
+                                      static_cast<u32>(native_idx));
         } else {
             result = emit_call_external(module_name, func_name, final_args, expr->resolved_type);
         }
-        if (lowered.returns_large_struct) result = lowered.output_ptr;
+        if (lowered.returns_large_struct)
+            result = lowered.output_ptr;
         return result;
     }
 
@@ -1953,7 +2046,7 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         if (get_expr.name == "done"_sv) {
             // Inline: load __state (fixed slot 1) and compare to the done sentinel.
             // Uniform across all coroutines — no dispatch, no $$done function.
-            ValueId state = emit_get_field(obj, "__state"_sv, /*slot_offset*/1, /*slot_count*/1,
+            ValueId state = emit_get_field(obj, "__state"_sv, /*slot_offset*/ 1, /*slot_count*/ 1,
                                            m_types.i32_type());
             // CORO_STATE_DONE (see coroutine_lowering.cpp): positive sentinel above
             // all yield-point states.
@@ -1969,7 +2062,8 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
     // whose type is fun(...) -> R. Checked before method dispatch since a field name
     // could collide with a method name (and we want the field).
     const FieldInfo* fn_field = (struct_type && struct_type->is_struct())
-        ? struct_type->struct_info.find_field(get_expr.name) : nullptr;
+                                    ? struct_type->struct_info.find_field(get_expr.name)
+                                    : nullptr;
     if (fn_field && fn_field->type && fn_field->type->base_type()->is_function()) {
         // Read the closure value from the field, then CALL_INDIRECT.
         ValueId closure_val = gen_expr(call_expr.callee);
@@ -1989,10 +2083,9 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         // Pushing a `ref` element into a List makes the container hold a counted
         // borrow — increment it. The hold is released when the element leaves
         // (container destroy / overwrite). lifetimes.md "Applying the model".
-        if (struct_type->is_list() && get_expr.name == "push"_sv
-            && struct_type->list_info.element_type
-            && struct_type->list_info.element_type->kind == TypeKind::Ref
-            && args.size() >= 1) {
+        if (struct_type->is_list() && get_expr.name == "push"_sv &&
+            struct_type->list_info.element_type &&
+            struct_type->list_info.element_type->kind == TypeKind::Ref && args.size() >= 1) {
             emit_ref_inc(args[0]);
         }
         // Pushing a counted element makes the list an owner of it — acquire a
@@ -2006,8 +2099,8 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         // just above; move-only elements are excluded by the predicate itself,
         // being moved into the list rather than duplicated.
         Type* push_elem = struct_type->is_list() ? struct_type->list_info.element_type : nullptr;
-        if (get_expr.name == "push"_sv && !counted_by_runtime(push_elem)
-            && member_needs_retain(push_elem) && args.size() >= 1) {
+        if (get_expr.name == "push"_sv && !counted_by_runtime(push_elem) &&
+            member_needs_retain(push_elem) && args.size() >= 1) {
             emit_value_retain(args[0], push_elem);
         }
         // Map insert/remove/clear must destroy noncopyable values that are
@@ -2021,8 +2114,8 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         // would otherwise strand the value-Nullify before the insert, storing null;
         // see is_map_insert_noncopyable_value). remove/clear have no value arg, so
         // their cleanup is a plain pre-call destroy.
-        if (struct_type->is_map() && is_map_insert_noncopyable_value(call_expr)
-            && args.size() >= 2) {
+        if (struct_type->is_map() && is_map_insert_noncopyable_value(call_expr) &&
+            args.size() >= 2) {
             emit_map_value_ownership(obj, struct_type, args[0], args[1]);
             StringView native_name = call_expr.mangled_name;
             i32 native_idx = m_registry.get_index(native_name);
@@ -2050,8 +2143,7 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         StringView native_name = call_expr.mangled_name;
         i32 native_idx = m_registry.get_index(native_name);
         Span<ValueId> method_args = prepend_self(obj, args);
-        ValueId container_result = emit_call_native(native_name, method_args,
-                                                    expr->resolved_type,
+        ValueId container_result = emit_call_native(native_name, method_args, expr->resolved_type,
                                                     static_cast<u32>(native_idx));
 
         // `values()` and `copy()` hand back a container that SHARES the
@@ -2102,9 +2194,8 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         // the operator expression uses. Enums compare as i32 discriminants.
         BinaryOp bop;
         if (args.size() == 1 && trait_method_to_binary_op(get_expr.name, bop)) {
-            IROp op = is_comparison_binary_op(bop)
-                ? get_comparison_op(bop, struct_type)
-                : get_binary_op(bop, struct_type);
+            IROp op = is_comparison_binary_op(bop) ? get_comparison_op(bop, struct_type)
+                                                   : get_binary_op(bop, struct_type);
             return emit_binary(op, obj, args[0], expr->resolved_type);
         }
         UnaryOp uop;
@@ -2143,9 +2234,8 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
     // an owned-local's / temp's own Delete record (which shares the receiver value).
     ValueId recv_borrow = ValueId::invalid();
     BlockId recv_borrow_block = BlockId::invalid();
-    if (struct_type && struct_type->is_struct()
-        && obj_type && obj_type->kind == TypeKind::Uniq
-        && m_current_block) {
+    if (struct_type && struct_type->is_struct() && obj_type && obj_type->kind == TypeKind::Uniq &&
+        m_current_block) {
         recv_borrow = emit_pinned_copy(obj, obj_type);
         emit_ref_inc(recv_borrow);
         recv_borrow_block = m_current_block->id;
@@ -2175,7 +2265,8 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
         m_call_borrow_cleanups.push_back(ci);
     }
 
-    if (lowered.returns_large_struct) result = lowered.output_ptr;
+    if (lowered.returns_large_struct)
+        result = lowered.output_ptr;
     return result;
 }
 
@@ -2184,8 +2275,12 @@ ValueId IRBuilder::gen_call_member(Expr* expr, const CallLowering& lowered) {
 // index operations whose re-execution could change observable state).
 static bool is_pure_field_path(Expr* expr) {
     while (expr) {
-        if (expr->kind == AstKind::ExprIdentifier) return true;
-        if (expr->kind == AstKind::ExprGet) { expr = expr->get.object; continue; }
+        if (expr->kind == AstKind::ExprIdentifier)
+            return true;
+        if (expr->kind == AstKind::ExprGet) {
+            expr = expr->get.object;
+            continue;
+        }
         return false;
     }
     return false;
@@ -2202,14 +2297,17 @@ static bool is_pure_field_path(Expr* expr) {
 // heap_root_of_lvalue or are stack-frame-rooted). A field chain is walked down
 // through ExprGet; the first ExprIndex on a container is the root.
 static Expr* container_index_root_of_lvalue(Expr* lvalue) {
-    for (Expr* e = lvalue; e; ) {
+    for (Expr* e = lvalue; e;) {
         if (e->kind == AstKind::ExprIndex) {
             Expr* obj = e->index.object;
             Type* obj_type = obj ? obj->resolved_type : nullptr;
             Type* base = obj_type ? obj_type->base_type() : nullptr;
             return (base && base->is_container()) ? obj : nullptr;
         }
-        if (e->kind == AstKind::ExprGet) { e = e->get.object; continue; }
+        if (e->kind == AstKind::ExprGet) {
+            e = e->get.object;
+            continue;
+        }
         return nullptr;
     }
     return nullptr;
@@ -2220,17 +2318,21 @@ ValueId IRBuilder::heap_root_of_lvalue(Expr* lvalue, Type** out_type) {
     // identifier names a slot on the caller's own frame (the slot outlives the
     // call); an index/call base isn't a pure lvalue we can recount. So the only
     // shape with a heap root to count is `object.field`.
-    if (!lvalue || lvalue->kind != AstKind::ExprGet) return ValueId::invalid();
+    if (!lvalue || lvalue->kind != AstKind::ExprGet)
+        return ValueId::invalid();
     Expr* object = lvalue->get.object;
-    if (!object) return ValueId::invalid();
+    if (!object)
+        return ValueId::invalid();
     Type* obj_type = object->resolved_type;
 
     if (obj_type && obj_type->kind == TypeKind::Uniq) {
         // We dereference `object` (a heap owner) to reach the field, so the field
         // lives in object's pointee — that pointee is the heap root. Re-evaluate
         // it (idempotent for a pure path) to get a countable data pointer.
-        if (!is_pure_field_path(object)) return ValueId::invalid();
-        if (out_type) *out_type = obj_type;
+        if (!is_pure_field_path(object))
+            return ValueId::invalid();
+        if (out_type)
+            *out_type = obj_type;
         return gen_expr(object);
     }
     if (obj_type && (obj_type->kind == TypeKind::Ref || obj_type->kind == TypeKind::Weak)) {
@@ -2265,8 +2367,10 @@ void IRBuilder::mark_call_args_moved(Expr* expr) {
     // would trip a false use-after-move on the next loop iteration and (for noncopyable
     // types) null out a local the caller still owns.
     Type* callee_func_type = call_expr.callee->resolved_type;
-    if (callee_func_type) callee_func_type = callee_func_type->base_type();
-    if (!callee_func_type || !callee_func_type->is_function()) return;
+    if (callee_func_type)
+        callee_func_type = callee_func_type->base_type();
+    if (!callee_func_type || !callee_func_type->is_function())
+        return;
     Span<Type*> param_types = callee_func_type->func_info.param_types;
     // Offset user args past the implicit `self` for genuine method callees only.
     // The old blanket "GetExpr callee → 1" misaligned module-qualified calls and
@@ -2274,12 +2378,16 @@ void IRBuilder::mark_call_args_moved(Expr* expr) {
     // noncopyable argument was never marked moved — the caller's scope-exit
     // Delete then double-freed the object the callee already owned.
     i32 self_offset = self_pass_param_offset(call_expr);
-    if (self_offset < 0) return;
+    if (self_offset < 0)
+        return;
     u32 param_offset = static_cast<u32>(self_offset);
-    for (u32 i = 0; i < call_expr.arguments.size() && (i + param_offset) < param_types.size(); i++) {
+    for (u32 i = 0; i < call_expr.arguments.size() && (i + param_offset) < param_types.size();
+         i++) {
         const CallArg& arg = call_expr.arguments[i];
-        if (arg.modifier != ParamModifier::None) continue;
-        if (arg.expr->kind != AstKind::ExprIdentifier) continue;
+        if (arg.modifier != ParamModifier::None)
+            continue;
+        if (arg.expr->kind != AstKind::ExprIdentifier)
+            continue;
         Type* arg_type = arg.expr->resolved_type;
         Type* param_type = param_types[i + param_offset];
         if (arg_type && arg_type->noncopyable() && param_type && param_type->noncopyable()) {
@@ -2297,23 +2405,23 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     // Type-driven early delegations when the callee is a bare identifier.
     if (call_expr.callee->kind == AstKind::ExprIdentifier && callee_type) {
         if (callee_type->is_primitive() && !callee_type->is_void()) {
-            return gen_primitive_cast(expr);     // i32(x), f64(y), ...
+            return gen_primitive_cast(expr); // i32(x), f64(y), ...
         }
         if (callee_type->is_struct()) {
-            return gen_constructor_call(expr);   // Foo(...)
+            return gen_constructor_call(expr); // Foo(...)
         }
         if (callee_type->is_list()) {
-            return gen_list_constructor(expr);   // List<T>() / List<T>(cap)
+            return gen_list_constructor(expr); // List<T>() / List<T>(cap)
         }
         if (callee_type->is_map()) {
-            return gen_map_constructor(expr);    // Map<K,V>() / Map<K,V>(cap)
+            return gen_map_constructor(expr); // Map<K,V>() / Map<K,V>(cap)
         }
     }
 
     // Check if this is a named constructor call: Type.ctor_name(...)
     // The callee is a GetExpr where the object is a type name (not a variable)
-    // For named constructors: ge.object is an identifier that resolves to a STRUCT TYPE (not a variable of struct type)
-    // This is detected by checking if the identifier matches a type name
+    // For named constructors: ge.object is an identifier that resolves to a STRUCT TYPE (not a
+    // variable of struct type) This is detected by checking if the identifier matches a type name
     if (call_expr.callee->kind == AstKind::ExprGet) {
         GetExpr& get_expr = call_expr.callee->get;
         if (get_expr.object->kind == AstKind::ExprIdentifier) {
@@ -2349,13 +2457,15 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     // record so they release before any owner Delete on unwind:
     //   - field-rooted lvalue (`f(inout heap_obj.field)`): RefInc the heap root
     //     (free-block), released by RefDec.
-    //   - container-index lvalue (`f(inout list[i])`, lifetimes.md "Container element lvalues"): pin the
+    //   - container-index lvalue (`f(inout list[i])`, lifetimes.md "Container element lvalues"):
+    //   pin the
     //     container (borrow_count), so a mid-call realloc/free of it traps before
     //     the element address can dangle; released by unpin.
     Vector<IRCleanupInfo> call_borrows;
     for (u32 i = 0; i < call_expr.arguments.size() && m_current_block; i++) {
         CallArg& arg = call_expr.arguments[i];
-        if (arg.modifier != ParamModifier::Inout && arg.modifier != ParamModifier::Out) continue;
+        if (arg.modifier != ParamModifier::Inout && arg.modifier != ParamModifier::Out)
+            continue;
 
         Type* root_type = nullptr;
         ValueId root = heap_root_of_lvalue(arg.expr, &root_type);
@@ -2396,32 +2506,32 @@ ValueId IRBuilder::gen_call_expr(Expr* expr) {
     ValueId result;
     if (call_expr.callee->kind == AstKind::ExprIdentifier) {
         result = gen_call_direct(expr, lowered);
-    }
-    else if (call_expr.callee->kind == AstKind::ExprGet) {
+    } else if (call_expr.callee->kind == AstKind::ExprGet) {
         result = gen_call_member(expr, lowered);
-    }
-    else if (callee_type && callee_type->base_type()->is_function()) {
+    } else if (callee_type && callee_type->base_type()->is_function()) {
         // General indirect call: callee is some Function-typed expression (call
         // result, index, field access, ...) — including a borrowed `ref fun`,
         // which shares the env-pointer representation. Evaluate and CALL_INDIRECT.
         ValueId closure_val = gen_expr(call_expr.callee);
         result = emit_call_indirect(closure_val, lowered.final_args, expr->resolved_type);
-    }
-    else {
+    } else {
         report_error("Internal error: unhandled call expression kind");
         return ValueId::invalid();
     }
 
     // If a dispatch helper bailed because the block was terminated, stop here to
     // match the original early-return (no inout reload / move-marking on a dead block).
-    if (!m_current_block) return result;
+    if (!m_current_block)
+        return result;
 
     // Close the call-site borrows: balanced release on the normal path (RefDec or
     // unpin) plus a deferred call-scoped exception record. Lowering narrows each to
     // [open, Nullify) so it covers exactly the call window.
     for (IRCleanupInfo& ci : call_borrows) {
-        if (ci.kind == IRCleanupKind::Unpin) emit_container_unpin(ci.value);
-        else emit_ref_dec(ci.value);
+        if (ci.kind == IRCleanupKind::Unpin)
+            emit_container_unpin(ci.value);
+        else
+            emit_ref_dec(ci.value);
         emit_nullify(ci.value);
         ci.end_block = m_current_block->id;
         m_call_borrow_cleanups.push_back(ci);
@@ -2442,7 +2552,8 @@ ValueId IRBuilder::gen_index_expr(Expr* expr) {
     if (base_type && base_type->is_struct()) {
         StringView method_name("index", 5);
         Type* found_in = nullptr;
-        const MethodInfo* method_info = lookup_method_in_hierarchy(base_type, method_name, &found_in);
+        const MethodInfo* method_info =
+            lookup_method_in_hierarchy(base_type, method_name, &found_in);
         if (method_info && found_in) {
             // `Index` is an operator trait like Add/Mul, so its receiver may be
             // an rvalue: `(a + b)[0]`, `mk()[1]`. Reading through a temporary is
@@ -2542,7 +2653,8 @@ ValueId IRBuilder::gen_get_expr(Expr* expr) {
 
 IRBuilder::FieldAccess IRBuilder::resolve_field_access(Type* struct_type, StringView name) {
     FieldAccess access;
-    if (!struct_type || !struct_type->is_struct()) return access;
+    if (!struct_type || !struct_type->is_struct())
+        return access;
 
     if (const FieldInfo* field_info = struct_type->struct_info.find_field(name)) {
         access.slot_offset = field_info->slot_offset;
@@ -2553,11 +2665,12 @@ IRBuilder::FieldAccess IRBuilder::resolve_field_access(Type* struct_type, String
 
     // Check for variant field in when clauses. The actual offset is
     // union_slot_offset + the variant field's offset within the union.
-    const VariantFieldInfo* variant_field_info = struct_type->struct_info.find_variant_field(
-        name, &access.when_clause, &access.variant);
+    const VariantFieldInfo* variant_field_info =
+        struct_type->struct_info.find_variant_field(name, &access.when_clause, &access.variant);
     if (variant_field_info) {
         access.is_variant_field = true;
-        access.slot_offset = access.when_clause->union_slot_offset + variant_field_info->slot_offset;
+        access.slot_offset =
+            access.when_clause->union_slot_offset + variant_field_info->slot_offset;
         access.slot_count = variant_field_info->slot_count;
         access.field_type = variant_field_info->type;
     }
@@ -2565,14 +2678,15 @@ IRBuilder::FieldAccess IRBuilder::resolve_field_access(Type* struct_type, String
 }
 
 void IRBuilder::emit_variant_guard(ValueId obj, const FieldAccess& access, const char* label) {
-    if (!access.is_variant_field || !access.when_clause || !access.variant) return;
+    if (!access.is_variant_field || !access.when_clause || !access.variant)
+        return;
 
     // Load the discriminant and compare against this variant's value.
     ValueId disc = emit_get_field(obj, access.when_clause->discriminant_name,
                                   access.when_clause->discriminant_slot_offset, 1,
                                   access.when_clause->discriminant_type);
-    ValueId expected = emit_const_int(access.variant->discriminant_value,
-                                      access.when_clause->discriminant_type);
+    ValueId expected =
+        emit_const_int(access.variant->discriminant_value, access.when_clause->discriminant_type);
     ValueId matches = emit_binary(IROp::EqI, disc, expected, m_types.bool_type());
 
     IRBlock* pass_block = create_block(intern_concat(label, "_pass"));
@@ -2595,16 +2709,21 @@ ValueId IRBuilder::gen_assign_expr(Expr* expr) {
     if (assign_expr.op != AssignOp::Assign) {
         bool handled = false;
         ValueId combined = gen_compound_assign(expr, value, handled);
-        if (handled) return combined;  // struct trait dispatch did the whole assignment
+        if (handled)
+            return combined; // struct trait dispatch did the whole assignment
         value = combined;
     }
 
     // Dispatch on the assignment target.
     switch (assign_expr.target->kind) {
-        case AstKind::ExprIdentifier: return gen_assign_local(expr, value);
-        case AstKind::ExprGet:        return gen_assign_field(expr, value);
-        case AstKind::ExprIndex:      return gen_assign_index(expr, value);
-        default:                      return value;
+        case AstKind::ExprIdentifier:
+            return gen_assign_local(expr, value);
+        case AstKind::ExprGet:
+            return gen_assign_field(expr, value);
+        case AstKind::ExprIndex:
+            return gen_assign_index(expr, value);
+        default:
+            return value;
     }
 }
 
@@ -2754,7 +2873,8 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
                 ValueId old = emit_load_ptr(addr, gslots, gtype);
                 emit_delete(old, gtype);
             }
-            value = maybe_wrap_weak(value, assign_expr.value->resolved_type, gtype, assign_expr.value);
+            value =
+                maybe_wrap_weak(value, assign_expr.value->resolved_type, gtype, assign_expr.value);
             ValueId result;
             if (gtype && gtype->is_struct()) {
                 // The global outlives every frame, so it must own what it holds
@@ -2810,8 +2930,8 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
     // target is a struct, but it must precede the destroy below for the same
     // reason gen_return_stmt orders it that way: WeakCreate reads the object's
     // generation, which a drop would tombstone.
-    value = maybe_wrap_weak(value, assign_expr.value->resolved_type, assign_expr.target->resolved_type,
-                            assign_expr.value);
+    value = maybe_wrap_weak(value, assign_expr.value->resolved_type,
+                            assign_expr.target->resolved_type, assign_expr.value);
 
     // For copyable struct rvalues that alias source storage, allocate fresh
     // storage and emit a StructCopy — mirrors the gen_var_decl fix. Struct
@@ -2828,8 +2948,8 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
     // retain-before-release rule the `string` self-assignment above spells out,
     // one level up. (Found by reducing a generated program to `a = a;`.)
     bool value_is_fresh = produces_fresh_struct_storage(assign_expr.value);
-    if (assign_expr.op == AssignOp::Assign && target_type && target_type->is_struct()
-        && target_type->is_copy() && !value_is_fresh) {
+    if (assign_expr.op == AssignOp::Assign && target_type && target_type->is_struct() &&
+        target_type->is_copy() && !value_is_fresh) {
         u32 slot_count = target_type->struct_info.slot_count;
         ValueId fresh = emit_stack_alloc(slot_count, target_type);
         // Clone, for the same reason as gen_var_decl: the guard above is
@@ -2846,7 +2966,7 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
         OwnedLocalInfo* owned_info = m_ownership.find_by_name(name);
         if (owned_info && !owned_info->is_moved) {
             emit_implicit_destroy(*owned_info);
-            owned_info->is_moved = false;  // Reset — new value is now live
+            owned_info->is_moved = false; // Reset — new value is now live
         } else if (owned_info && owned_info->is_moved) {
             // Variable was moved but now being reassigned — make it live again
             owned_info->is_moved = false;
@@ -2893,8 +3013,8 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
         }
     }
     // `y = o.field`: null the moved-out source field in its root.
-    if (target_takes_ownership &&
-        assign_expr.value->resolved_type && assign_expr.value->resolved_type->noncopyable()) {
+    if (target_takes_ownership && assign_expr.value->resolved_type &&
+        assign_expr.value->resolved_type->noncopyable()) {
         nullify_moved_field_source(assign_expr.value);
     }
 
@@ -2957,8 +3077,8 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
     // site with the retain-before-release ordering an overwrite needs: `ref` by
     // the dec/inc pair above, `string` by the read here plus the release below.
     // Letting the generic destroy also fire would decrement twice.
-    if (field_type && field_type->kind != TypeKind::String
-        && field_type->kind != TypeKind::Ref && member_needs_drop(field_type)) {
+    if (field_type && field_type->kind != TypeKind::String && field_type->kind != TypeKind::Ref &&
+        member_needs_drop(field_type)) {
         emit_single_field_destroy(obj, get_expr.name, slot_offset, slot_count, field_type);
     }
     // A `string` field: read the overwritten string now (before the store), but
@@ -2988,7 +3108,8 @@ ValueId IRBuilder::gen_assign_field(Expr* expr, ValueId value) {
                          struct_copy_kind_for(assign_expr.value));
         result = value;
     } else {
-        result = emit_set_field(obj, get_expr.name, slot_offset, slot_count, value, expr->resolved_type);
+        result =
+            emit_set_field(obj, get_expr.name, slot_offset, slot_count, value, expr->resolved_type);
     }
 
     // Consume a temporary the field now owns (cleanup, not move-only-ness).
@@ -3039,20 +3160,22 @@ ValueId IRBuilder::gen_assign_index(Expr* expr, ValueId value) {
     if (container_type && container_type->is_struct()) {
         StringView method_name("index_mut", 9);
         Type* found_in = nullptr;
-        const MethodInfo* method_info = lookup_method_in_hierarchy(container_type, method_name, &found_in);
+        const MethodInfo* method_info =
+            lookup_method_in_hierarchy(container_type, method_name, &found_in);
         if (method_info && found_in) {
             ValueId self_ptr = gen_lvalue_addr(index_expr.object);
             ValueId index_val = gen_expr(index_expr.index);
             StringView mangled = mangle_method(found_in->struct_info.name, method_name);
-            return emit_call(mangled, alloc_span({self_ptr, index_val, value}), m_types.void_type());
+            return emit_call(mangled, alloc_span({self_ptr, index_val, value}),
+                             m_types.void_type());
         }
     }
 
     // List/Map indexing: emit IndexSet IR op
     if (container_type && container_type->is_container()) {
         bool is_list = container_type->is_list();
-        Type* elem_type = is_list ? container_type->list_info.element_type
-                                  : container_type->map_info.value_type;
+        Type* elem_type =
+            is_list ? container_type->list_info.element_type : container_type->map_info.value_type;
         bool elem_noncopyable = elem_type && elem_type->noncopyable();
         bool elem_is_ref = elem_type && elem_type->kind == TypeKind::Ref;
         ContainerKind kind = is_list ? ContainerKind::List : ContainerKind::Map;
@@ -3063,7 +3186,8 @@ ValueId IRBuilder::gen_assign_index(Expr* expr, ValueId value) {
         // Overwriting a `ref` List element rebalances the count: release the old
         // borrow, acquire the new (the caller keeps its own copy of the new ref).
         // The index is always in bounds, so the old element always exists.
-        // (lifetimes.md "Applying the model". Map<_, ref> overwrite is part of the deferred Map work.)
+        // (lifetimes.md "Applying the model". Map<_, ref> overwrite is part of the deferred Map
+        // work.)
         if (elem_is_ref && is_list) {
             ValueId old = emit_index_get(obj, index_val, kind, elem_type);
             emit_ref_dec(old);
@@ -3112,9 +3236,7 @@ ValueId IRBuilder::gen_assign_index(Expr* expr, ValueId value) {
     return value;
 }
 
-ValueId IRBuilder::gen_grouping_expr(Expr* expr) {
-    return gen_expr(expr->grouping.expr);
-}
+ValueId IRBuilder::gen_grouping_expr(Expr* expr) { return gen_expr(expr->grouping.expr); }
 
 ValueId IRBuilder::gen_this_expr(Expr* expr) {
     // 'self' is the first parameter in methods
@@ -3122,7 +3244,8 @@ ValueId IRBuilder::gen_this_expr(Expr* expr) {
 }
 
 ValueId IRBuilder::try_fold_cast(ValueId source, Type* source_type, Type* target_type) {
-    if (!m_current_func) return ValueId::invalid();
+    if (!m_current_func)
+        return ValueId::invalid();
     FoldedConst folded;
     if (!fold_cast_const(m_current_func->inst_for(source), source_type, target_type, folded)) {
         return ValueId::invalid();
@@ -3235,8 +3358,8 @@ ValueId IRBuilder::gen_super_call(Expr* expr) {
     // super.name(...) is a named constructor iff the analyzer resolved it to
     // one and recorded the name in constructor_name (a void result type does
     // NOT imply a constructor — super methods can return void).
-    bool is_constructor_call = super_expr.method_name.empty()
-                            || call_expr.constructor_name.size() > 0;
+    bool is_constructor_call =
+        super_expr.method_name.empty() || call_expr.constructor_name.size() > 0;
 
     StructTypeInfo& target_struct_type_info = target_type->struct_info;
 
@@ -3318,8 +3441,8 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
     // `string` adopt-or-retain, so `V { kind = K::Str, s = a + b }` stored a
     // string whose only count was the temporary's, and freed it at the end of
     // the statement — the field dangled from then on.
-    auto init_field = [&](StringView name, Type* field_type, u32 slot_offset,
-                          u32 slot_count, Expr* value_expr) {
+    auto init_field = [&](StringView name, Type* field_type, u32 slot_offset, u32 slot_count,
+                          Expr* value_expr) {
         ValueId value = gen_expr(value_expr);
 
         // Wrap uniq/ref → weak conversion for struct literal field
@@ -3382,8 +3505,8 @@ ValueId IRBuilder::gen_struct_literal_expr(Expr* expr) {
             value_expr = find_field_default(struct_type, field_info.name);
         }
 
-        init_field(field_info.name, field_info.type, field_info.slot_offset,
-                   field_info.slot_count, value_expr);
+        init_field(field_info.name, field_info.type, field_info.slot_offset, field_info.slot_count,
+                   value_expr);
     }
 
     // Initialize variant fields from when clauses
@@ -3419,8 +3542,7 @@ ValueId IRBuilder::gen_static_get_expr(Expr* expr) {
     // whichever enum was defined last, emitting the wrong constant.
     Type* enum_type = expr->resolved_type;
     if (enum_type && enum_type->is_enum()) {
-        if (const EnumVariantInfo* variant =
-                enum_type->enum_info.find_variant(sge.member_name)) {
+        if (const EnumVariantInfo* variant = enum_type->enum_info.find_variant(sge.member_name)) {
             return emit_const_int(variant->value, enum_type);
         }
     }
@@ -3442,7 +3564,8 @@ ValueId IRBuilder::emit_to_string_value(ValueId val, Type* type, bool* out_owned
     while (type && (type->kind == TypeKind::Uniq || type->kind == TypeKind::Ref)) {
         type = type->ref_info.inner_type;
     }
-    if (!type) return ValueId::invalid();
+    if (!type)
+        return ValueId::invalid();
 
     if (type->kind == TypeKind::String) {
         // String value — use directly, no conversion needed (borrowed).
@@ -3524,8 +3647,8 @@ ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
     i32 concat_idx = m_registry.get_index(concat_name);
 
     for (u32 i = 1; i < string_parts.size(); i++) {
-        result = emit_call_native(concat_name, alloc_span({result, string_parts[i]}),
-                                  string_type, static_cast<u32>(concat_idx));
+        result = emit_call_native(concat_name, alloc_span({result, string_parts[i]}), string_type,
+                                  static_cast<u32>(concat_idx));
         // Each concat produces a fresh owned string temp; track it for release at
         // scope exit (finding 9b). The final `result` is returned and re-tracked by
         // gen_expr (track_string_temp skips already-tracked values).
@@ -3536,7 +3659,8 @@ ValueId IRBuilder::gen_string_interp_expr(Expr* expr) {
 }
 
 ValueId IRBuilder::gen_lvalue_addr(Expr* expr, bool rvalue_ok) {
-    if (!expr) return ValueId::invalid();
+    if (!expr)
+        return ValueId::invalid();
 
     switch (expr->kind) {
         case AstKind::ExprIdentifier: {
@@ -3594,16 +3718,16 @@ ValueId IRBuilder::gen_lvalue_addr(Expr* expr, bool rvalue_ok) {
         case AstKind::ExprIndex: {
             // Address of a List/Map element (out/inout argument). The runtime
             // returns a pointer into the backing buffer, valid for the borrow
-            // because the call site pins the container (lifetimes.md "Container element lvalues"). The
-            // element type is the subscript's resolved (borrowed) type.
+            // because the call site pins the container (lifetimes.md "Container element lvalues").
+            // The element type is the subscript's resolved (borrowed) type.
             IndexExpr& index_expr = expr->index;
             Type* obj_type = index_expr.object->resolved_type;
             Type* base_type = obj_type ? obj_type->base_type() : nullptr;
             if (base_type && base_type->is_container()) {
                 ValueId obj = gen_expr(index_expr.object);
                 ValueId idx = gen_expr(index_expr.index);
-                ContainerKind kind = base_type->is_list() ? ContainerKind::List
-                                                          : ContainerKind::Map;
+                ContainerKind kind =
+                    base_type->is_list() ? ContainerKind::List : ContainerKind::Map;
                 return emit_index_addr(obj, idx, kind, expr->resolved_type);
             }
             report_error("Internal error: cannot take the address of this index expression");
@@ -3619,7 +3743,8 @@ ValueId IRBuilder::gen_lvalue_addr(Expr* expr, bool rvalue_ok) {
             // return into a stack-allocated pointer, so gen_expr hands back
             // exactly the pointer `self` wants. (`emit_to_string_value` relies
             // on the same property for `expr.to_string()`.)
-            if (rvalue_ok) return gen_expr(expr);
+            if (rvalue_ok)
+                return gen_expr(expr);
             // Should not happen - semantic analysis validated lvalues
             report_error("Internal error: expression is not a valid lvalue");
             return ValueId::invalid();
@@ -3646,7 +3771,8 @@ IROp IRBuilder::get_binary_op(BinaryOp op, Type* type) {
         case BinaryOp::Mul:
             return is_f32 ? IROp::MulF : (is_f64 ? IROp::MulD : IROp::MulI);
         case BinaryOp::Div:
-            return is_f32 ? IROp::DivF : (is_f64 ? IROp::DivD : (is_unsigned ? IROp::DivU : IROp::DivI));
+            return is_f32 ? IROp::DivF
+                          : (is_f64 ? IROp::DivD : (is_unsigned ? IROp::DivU : IROp::DivI));
         case BinaryOp::Mod:
             return is_unsigned ? IROp::ModU : IROp::ModI;
         case BinaryOp::BitAnd:
@@ -3677,13 +3803,17 @@ IROp IRBuilder::get_comparison_op(BinaryOp op, Type* type) {
         case BinaryOp::NotEqual:
             return is_f32 ? IROp::NeF : (is_f64 ? IROp::NeD : IROp::NeI);
         case BinaryOp::Less:
-            return is_f32 ? IROp::LtF : (is_f64 ? IROp::LtD : (is_unsigned ? IROp::LtU : IROp::LtI));
+            return is_f32 ? IROp::LtF
+                          : (is_f64 ? IROp::LtD : (is_unsigned ? IROp::LtU : IROp::LtI));
         case BinaryOp::LessEq:
-            return is_f32 ? IROp::LeF : (is_f64 ? IROp::LeD : (is_unsigned ? IROp::LeU : IROp::LeI));
+            return is_f32 ? IROp::LeF
+                          : (is_f64 ? IROp::LeD : (is_unsigned ? IROp::LeU : IROp::LeI));
         case BinaryOp::Greater:
-            return is_f32 ? IROp::GtF : (is_f64 ? IROp::GtD : (is_unsigned ? IROp::GtU : IROp::GtI));
+            return is_f32 ? IROp::GtF
+                          : (is_f64 ? IROp::GtD : (is_unsigned ? IROp::GtU : IROp::GtI));
         case BinaryOp::GreaterEq:
-            return is_f32 ? IROp::GeF : (is_f64 ? IROp::GeD : (is_unsigned ? IROp::GeU : IROp::GeI));
+            return is_f32 ? IROp::GeF
+                          : (is_f64 ? IROp::GeD : (is_unsigned ? IROp::GeU : IROp::GeI));
         default:
             return IROp::EqI;
     }
@@ -3701,11 +3831,11 @@ IROp IRBuilder::get_unary_op(UnaryOp op, Type* type) {
         case UnaryOp::BitNot:
             return IROp::BitNot;
         case UnaryOp::Ref:
-            return IROp::Copy;  // Handled specially in gen_unary_expr
+            return IROp::Copy; // Handled specially in gen_unary_expr
     }
     return IROp::Copy;
 }
 
 // Name mangling helpers
 
-}
+} // namespace rx

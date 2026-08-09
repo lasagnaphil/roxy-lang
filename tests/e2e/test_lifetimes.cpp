@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -15,7 +15,10 @@ TEST_SUITE("E2E Lifetimes") {
     // the borrow is live traps — even when the free happens on a non-`delete`
     // path (here, a callee deletes the moved-in owner). Before the fix, ref
     // locals emitted no inc/dec at all, so this was a silent use-after-free.
-    TEST_CASE("ref local borrow blocks delete of owner (Finding 1)") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "ref local borrow blocks delete of owner (Finding 1)") { // VM-only: runtime-trap/abort
+                                                                 // behavior differs on C backend
+                                                                 // (VM-only by nature)
         const char* source = R"(
         struct Point { x: i32; y: i32; }
 
@@ -38,14 +41,21 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(compile(allocator, source) != nullptr);
 
         auto result = VMBackend::run(source);
-        CHECK(result.success == false);  // delete traps: object has an active borrow
+        CHECK(result.success == false); // delete traps: object has an active borrow
     }
 
     // Finding 2: returning a `ref` that borrows a local owner hands the borrow's
     // count off to the caller, so the local owner's RAII drop at function exit
     // sees the still-live borrow and traps at the drop (rather than silently
     // returning a dangling reference).
-    TEST_CASE("returning a ref to a local owner traps at the owner's drop (Finding 2)") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "returning a ref to a local owner traps at the owner's drop (Finding 2)") { // VM-only:
+                                                                                    // runtime-trap/abort
+                                                                                    // behavior
+                                                                                    // differs on C
+                                                                                    // backend
+                                                                                    // (VM-only by
+                                                                                    // nature)
         const char* source = R"(
         struct Point { x: i32; y: i32; }
 
@@ -68,7 +78,7 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(compile(allocator, source) != nullptr);
 
         auto result = VMBackend::run(source);
-        CHECK(result.success == false);  // owner's RAII drop traps on the live borrow
+        CHECK(result.success == false); // owner's RAII drop traps on the live borrow
     }
 
     // Finding 2, direct form: the same escape written *without* the intermediate
@@ -79,7 +89,13 @@ TEST_SUITE("E2E Lifetimes") {
     // underflowed, and the destroyed local was then read through the returned
     // pointer. The decision now comes from the function's *declared return type*,
     // so both spellings behave identically.
-    TEST_CASE("returning an owner directly as a ref traps, like the ref-local form") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "returning an owner directly as a ref traps, like the ref-local form") { // VM-only:
+                                                                                 // runtime-trap/abort
+                                                                                 // behavior differs
+                                                                                 // on C backend
+                                                                                 // (VM-only by
+                                                                                 // nature)
         const char* source = R"(
         struct Point { x: i32; y: i32; }
 
@@ -99,12 +115,15 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(compile(allocator, source) != nullptr);
 
         auto result = VMBackend::run(source);
-        CHECK(result.success == false);  // owner's RAII drop traps on the live borrow
+        CHECK(result.success == false); // owner's RAII drop traps on the live borrow
     }
 
     // The same, for a container owner — reachable since `List<T>` became
     // borrowable. A container is always heap, so it counts on the same header.
-    TEST_CASE("returning a container owner as a ref traps at its drop") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "returning a container owner as a ref traps at its drop") { // VM-only: runtime-trap/abort
+                                                                    // behavior differs on C backend
+                                                                    // (VM-only by nature)
         const char* source = R"(
         fun make_dangling(): ref List<i32> {
             var xs: List<i32> = List<i32>();
@@ -131,7 +150,8 @@ TEST_SUITE("E2E Lifetimes") {
     // the declared return type asks for a borrow, not a move. Now it compiles,
     // the field is not nulled in the root, and the count balances so the owner
     // stays deletable.
-    TEST_CASE_TEMPLATE("a method can return a borrow of its own uniq field", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("a method can return a borrow of its own uniq field", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Child { v: i32; }
         struct Parent { kid: uniq Child; }
@@ -162,7 +182,8 @@ TEST_SUITE("E2E Lifetimes") {
     // Regression guard for the branch reordering: a `ref` *parameter* returned
     // directly still hands off exactly one count (its entry-inc is offset by the
     // return-time RefDec, so the inc emitted here is what survives).
-    TEST_CASE_TEMPLATE("a ref parameter returned directly hands off one count", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("a ref parameter returned directly hands off one count", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Point { x: i32; y: i32; }
 
@@ -194,7 +215,8 @@ TEST_SUITE("E2E Lifetimes") {
     //
     // The `delete` is the assertion: it can only succeed if both discarded
     // borrows were released when their scope closed.
-    TEST_CASE_TEMPLATE("a discarded ref-returning call result releases its count", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("a discarded ref-returning call result releases its count", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Item { v: i32; }
         struct Box { item: uniq Item; }
@@ -222,7 +244,8 @@ TEST_SUITE("E2E Lifetimes") {
     // The same for a container owner (reachable since containers became
     // borrowable). Passing a discarded borrow onward as an argument must not
     // double-release it either.
-    TEST_CASE_TEMPLATE("discarded borrows of a container release their counts", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("discarded borrows of a container release their counts", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Bag { items: List<i32>; }
 
@@ -250,7 +273,8 @@ TEST_SUITE("E2E Lifetimes") {
     // that body, so 500 iterations acquire and release 500 times rather than
     // accumulating 500 counts. (This is what makes the scope-exit release usable
     // at all — a leak here would be proportional to trip count.)
-    TEST_CASE_TEMPLATE("discarded borrows in a loop body release per iteration", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("discarded borrows in a loop body release per iteration", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Item { v: i32; }
         struct Box { item: uniq Item; }
@@ -280,7 +304,14 @@ TEST_SUITE("E2E Lifetimes") {
     // temporary's lifetime to its statement would fix it, but the compiler has
     // no statement-scoped temp mechanism, and a naive one would under-release
     // borrows created in a loop *condition*. See TODO.md.
-    TEST_CASE("deleting an owner in the same scope as a discarded borrow still traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "deleting an owner in the same scope as a discarded borrow still traps") { // VM-only:
+                                                                                   // runtime-trap/abort
+                                                                                   // behavior
+                                                                                   // differs on C
+                                                                                   // backend
+                                                                                   // (VM-only by
+                                                                                   // nature)
         const char* source = R"(
         struct Item { v: i32; }
         struct Box { item: uniq Item; }
@@ -360,7 +391,9 @@ TEST_SUITE("E2E Lifetimes") {
     // so the owner's count returns to zero and it stays deletable. This is the
     // positive control proving no decrement is missed (a missed dec would make
     // the explicit `delete owner` trap, or underflow the count).
-    TEST_CASE("ref local counting is balanced across control flow") {  // VM-only: C backend: ref-local RefInc/RefDec count balancing gap
+    TEST_CASE(
+        "ref local counting is balanced across control flow") { // VM-only: C backend: ref-local
+                                                                // RefInc/RefDec count balancing gap
         const char* source = R"(
         struct Point { x: i32; y: i32; }
 
@@ -398,13 +431,14 @@ TEST_SUITE("E2E Lifetimes") {
 
         auto result = VMBackend::run(source);
         CHECK(result.success == true);
-        CHECK(result.value == 35);  // 7 (block) + 7*3 (loop i=0,1,3) + 7 (b3)
+        CHECK(result.value == 35); // 7 (block) + 7*3 (loop i=0,1,3) + 7 (b3)
     }
 
     // Reassigning a ref local through a chain (linked-list walk) keeps the count
     // balanced: each reassignment releases the old borrow and acquires the new,
     // so after the walk every node is deletable.
-    TEST_CASE_TEMPLATE("ref local reassignment keeps the count balanced", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("ref local reassignment keeps the count balanced", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Node {
             value: i32;
@@ -439,7 +473,8 @@ TEST_SUITE("E2E Lifetimes") {
     // consume the moved-in value (no double-free). Verified via destructor
     // side-effects: the overwritten element's destructor fires once at the
     // assignment, and the moved-in element's fires exactly once at teardown.
-    TEST_CASE_TEMPLATE("index-set destroys old element and consumes the new (Finding 3)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("index-set destroys old element and consumes the new (Finding 3)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Res { id: i32; }
         fun delete Res() { print(f"del {self.id}"); }
@@ -479,14 +514,15 @@ TEST_SUITE("E2E Lifetimes") {
     )";
 
         BumpAllocator allocator(65536);
-        CHECK(compile(allocator, source) == nullptr);  // use-after-move rejected
+        CHECK(compile(allocator, source) == nullptr); // use-after-move rejected
     }
 
     // A `ref`-returning function hands off exactly one borrow count to the
     // caller, which the caller *adopts* (no extra increment). After the bound
     // borrow drops, the owner's count is back to zero and it stays deletable —
     // i.e. no over-count (which would make the owner spuriously undeletable).
-    TEST_CASE_TEMPLATE("ref-returning call hands off one count (no over-count)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("ref-returning call hands off one count (no over-count)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Item { v: i32; }
         struct Box { item: uniq Item; }
@@ -517,7 +553,10 @@ TEST_SUITE("E2E Lifetimes") {
     // owner cannot be deleted (the borrow keeps it pinned). This is the
     // counterpart to the no-over-count case — proving the count isn't merely
     // dropped (which would be an under-count / use-after-free).
-    TEST_CASE("ref-returning call's borrow blocks delete while live") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "ref-returning call's borrow blocks delete while live") { // VM-only: runtime-trap/abort
+                                                                  // behavior differs on C backend
+                                                                  // (VM-only by nature)
         const char* source = R"(
         struct Item { v: i32; }
         struct Box { item: uniq Item; }
@@ -543,7 +582,8 @@ TEST_SUITE("E2E Lifetimes") {
     // destroys the old value (guarded by a `contains` check so a *new* key
     // destroys nothing) and consumes the moved-in value. A single key keeps the
     // destructor output deterministic (no Robin-Hood bucket-order ambiguity).
-    TEST_CASE_TEMPLATE("map index-set overwrite destroys old value, new key does not (Finding 3)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("map index-set overwrite destroys old value, new key does not (Finding 3)",
+                       Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Res { id: i32; }
         fun delete Res() { print(f"del {self.id}"); }
@@ -603,7 +643,8 @@ TEST_SUITE("E2E Lifetimes") {
 
     // Legitimate second-class use stays allowed: mutating an inout in place and
     // passing it onward as another inout argument (the downward path).
-    TEST_CASE_TEMPLATE("inout used in place and passed onward downward is allowed", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("inout used in place and passed onward downward is allowed", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box { v: i32; }
         fun fill(l: inout List<uniq Box>): i32 {
@@ -631,7 +672,14 @@ TEST_SUITE("E2E Lifetimes") {
     // captured ref would otherwise dangle). The copyable receiver + uniq
     // allocation also exercises the promotion gate (the heap check passes, then
     // the count is taken).
-    TEST_CASE("ref-self closure capture pins the receiver (delete-while-captured traps)") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "ref-self closure capture pins the receiver (delete-while-captured traps)") { // VM-only:
+                                                                                      // runtime-trap/abort
+                                                                                      // behavior
+                                                                                      // differs on
+                                                                                      // C backend
+                                                                                      // (VM-only by
+                                                                                      // nature)
         const char* source = R"(
         struct V { x: i32 = 0; }
         fun V.make_getter(): fun() -> i32 {
@@ -651,7 +699,8 @@ TEST_SUITE("E2E Lifetimes") {
 
     // The borrow is released when the closure drops, so the receiver becomes
     // deletable again — no over-count.
-    TEST_CASE_TEMPLATE("ref-self capture releases the borrow when the closure drops", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("ref-self capture releases the borrow when the closure drops", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct V { x: i32 = 0; }
         fun V.make_getter(): fun() -> i32 {
@@ -698,7 +747,7 @@ TEST_SUITE("E2E Lifetimes") {
         auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 14);
-        CHECK(result.stdout_output == "del\n");  // destroyed exactly once
+        CHECK(result.stdout_output == "del\n"); // destroyed exactly once
     }
 
     // Exception path: a method on a uniq receiver throws. The unwind must
@@ -706,7 +755,8 @@ TEST_SUITE("E2E Lifetimes") {
     // owner survives to the in-function catch and is destroyed exactly once.
     // This is the case the naive attempt (sharing the receiver's SSA value)
     // double-deleted — the pinned-copy borrow + deferred record ordering fix it.
-    TEST_CASE_TEMPLATE("uniq receiver survives a throwing method, destroyed once", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("uniq receiver survives a throwing method, destroyed once", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Boom { msg: string; }
         fun Boom.message(): string for Exception { return self.msg; }
@@ -740,7 +790,9 @@ TEST_SUITE("E2E Lifetimes") {
     // because inout-`uniq` reassignment now frees the overwritten value; see the
     // dedicated reassignment tests below.) The control omits the reassignment,
     // isolating it as the sole cause of the trap.
-    TEST_CASE("freeing a uniq receiver mid-method traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "freeing a uniq receiver mid-method traps") { // VM-only: runtime-trap/abort behavior
+                                                      // differs on C backend (VM-only by nature)
         const char* trap_src = R"(
         struct Counter { value: i32; }
         fun new Counter(v: i32) { self.value = v; }
@@ -757,9 +809,9 @@ TEST_SUITE("E2E Lifetimes") {
         }
     )";
         BumpAllocator allocator(65536);
-        CHECK(compile(allocator, trap_src) != nullptr);  // compiles → false is a runtime trap
+        CHECK(compile(allocator, trap_src) != nullptr); // compiles → false is a runtime trap
         auto trap = VMBackend::run(trap_src);
-        CHECK(trap.success == false);  // delete traps: receiver has an active borrow
+        CHECK(trap.success == false); // delete traps: receiver has an active borrow
 
         // Control: identical except `kill` does not reassign — succeeds, so the
         // trap above comes from the mid-call free, not the call machinery.
@@ -788,7 +840,8 @@ TEST_SUITE("E2E Lifetimes") {
 
     // `slot = uniq T(..)`: the old object is freed, the new one stored, and the
     // caller's variable owns exactly the new object (destroyed once at exit).
-    TEST_CASE_TEMPLATE("inout uniq reassignment frees the old value, no double-free", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("inout uniq reassignment frees the old value, no double-free", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Counter { value: i32; }
         fun new Counter(v: i32) { self.value = v; }
@@ -808,12 +861,13 @@ TEST_SUITE("E2E Lifetimes") {
         auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 99);
-        CHECK(result.stdout_output == "del\ndel\n");  // old freed on replace, new freed at exit
+        CHECK(result.stdout_output == "del\ndel\n"); // old freed on replace, new freed at exit
     }
 
     // `slot = nil`: the old object is freed and the slot nulled, so the caller's
     // scope-exit delete is a no-op (no leak, no double-free).
-    TEST_CASE_TEMPLATE("inout uniq reassignment to nil frees the old value", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("inout uniq reassignment to nil frees the old value", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Counter { value: i32; }
         fun new Counter(v: i32) { self.value = v; }
@@ -832,7 +886,7 @@ TEST_SUITE("E2E Lifetimes") {
     )";
         auto result = Backend::run(source);
         CHECK(result.success == true);
-        CHECK(result.stdout_output == "del\n");  // freed exactly once, by clear()
+        CHECK(result.stdout_output == "del\n"); // freed exactly once, by clear()
     }
 
     // ── Call-site heap-root counting: non-identifier method receivers ──
@@ -844,7 +898,8 @@ TEST_SUITE("E2E Lifetimes") {
     // Field-rooted receiver: `o.inner.get()` borrows the heap Inner object for
     // the call. The count is balanced (RefInc before, RefDec after), so the
     // owner and its field destroy exactly once.
-    TEST_CASE_TEMPLATE("method call on a field-rooted uniq receiver stays balanced", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("method call on a field-rooted uniq receiver stays balanced", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Inner { value: i32; }
         fun new Inner(v: i32) { self.value = v; }
@@ -864,14 +919,15 @@ TEST_SUITE("E2E Lifetimes") {
         auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 14);
-        CHECK(result.stdout_output == "del inner\n");  // destroyed exactly once
+        CHECK(result.stdout_output == "del inner\n"); // destroyed exactly once
     }
 
     // Heap-temp receiver: `make_inner().get()` borrows the freshly-returned heap
     // temp for the call. The borrow rides a pinned copy, distinct from the temp's
     // own scope-exit Delete, so the temp is destroyed exactly once (no double-free,
     // no spurious trap from a leftover count).
-    TEST_CASE_TEMPLATE("method call on a heap-temp uniq receiver stays balanced", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("method call on a heap-temp uniq receiver stays balanced", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Inner { value: i32; }
         fun new Inner(v: i32) { self.value = v; }
@@ -888,7 +944,7 @@ TEST_SUITE("E2E Lifetimes") {
         auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 9);
-        CHECK(result.stdout_output == "del\n");  // temp destroyed exactly once
+        CHECK(result.stdout_output == "del\n"); // temp destroyed exactly once
     }
 
     // Exception path for a heap-temp receiver: a method on a freshly-returned
@@ -899,7 +955,8 @@ TEST_SUITE("E2E Lifetimes") {
     // scoped to the try body, so unwinding destroys it ("del") before the catch
     // handler runs ("caught"). This is the heap-temp analogue of "uniq receiver
     // survives a throwing method".
-    TEST_CASE_TEMPLATE("heap-temp receiver throwing a method is destroyed once", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("heap-temp receiver throwing a method is destroyed once", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Boom { msg: string; }
         fun Boom.message(): string for Exception { return self.msg; }
@@ -923,7 +980,7 @@ TEST_SUITE("E2E Lifetimes") {
     )";
         auto result = Backend::run(source);
         CHECK(result.success == true);
-        CHECK(result.stdout_output == "del\ncaught\n");  // temp freed during unwind, then handler
+        CHECK(result.stdout_output == "del\ncaught\n"); // temp freed during unwind, then handler
     }
 
     // Mid-call free of a field-rooted receiver: `o.inner` is both the receiver and
@@ -931,7 +988,10 @@ TEST_SUITE("E2E Lifetimes") {
     // the object `self` points at. The call-site borrow on that heap object makes
     // the free trap instead of leaving `self` dangling — the field-rooted analogue
     // of "freeing a uniq receiver mid-method traps".
-    TEST_CASE("freeing a field-rooted uniq receiver mid-method traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "freeing a field-rooted uniq receiver mid-method traps") { // VM-only: runtime-trap/abort
+                                                                   // behavior differs on C backend
+                                                                   // (VM-only by nature)
         const char* trap_src = R"(
         struct Inner { value: i32; }
         fun new Inner(v: i32) { self.value = v; }
@@ -951,9 +1011,9 @@ TEST_SUITE("E2E Lifetimes") {
         }
     )";
         BumpAllocator allocator(65536);
-        CHECK(compile(allocator, trap_src) != nullptr);  // compiles → false is a runtime trap
+        CHECK(compile(allocator, trap_src) != nullptr); // compiles → false is a runtime trap
         auto trap = VMBackend::run(trap_src);
-        CHECK(trap.success == false);  // free traps: receiver has an active borrow
+        CHECK(trap.success == false); // free traps: receiver has an active borrow
 
         // Control: identical except `kill` does not reassign — succeeds, isolating
         // the mid-call free as the sole cause of the trap above.
@@ -987,7 +1047,8 @@ TEST_SUITE("E2E Lifetimes") {
 
     // Functional/balance: incrementing through an `inout` into a heap object's
     // field works, and the count is balanced so the owner deletes once afterward.
-    TEST_CASE_TEMPLATE("inout into a heap-object field is counted but stays balanced", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("inout into a heap-object field is counted but stays balanced", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box { value: i32; }
         fun new Box(v: i32) { self.value = v; }
@@ -1007,7 +1068,7 @@ TEST_SUITE("E2E Lifetimes") {
         auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 42);
-        CHECK(result.stdout_output == "del\n");  // owner destroyed exactly once
+        CHECK(result.stdout_output == "del\n"); // owner destroyed exactly once
     }
 
     // Mid-call free of an out/inout heap root: arg 1 (`inout b.value`) points into
@@ -1015,7 +1076,9 @@ TEST_SUITE("E2E Lifetimes") {
     // mid-call (`owner = nil`). The call-site borrow on the root makes the free
     // trap instead of leaving arg 1 dangling (the subsequent `slot = ...` would
     // otherwise write into freed storage).
-    TEST_CASE("freeing an out/inout heap root mid-call traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE("freeing an out/inout heap root mid-call traps") { // VM-only: runtime-trap/abort
+                                                                 // behavior differs on C backend
+                                                                 // (VM-only by nature)
         const char* trap_src = R"(
         struct Box { value: i32; }
         fun new Box(v: i32) { self.value = v; }
@@ -1033,9 +1096,9 @@ TEST_SUITE("E2E Lifetimes") {
         }
     )";
         BumpAllocator allocator(65536);
-        CHECK(compile(allocator, trap_src) != nullptr);  // compiles → false is a runtime trap
+        CHECK(compile(allocator, trap_src) != nullptr); // compiles → false is a runtime trap
         auto trap = VMBackend::run(trap_src);
-        CHECK(trap.success == false);  // free traps: the heap root has an active borrow
+        CHECK(trap.success == false); // free traps: the heap root has an active borrow
 
         // Control: identical except `evil` does not free the root — succeeds,
         // isolating the mid-call free as the sole cause of the trap above.
@@ -1067,7 +1130,8 @@ TEST_SUITE("E2E Lifetimes") {
 
     // Bind, heap receiver: `var r: ref P = self` on a `uniq` receiver passes the
     // heap gate, counts the borrow, and stays balanced (receiver destroyed once).
-    TEST_CASE_TEMPLATE("binding self to a ref on a uniq receiver is counted and balanced", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("binding self to a ref on a uniq receiver is counted and balanced", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct P { x: i32; }
         fun new P(v: i32) { self.x = v; }
@@ -1094,7 +1158,9 @@ TEST_SUITE("E2E Lifetimes") {
     // stack-relative object header). Covered for both a copyable receiver and a
     // NONCOPYABLE one — the latter is the case the capture path's copyable-only
     // gate would miss, so the always-on promotion gate is strictly sounder.
-    TEST_CASE("binding self to a ref on a stack receiver traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE("binding self to a ref on a stack receiver traps") { // VM-only: runtime-trap/abort
+                                                                   // behavior differs on C backend
+                                                                   // (VM-only by nature)
         const char* copyable_src = R"(
         struct P { x: i32; }
         fun P.bind_ref(): i32 {
@@ -1130,7 +1196,8 @@ TEST_SUITE("E2E Lifetimes") {
 
     // Return, heap receiver: `return self` from a `ref`-returning method hands off
     // the borrow count to the caller (passes the heap gate first).
-    TEST_CASE_TEMPLATE("returning self as a ref hands off the borrow (uniq receiver)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("returning self as a ref hands off the borrow (uniq receiver)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct P { x: i32; }
         fun new P(v: i32) { self.x = v; }
@@ -1151,7 +1218,10 @@ TEST_SUITE("E2E Lifetimes") {
     }
 
     // Return, stack receiver: `return self` traps at the heap gate.
-    TEST_CASE("returning self as a ref from a stack receiver traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "returning self as a ref from a stack receiver traps") { // VM-only: runtime-trap/abort
+                                                                 // behavior differs on C backend
+                                                                 // (VM-only by nature)
         const char* source = R"(
         struct P { x: i32; }
         fun P.as_ref(): ref P { return self; }
@@ -1169,7 +1239,10 @@ TEST_SUITE("E2E Lifetimes") {
     // Store, stack receiver: `r = self` (reassigning a ref local) is also a
     // promotion. Bound first to a heap backup so only the `r = self` store can
     // trap, isolating the store path's gate.
-    TEST_CASE("storing self into a ref local traps on a stack receiver") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "storing self into a ref local traps on a stack receiver") { // VM-only: runtime-trap/abort
+                                                                     // behavior differs on C
+                                                                     // backend (VM-only by nature)
         const char* source = R"(
         struct P { x: i32; }
         fun new P(v: i32) { self.x = v; }
@@ -1194,7 +1267,8 @@ TEST_SUITE("E2E Lifetimes") {
     // Pass to a ref param, heap receiver: `take_ref(self)` lets the callee count
     // `self` (its ref param's entry inc). On a `uniq` receiver the call-site heap
     // gate passes and the count is balanced (callee dec on exit).
-    TEST_CASE_TEMPLATE("passing self to a ref param on a uniq receiver is balanced", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("passing self to a ref param on a uniq receiver is balanced", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct P { x: i32; }
         fun new P(v: i32) { self.x = v; }
@@ -1217,7 +1291,10 @@ TEST_SUITE("E2E Lifetimes") {
     // Pass to a ref param, stack receiver: the call-site heap gate traps before the
     // callee's entry inc would corrupt a bogus header. Covers a free-function
     // callee (param offset 0) and a method callee (offset 1, past the receiver).
-    TEST_CASE("passing self to a ref param on a stack receiver traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "passing self to a ref param on a stack receiver traps") { // VM-only: runtime-trap/abort
+                                                                   // behavior differs on C backend
+                                                                   // (VM-only by nature)
         const char* free_src = R"(
         struct P { x: i32; }
         fun take_ref(r: ref P): i32 { return r.x; }
@@ -1255,7 +1332,8 @@ TEST_SUITE("E2E Lifetimes") {
     // pointer, so it can't realloc/free the container, making it sound without the
     // pin (the pin + adversarial traps land in Phase 3). Both backends.
 
-    TEST_CASE_TEMPLATE("inout of a List<i32> element mutates it in place", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("inout of a List<i32> element mutates it in place", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun bump(slot: inout i32) { slot = slot + 1; }
 
@@ -1274,7 +1352,8 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.value == 33);
     }
 
-    TEST_CASE_TEMPLATE("out of a List<i32> element writes through the address", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("out of a List<i32> element writes through the address", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun set42(slot: out i32) { slot = 42; }
 
@@ -1310,7 +1389,8 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.value == 7);
     }
 
-    TEST_CASE_TEMPLATE("inout of a struct List element mutates it in place", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("inout of a struct List element mutates it in place", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Vec2 { x: i32; y: i32; }
         fun move_right(v: inout Vec2, d: i32) { v.x = v.x + d; }
@@ -1351,7 +1431,9 @@ TEST_SUITE("E2E Lifetimes") {
     // pointer. (VM-only, like the other runtime-trap tests; the C backend refuses
     // the mutation too — memory-safe — but its clean trap reporting is deferred.)
 
-    TEST_CASE("mid-call push of a borrowed List traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "mid-call push of a borrowed List traps") { // VM-only: runtime-trap/abort behavior differs
+                                                    // on C backend (VM-only by nature)
         const char* trap_src = R"(
         fun evil(slot: inout i32, lst: inout List<i32>): i32 {
             lst.push(99);   // reallocs the buffer that `slot` points into → traps
@@ -1383,7 +1465,8 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(VMBackend::run(control_src).success == true);
     }
 
-    TEST_CASE("mid-call pop of a borrowed List traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE("mid-call pop of a borrowed List traps") { // VM-only: runtime-trap/abort behavior
+                                                         // differs on C backend (VM-only by nature)
         // pop is a structural mutation too — the tail slot the borrow may point at
         // is dropped and reused by the next push — so it must trap while pinned,
         // mirroring push (roxy_list_pop borrow_count guard).
@@ -1427,7 +1510,8 @@ TEST_SUITE("E2E Lifetimes") {
     // for when owning-element containers — `List<uniq T>` element `inout`, whose
     // delete does free the buffer — are supported; that's the deferred next step.)
 
-    TEST_CASE_TEMPLATE("nested element borrows of one container stay balanced", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("nested element borrows of one container stay balanced", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun add_both(a: inout i32, b: inout i32) { a = a + 10; b = b + 20; }
 
@@ -1445,7 +1529,8 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.value == 36);
     }
 
-    TEST_CASE_TEMPLATE("in-place set of a borrowed container is allowed", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("in-place set of a borrowed container is allowed", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun edit(slot: inout i32, lst: inout List<i32>): i32 {
             lst[1] = 99;   // in-place set (no realloc) — allowed while pinned
@@ -1468,7 +1553,8 @@ TEST_SUITE("E2E Lifetimes") {
     // An exception thrown through an `inout list[i]` call must unpin the container
     // on unwind (the deferred Unpin cleanup record), or the container would be left
     // permanently frozen — the later push would then spuriously trap.
-    TEST_CASE_TEMPLATE("exception through an index-inout call unpins the container", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("exception through an index-inout call unpins the container", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Boom { msg: string; }
         fun Boom.message(): string for Exception { return self.msg; }
@@ -1498,7 +1584,8 @@ TEST_SUITE("E2E Lifetimes") {
     // pointee in place; the container still owns the new one, destroyed once at
     // scope exit.
 
-    TEST_CASE_TEMPLATE("inout of a List<uniq T> element reassigns it in place", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("inout of a List<uniq T> element reassigns it in place", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct P { x: i32; }
         fun new P(v: i32) { self.x = v; }
@@ -1516,10 +1603,11 @@ TEST_SUITE("E2E Lifetimes") {
         auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 99);
-        CHECK(result.stdout_output == "del\ndel\n");  // old freed on replace, new at exit
+        CHECK(result.stdout_output == "del\ndel\n"); // old freed on replace, new at exit
     }
 
-    TEST_CASE_TEMPLATE("inout of a Map<K, uniq V> value reassigns it in place", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("inout of a Map<K, uniq V> value reassigns it in place", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct P { x: i32; }
         fun new P(v: i32) { self.x = v; }
@@ -1540,7 +1628,9 @@ TEST_SUITE("E2E Lifetimes") {
 
     // For a *noncopyable* container the delete genuinely frees the buffer, so the
     // free-guards (Phase 3) are now live: freeing the borrowed List mid-call traps.
-    TEST_CASE("mid-call free of a borrowed List<uniq T> traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE("mid-call free of a borrowed List<uniq T> traps") { // VM-only: runtime-trap/abort
+                                                                  // behavior differs on C backend
+                                                                  // (VM-only by nature)
         const char* trap_src = R"(
         struct P { x: i32; }
         fun new P(v: i32) { self.x = v; }
@@ -1560,7 +1650,9 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(VMBackend::run(trap_src).success == false);
     }
 
-    TEST_CASE("mid-call push of a borrowed List<uniq T> traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE("mid-call push of a borrowed List<uniq T> traps") { // VM-only: runtime-trap/abort
+                                                                  // behavior differs on C backend
+                                                                  // (VM-only by nature)
         const char* trap_src = R"(
         struct P { x: i32; }
         fun new P(v: i32) { self.x = v; }
@@ -1585,7 +1677,8 @@ TEST_SUITE("E2E Lifetimes") {
     // destroyed; push acquires a count on the pointee, container-destroy releases
     // it. Deleting the owner while the container still borrows it traps.
 
-    TEST_CASE_TEMPLATE("List<ref T> push acquires a count, destroy releases it", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("List<ref T> push acquires a count, destroy releases it", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct P { x: i32; }
         fun new P(v: i32) { self.x = v; }
@@ -1604,10 +1697,13 @@ TEST_SUITE("E2E Lifetimes") {
         auto result = Backend::run(source);
         CHECK(result.success == true);
         CHECK(result.value == 7);
-        CHECK(result.stdout_output == "del\n");  // owner destroyed exactly once
+        CHECK(result.stdout_output == "del\n"); // owner destroyed exactly once
     }
 
-    TEST_CASE("deleting an owner still borrowed by a List<ref T> traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "deleting an owner still borrowed by a List<ref T> traps") { // VM-only: runtime-trap/abort
+                                                                     // behavior differs on C
+                                                                     // backend (VM-only by nature)
         const char* trap_src = R"(
         struct P { x: i32; }
         fun new P(v: i32) { self.x = v; }
@@ -1641,7 +1737,8 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(VMBackend::run(control_src).success == true);
     }
 
-    TEST_CASE_TEMPLATE("List<ref T> pop hands the borrow off to the caller", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("List<ref T> pop hands the borrow off to the caller", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct P { x: i32; }
         fun new P(v: i32) { self.x = v; }
@@ -1663,7 +1760,8 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.stdout_output == "del\n");
     }
 
-    TEST_CASE_TEMPLATE("List<ref T> overwrite releases the old borrow, acquires the new", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("List<ref T> overwrite releases the old borrow, acquires the new", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct P { x: i32; }
         fun new P(v: i32) { self.x = v; }
@@ -1691,7 +1789,8 @@ TEST_SUITE("E2E Lifetimes") {
     // release it (runtime flag set by __map_mark_ref_values at construction;
     // destroy RefDec's via the BCDeleteDesc::RefDec value descriptor).
 
-    TEST_CASE_TEMPLATE("Map<_, ref V> insert acquires a count, destroy releases it", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<_, ref V> insert acquires a count, destroy releases it", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct P { x: i32; }
         fun new P(v: i32) { self.x = v; }
@@ -1712,7 +1811,11 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.stdout_output == "del\n");
     }
 
-    TEST_CASE("deleting an owner still borrowed by a Map<_, ref V> traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE("deleting an owner still borrowed by a Map<_, ref V> traps") { // VM-only:
+                                                                             // runtime-trap/abort
+                                                                             // behavior differs on
+                                                                             // C backend (VM-only
+                                                                             // by nature)
         const char* trap_src = R"(
         struct P { x: i32; }
         fun new P(v: i32) { self.x = v; }
@@ -1772,7 +1875,8 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.stdout_output == "del\n");
     }
 
-    TEST_CASE_TEMPLATE("Map<_, ref V> insert-replace releases the old borrow, acquires the new", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<_, ref V> insert-replace releases the old borrow, acquires the new",
+                       Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct P { x: i32; }
         fun new P(v: i32) { self.x = v; }
@@ -1801,7 +1905,8 @@ TEST_SUITE("E2E Lifetimes") {
     // move transfers the borrow without a count change. So a borrow stored in a
     // struct keeps its owner alive (or traps), exactly like a List<ref> element.
 
-    TEST_CASE_TEMPLATE("ref field: construct counts, read works, drop releases", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("ref field: construct counts, read works, drop releases", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct P { x: i32; }
         struct H { r: ref P; }
@@ -1833,7 +1938,12 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.value == 9);
     }
 
-    TEST_CASE("ref field: deleting the owner while a struct borrows it traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "ref field: deleting the owner while a struct borrows it traps") { // VM-only:
+                                                                           // runtime-trap/abort
+                                                                           // behavior differs on C
+                                                                           // backend (VM-only by
+                                                                           // nature)
         const char* trap_src = R"(
         struct P { x: i32; }
         struct H { r: ref P; }
@@ -1849,7 +1959,8 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(VMBackend::run(trap_src).success == false);
     }
 
-    TEST_CASE_TEMPLATE("ref field: overwrite releases the old borrow, acquires the new", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("ref field: overwrite releases the old borrow, acquires the new", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct P { x: i32; }
         struct H { r: ref P; }
@@ -1868,7 +1979,14 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.success == true);
     }
 
-    TEST_CASE("ref field: overwrite leaves the new borrow counted (delete new traps)") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "ref field: overwrite leaves the new borrow counted (delete new traps)") { // VM-only:
+                                                                                   // runtime-trap/abort
+                                                                                   // behavior
+                                                                                   // differs on C
+                                                                                   // backend
+                                                                                   // (VM-only by
+                                                                                   // nature)
         const char* src = R"(
         struct P { x: i32; }
         struct H { r: ref P; }
@@ -1890,7 +2008,8 @@ TEST_SUITE("E2E Lifetimes") {
     // and move-only were one bit (lifetimes.md "The value lifecycle"). Two
     // consequences are pinned here — the copy is legal, and each copy's borrow
     // lives until *its own* scope exit rather than ending when it is passed on.
-    TEST_CASE_TEMPLATE("ref field: the struct is copyable and each copy counts its borrow", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("ref field: the struct is copyable and each copy counts its borrow", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct P { x: i32; }
         struct H { r: ref P; }
@@ -1941,7 +2060,8 @@ TEST_SUITE("E2E Lifetimes") {
     // them. The cleanup is emitted as ordinary IR (contains-guarded delete /
     // bucket-iteration delete-loop), so both backends get it.
 
-    TEST_CASE_TEMPLATE("Map<_, uniq V>: remove destroys the removed value", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<_, uniq V>: remove destroys the removed value", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct R { id: i32; }
         fun delete R() { print(f"del {self.id}"); }
@@ -2006,7 +2126,8 @@ TEST_SUITE("E2E Lifetimes") {
     // so a fresh struct-literal value survives the insert rather than being nulled
     // early (the prior bug). Both a temporary value and a new-key insert are
     // covered to guard the regression in both directions.
-    TEST_CASE_TEMPLATE("Map<_, uniq V>: insert-replace destroys the old value", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<_, uniq V>: insert-replace destroys the old value", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct R { id: i32; }
         fun delete R() { print(f"del {self.id}"); }
@@ -2025,7 +2146,8 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.stdout_output == "del 1\n--\ndel 2\n");
     }
 
-    TEST_CASE_TEMPLATE("Map<_, uniq V>: insert with a new key keeps the value (no early-null)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<_, uniq V>: insert with a new key keeps the value (no early-null)",
+                       Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct R { id: i32; }
         fun delete R() {}
@@ -2040,7 +2162,8 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.value == 7);
     }
 
-    TEST_CASE_TEMPLATE("ref local borrowing a ref param survives copy propagation", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("ref local borrowing a ref param survives copy propagation", Backend,
+                       RX_E2E_BACKENDS) {
         // `ref x` lowers to a Copy, and a ref local's cleanup names that Copy's
         // ValueId — the scope-exit Nullify targets it. Copy propagation folded
         // it back into the source, so `var current: ref Node = ref node` emitted
@@ -2092,7 +2215,8 @@ TEST_SUITE("E2E Lifetimes") {
     // "undefined variable". Any counted temporary in an else-if condition hit
     // it; an f-string is the smallest one. (Plain `if` was unaffected — it
     // snapshots *after* its condition.)
-    TEST_CASE_TEMPLATE("else-if chain: a counted temporary in a condition", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("else-if chain: a counted temporary in a condition", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun pick(k: i32): i32 {
             var r: i32 = 0;
@@ -2148,8 +2272,8 @@ TEST_SUITE("E2E Lifetimes") {
     //
     // This was the entire "Lox leaks one List per interpreter call" bug: the
     // per-call `args: List<LoxValue>` is a by-value parameter of a method.
-    TEST_CASE_TEMPLATE("a by-value container param of a method is destroyed by the callee",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("a by-value container param of a method is destroyed by the callee", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Counter { n: i32; }
         fun Counter.consume(items: List<i32>): i32 {
@@ -2181,8 +2305,8 @@ TEST_SUITE("E2E Lifetimes") {
     // chain recorded "not moved" and double-freed when it was. The chain form is
     // Lox's `call_class`, which passes its `args` onward only when the class has
     // an `init`.
-    TEST_CASE_TEMPLATE("a container moved on one branch is dropped on the others",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("a container moved on one branch is dropped on the others", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun consume(items: List<i32>): i32 { return items.len(); }
 
@@ -2275,8 +2399,8 @@ TEST_SUITE("E2E Lifetimes") {
     // was missing the weak conversion, the `ref` acquire, and this string
     // adopt-or-retain. The temporary's count was released at the end of the
     // statement and the field dangled — printing the field gave back nothing.
-    TEST_CASE_TEMPLATE("a computed string in a variant field survives the statement",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("a computed string in a variant field survives the statement", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         enum K { Num, Str }
         struct V {
@@ -2301,5 +2425,4 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.success == true);
         CHECK(result.stdout_output == "dynamic\n");
     }
-
 }

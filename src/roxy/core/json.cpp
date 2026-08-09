@@ -1,9 +1,9 @@
 #include "roxy/core/json.hpp"
 #include "roxy/core/format.hpp"
 
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
-#include <cerrno>
 
 namespace rx {
 
@@ -22,7 +22,8 @@ const JsonValue* JsonValue::find(StringView key) const {
 // --- JsonParser (non-template methods) ---
 
 char JsonParser::peek() const {
-    if (m_current >= m_length) return '\0';
+    if (m_current >= m_length)
+        return '\0';
     return m_source[m_current];
 }
 
@@ -36,7 +37,8 @@ char JsonParser::advance() {
 }
 
 bool JsonParser::match(char expected) {
-    if (m_current >= m_length || m_source[m_current] != expected) return false;
+    if (m_current >= m_length || m_source[m_current] != expected)
+        return false;
     advance();
     return true;
 }
@@ -100,47 +102,64 @@ bool JsonParser::parse_string(StringView& out) {
             m_current++;
 
             switch (esc) {
-            case '"':  *write_pos++ = '"'; break;
-            case '\\': *write_pos++ = '\\'; break;
-            case '/':  *write_pos++ = '/'; break;
-            case 'b':  *write_pos++ = '\b'; break;
-            case 'f':  *write_pos++ = '\f'; break;
-            case 'n':  *write_pos++ = '\n'; break;
-            case 'r':  *write_pos++ = '\r'; break;
-            case 't':  *write_pos++ = '\t'; break;
-            case 'u': {
-                i32 codepoint = decode_hex4();
-                if (codepoint < 0) return false;
+                case '"':
+                    *write_pos++ = '"';
+                    break;
+                case '\\':
+                    *write_pos++ = '\\';
+                    break;
+                case '/':
+                    *write_pos++ = '/';
+                    break;
+                case 'b':
+                    *write_pos++ = '\b';
+                    break;
+                case 'f':
+                    *write_pos++ = '\f';
+                    break;
+                case 'n':
+                    *write_pos++ = '\n';
+                    break;
+                case 'r':
+                    *write_pos++ = '\r';
+                    break;
+                case 't':
+                    *write_pos++ = '\t';
+                    break;
+                case 'u': {
+                    i32 codepoint = decode_hex4();
+                    if (codepoint < 0)
+                        return false;
 
-                // Handle UTF-16 surrogate pairs
-                if (codepoint >= 0xD800 && codepoint <= 0xDBFF) {
-                    // High surrogate — expect \uXXXX low surrogate
-                    if (m_current + 1 >= m_length ||
-                        m_source[m_current] != '\\' ||
-                        m_source[m_current + 1] != 'u') {
-                        set_error("expected low surrogate");
+                    // Handle UTF-16 surrogate pairs
+                    if (codepoint >= 0xD800 && codepoint <= 0xDBFF) {
+                        // High surrogate — expect \uXXXX low surrogate
+                        if (m_current + 1 >= m_length || m_source[m_current] != '\\' ||
+                            m_source[m_current + 1] != 'u') {
+                            set_error("expected low surrogate");
+                            return false;
+                        }
+                        m_current += 2; // skip \u
+                        i32 low = decode_hex4();
+                        if (low < 0)
+                            return false;
+                        if (low < 0xDC00 || low > 0xDFFF) {
+                            set_error("invalid low surrogate");
+                            return false;
+                        }
+                        codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + (low - 0xDC00);
+                    } else if (codepoint >= 0xDC00 && codepoint <= 0xDFFF) {
+                        set_error("unexpected low surrogate");
                         return false;
                     }
-                    m_current += 2; // skip \u
-                    i32 low = decode_hex4();
-                    if (low < 0) return false;
-                    if (low < 0xDC00 || low > 0xDFFF) {
-                        set_error("invalid low surrogate");
-                        return false;
-                    }
-                    codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + (low - 0xDC00);
-                } else if (codepoint >= 0xDC00 && codepoint <= 0xDFFF) {
-                    set_error("unexpected low surrogate");
-                    return false;
+
+                    u32 bytes = encode_utf8(write_pos, (u32)codepoint);
+                    write_pos += bytes;
+                    break;
                 }
-
-                u32 bytes = encode_utf8(write_pos, (u32)codepoint);
-                write_pos += bytes;
-                break;
-            }
-            default:
-                set_error("invalid escape sequence");
-                return false;
+                default:
+                    set_error("invalid escape sequence");
+                    return false;
             }
         } else if ((u8)c < 0x20) {
             set_error("control character in string");
@@ -165,9 +184,12 @@ i32 JsonParser::decode_hex4() {
     for (int i = 0; i < 4; i++) {
         char c = m_source[m_current++];
         result <<= 4;
-        if (c >= '0' && c <= '9') result += c - '0';
-        else if (c >= 'a' && c <= 'f') result += c - 'a' + 10;
-        else if (c >= 'A' && c <= 'F') result += c - 'A' + 10;
+        if (c >= '0' && c <= '9')
+            result += c - '0';
+        else if (c >= 'a' && c <= 'f')
+            result += c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F')
+            result += c - 'A' + 10;
         else {
             set_error("invalid hex digit in unicode escape");
             return -1;
@@ -222,23 +244,37 @@ void JsonWriter::write_escaped_string(StringView value) {
     for (u32 i = 0; i < value.size(); i++) {
         char c = value[i];
         switch (c) {
-        case '"':  m_output.append("\\\"", 2); break;
-        case '\\': m_output.append("\\\\", 2); break;
-        case '\b': m_output.append("\\b", 2); break;
-        case '\f': m_output.append("\\f", 2); break;
-        case '\n': m_output.append("\\n", 2); break;
-        case '\r': m_output.append("\\r", 2); break;
-        case '\t': m_output.append("\\t", 2); break;
-        default:
-            if ((u8)c < 0x20) {
-                // Control character: emit \u00XX
-                char buf[8];
-                snprintf(buf, sizeof(buf), "\\u%04x", (unsigned)(u8)c);
-                m_output.append(buf, 6);
-            } else {
-                m_output.push_back(c);
-            }
-            break;
+            case '"':
+                m_output.append("\\\"", 2);
+                break;
+            case '\\':
+                m_output.append("\\\\", 2);
+                break;
+            case '\b':
+                m_output.append("\\b", 2);
+                break;
+            case '\f':
+                m_output.append("\\f", 2);
+                break;
+            case '\n':
+                m_output.append("\\n", 2);
+                break;
+            case '\r':
+                m_output.append("\\r", 2);
+                break;
+            case '\t':
+                m_output.append("\\t", 2);
+                break;
+            default:
+                if ((u8)c < 0x20) {
+                    // Control character: emit \u00XX
+                    char buf[8];
+                    snprintf(buf, sizeof(buf), "\\u%04x", (unsigned)(u8)c);
+                    m_output.append(buf, 6);
+                } else {
+                    m_output.push_back(c);
+                }
+                break;
         }
     }
     m_output.push_back('"');
@@ -352,43 +388,43 @@ void JsonWriter::write_key_string(StringView key, StringView value) {
 
 void JsonWriter::write_value(const JsonValue& value) {
     switch (value.type) {
-    case JsonType::Null:
-        write_null();
-        break;
-    case JsonType::Bool:
-        write_bool(value.bool_value);
-        break;
-    case JsonType::Int:
-        write_int(value.int_value);
-        break;
-    case JsonType::Double:
-        write_double(value.double_value);
-        break;
-    case JsonType::String:
-        write_string(value.string_value);
-        break;
-    case JsonType::Array:
-        write_start_array();
-        for (u32 i = 0; i < value.array_value.size(); i++) {
-            write_value(value.array_value[i]);
-        }
-        write_end_array();
-        break;
-    case JsonType::Object:
-        write_start_object();
-        for (u32 i = 0; i < value.object_value.size(); i++) {
-            write_key(value.object_value[i].key);
-            write_value(value.object_value[i].value);
-        }
-        write_end_object();
-        break;
+        case JsonType::Null:
+            write_null();
+            break;
+        case JsonType::Bool:
+            write_bool(value.bool_value);
+            break;
+        case JsonType::Int:
+            write_int(value.int_value);
+            break;
+        case JsonType::Double:
+            write_double(value.double_value);
+            break;
+        case JsonType::String:
+            write_string(value.string_value);
+            break;
+        case JsonType::Array:
+            write_start_array();
+            for (u32 i = 0; i < value.array_value.size(); i++) {
+                write_value(value.array_value[i]);
+            }
+            write_end_array();
+            break;
+        case JsonType::Object:
+            write_start_object();
+            for (u32 i = 0; i < value.object_value.size(); i++) {
+                write_key(value.object_value[i].key);
+                write_value(value.object_value[i].value);
+            }
+            write_end_object();
+            break;
     }
 }
 
 // --- Convenience Functions ---
 
-bool json_parse(char* source, u32 length, BumpAllocator& allocator,
-                JsonValue& out_root, JsonParseError* out_error) {
+bool json_parse(char* source, u32 length, BumpAllocator& allocator, JsonValue& out_root,
+                JsonParseError* out_error) {
     JsonParser parser;
     JsonDomHandler handler(allocator);
 

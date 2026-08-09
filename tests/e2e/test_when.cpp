@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -406,7 +406,7 @@ TEST_SUITE("E2E When") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail: use of moved value
+        CHECK(module == nullptr); // Should fail: use of moved value
     }
 
     TEST_CASE("When move in some branches") {
@@ -437,10 +437,11 @@ TEST_SUITE("E2E When") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail: use of possibly moved value
+        CHECK(module == nullptr); // Should fail: use of possibly moved value
     }
 
-    TEST_CASE_TEMPLATE("When arm bool reused after for-loop (compare/branch fusion)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("When arm bool reused after for-loop (compare/branch fusion)", Backend,
+                       RX_E2E_BACKENDS) {
         // Regression: a bool local whose defining comparison is fused with the
         // immediately-following JMP_IF used to leave the SSA value's register
         // uninitialized for a later read on the other side of a `for` loop. With
@@ -512,7 +513,7 @@ TEST_SUITE("E2E When") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module != nullptr);  // Should compile successfully
+        CHECK(module != nullptr); // Should compile successfully
     }
 
     TEST_CASE("When move in case without else") {
@@ -541,15 +542,15 @@ TEST_SUITE("E2E When") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail: use of possibly moved value
+        CHECK(module == nullptr); // Should fail: use of possibly moved value
     }
 
     // ============================================================================
     // Exhaustiveness Tests
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("When exhaustive no-else, all cases return, no trailing return",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("When exhaustive no-else, all cases return, no trailing return", Backend,
+                       RX_E2E_BACKENDS) {
         // The cases cover every variant, so the (impossible) fall-through is a
         // trap and the function needs no trailing return — branch_terminates()
         // propagates the exhaustive when's termination.
@@ -577,7 +578,8 @@ TEST_SUITE("E2E When") {
         CHECK(result.stdout_output == "1\n0\n");
     }
 
-    TEST_CASE_TEMPLATE("When exhaustive no-else moves uniq in every arm", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("When exhaustive no-else moves uniq in every arm", Backend,
+                       RX_E2E_BACKENDS) {
         // Moving r in every arm of an exhaustive no-else `when` leaves it Moved
         // (not MaybeValid) after — the phantom fall-through survivor path is
         // dropped — so no redundant scope-exit delete and it still runs cleanly.
@@ -633,7 +635,7 @@ TEST_SUITE("E2E When") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail: not all code paths return a value
+        CHECK(module == nullptr); // Should fail: not all code paths return a value
     }
 
     TEST_CASE("Non-void function missing return is a compile error") {
@@ -649,11 +651,11 @@ TEST_SUITE("E2E When") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail: missing return on the else path
+        CHECK(module == nullptr); // Should fail: missing return on the else path
     }
 
-    TEST_CASE_TEMPLATE("Infinite while(true) with inner return needs no trailing return",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Infinite while(true) with inner return needs no trailing return", Backend,
+                       RX_E2E_BACKENDS) {
         // The loop condition is a literal `true` and the body has no `break`, so
         // control never falls past the loop — the function is total via the
         // inner return and needs no trailing return.
@@ -694,7 +696,7 @@ TEST_SUITE("E2E When") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module != nullptr);  // Should compile: infinite loop never falls through
+        CHECK(module != nullptr); // Should compile: infinite loop never falls through
     }
 
     TEST_CASE("while(true) with a break needs a trailing return") {
@@ -714,7 +716,7 @@ TEST_SUITE("E2E When") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail: break exit path has no return
+        CHECK(module == nullptr); // Should fail: break exit path has no return
     }
 
-}  // TEST_SUITE("E2E When")
+} // TEST_SUITE("E2E When")

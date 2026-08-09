@@ -3,14 +3,15 @@
 #include "roxy/compiler/codegen/lowering.hpp"
 #include "roxy/compiler/ir/ssa_ir.hpp"
 #include "roxy/compiler/types/types.hpp"
-#include "roxy/vm/vm.hpp"
-#include "roxy/vm/interpreter.hpp"
 #include "roxy/core/bump_allocator.hpp"
+#include "roxy/vm/interpreter.hpp"
+#include "roxy/vm/vm.hpp"
 
 using namespace rx;
 
 // Helper to create a simple IR function that returns a constant
-IRFunction* create_return_const_func(BumpAllocator& alloc, const char* name, i64 value, TypeCache& types) {
+IRFunction* create_return_const_func(BumpAllocator& alloc, const char* name, i64 value,
+                                     TypeCache& types) {
     IRFunction* func = alloc.emplace<IRFunction>();
     func->name = name;
     func->return_type = types.i64_type();
@@ -96,7 +97,7 @@ TEST_SUITE("Lowering") {
         BCFunction* func = bc_module->functions[0].get();
         CHECK(func->name == "main");
         CHECK(func->param_count == 0);
-        CHECK(func->code.size() >= 2);  // At least LOAD_INT and RET
+        CHECK(func->code.size() >= 2); // At least LOAD_INT and RET
 
         // Execute to verify correctness
         RoxyVM vm;
@@ -151,7 +152,7 @@ TEST_SUITE("Lowering") {
 
         SUBCASE("Subtraction") {
             IRFunction* func = alloc.emplace<IRFunction>();
-                func->name = "sub";
+            func->name = "sub";
             func->return_type = types.i64_type();
 
             // Parameters
@@ -165,7 +166,7 @@ TEST_SUITE("Lowering") {
 
             // Entry block
             IRBlock* entry = alloc.emplace<IRBlock>();
-                entry->id = BlockId{0};
+            entry->id = BlockId{0};
 
             // Sub instruction
             IRInst* sub = alloc.emplace<IRInst>();
@@ -181,7 +182,7 @@ TEST_SUITE("Lowering") {
             func->blocks.push_back(entry);
 
             IRModule* ir_module = alloc.emplace<IRModule>();
-                ir_module->name = "test";
+            ir_module->name = "test";
             ir_module->functions.push_back(func);
 
             BytecodeBuilder builder;
@@ -202,7 +203,7 @@ TEST_SUITE("Lowering") {
 
         SUBCASE("Multiplication") {
             IRFunction* func = alloc.emplace<IRFunction>();
-                func->name = "mul";
+            func->name = "mul";
             func->return_type = types.i64_type();
 
             BlockParam param0, param1;
@@ -214,7 +215,7 @@ TEST_SUITE("Lowering") {
             func->params.push_back(param1);
 
             IRBlock* entry = alloc.emplace<IRBlock>();
-                entry->id = BlockId{0};
+            entry->id = BlockId{0};
 
             IRInst* mul = alloc.emplace<IRInst>();
             mul->op = IROp::MulI;
@@ -229,7 +230,7 @@ TEST_SUITE("Lowering") {
             func->blocks.push_back(entry);
 
             IRModule* ir_module = alloc.emplace<IRModule>();
-                ir_module->name = "test";
+            ir_module->name = "test";
             ir_module->functions.push_back(func);
 
             BytecodeBuilder builder;
@@ -416,4 +417,4 @@ TEST_SUITE("Lowering") {
         delete bc_module;
     }
 
-}  // TEST_SUITE("Lowering")
+} // TEST_SUITE("Lowering")

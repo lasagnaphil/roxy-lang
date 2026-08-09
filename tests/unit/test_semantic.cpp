@@ -1,18 +1,18 @@
 #include "roxy/core/doctest/doctest.h"
 
+#include "roxy/compiler/driver/module_registry.hpp"
+#include "roxy/compiler/parse/parser.hpp"
+#include "roxy/compiler/sema/semantic.hpp"
+#include "roxy/compiler/support/mangling.hpp"
+#include "roxy/compiler/types/type_env.hpp"
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/string.hpp"
 #include "roxy/shared/lexer.hpp"
-#include "roxy/compiler/support/mangling.hpp"
-#include "roxy/compiler/parse/parser.hpp"
-#include "roxy/compiler/sema/semantic.hpp"
-#include "roxy/compiler/types/type_env.hpp"
-#include "roxy/compiler/driver/module_registry.hpp"
-#include "roxy/vm/natives.hpp"
 #include "roxy/vm/binding/registry.hpp"
+#include "roxy/vm/natives.hpp"
 
-#include <cstring>
 #include <cstdio>
+#include <cstring>
 
 using namespace rx;
 
@@ -50,7 +50,8 @@ struct SemanticTestHelper {
     }
 
     bool has_error_containing(const char* substring) const {
-        if (!analyzer) return false;
+        if (!analyzer)
+            return false;
         for (const auto& err : analyzer->errors()) {
             if (strstr(err.message, substring)) {
                 return true;
@@ -60,7 +61,8 @@ struct SemanticTestHelper {
     }
 
     u32 error_count() const {
-        if (!analyzer) return 0;
+        if (!analyzer)
+            return 0;
         return analyzer->errors().size();
     }
 };
@@ -106,8 +108,8 @@ TEST_SUITE("Semantic") {
         Type* lst2 = types.list_type(types.i32_type());
         Type* lst3 = types.list_type(types.f64_type());
 
-        CHECK(lst1 == lst2);  // Same element type -> same interned type
-        CHECK(lst1 != lst3);  // Different element type -> different type
+        CHECK(lst1 == lst2); // Same element type -> same interned type
+        CHECK(lst1 != lst3); // Different element type -> different type
         CHECK(lst1->kind == TypeKind::List);
         CHECK(lst1->list_info.element_type == types.i32_type());
     }
@@ -120,8 +122,8 @@ TEST_SUITE("Semantic") {
         Type* uniq2 = types.uniq_type(types.i32_type());
         Type* ref1 = types.ref_type(types.i32_type());
 
-        CHECK(uniq1 == uniq2);  // Same kind and inner -> interned
-        CHECK(uniq1 != ref1);   // Different kind
+        CHECK(uniq1 == uniq2); // Same kind and inner -> interned
+        CHECK(uniq1 != ref1);  // Different kind
         CHECK(uniq1->kind == TypeKind::Uniq);
         CHECK(ref1->kind == TypeKind::Ref);
     }
@@ -273,7 +275,7 @@ TEST_SUITE("Semantic") {
         CHECK(symbols.is_in_loop());
 
         symbols.push_scope(ScopeKind::Block);
-        CHECK(symbols.is_in_loop());  // Still in loop, nested block
+        CHECK(symbols.is_in_loop()); // Still in loop, nested block
 
         symbols.pop_scope();
         symbols.pop_scope();
@@ -897,7 +899,8 @@ TEST_SUITE("Semantic") {
             return "hi";
         }
     )"));
-        CHECK(t.has_error_containing("trait 'Greet' requires method 'bye' which is not implemented for 'P'"));
+        CHECK(t.has_error_containing(
+            "trait 'Greet' requires method 'bye' which is not implemented for 'P'"));
         CHECK(!t.has_error_containing("%.*s"));
     }
 
@@ -1203,7 +1206,7 @@ TEST_SUITE("Semantic") {
 
         SemanticTestHelper t;
         t.run(src.c_str());
-        CHECK(t.error_count() == MAX_SEMANTIC_ERRORS);  // 20 in batch mode
+        CHECK(t.error_count() == MAX_SEMANTIC_ERRORS); // 20 in batch mode
     }
 
     // ========================================================================
@@ -1411,10 +1414,10 @@ TEST_SUITE("Semantic") {
         Type* fn_str = types.function_type(
             Span<Type*>(allocator.emplace<Type*>(types.string_type()), 1), types.void_type());
 
-        Symbol* head = symbols.define(SymbolKind::Function, "f"_sv, fn_i32,
-                                      SourceLocation{0, 0, 0, 0});
-        Symbol* member = symbols.append_overload(head, SymbolKind::Function, fn_str,
-                                                 SourceLocation{0, 0, 0, 0});
+        Symbol* head =
+            symbols.define(SymbolKind::Function, "f"_sv, fn_i32, SourceLocation{0, 0, 0, 0});
+        Symbol* member =
+            symbols.append_overload(head, SymbolKind::Function, fn_str, SourceLocation{0, 0, 0, 0});
         // Chain order preserved; lookup returns the head; the member shares
         // name and defining scope but never enters the cache.
         CHECK(head->next_overload == member);
@@ -1429,11 +1432,11 @@ TEST_SUITE("Semantic") {
         BumpAllocator allocator{4096};
         TypeCache types(allocator);
 
-        Type* params1[] = { types.i32_type() };
+        Type* params1[] = {types.i32_type()};
         StringView m1 = mangle_overload(allocator, "print"_sv, Span<Type*>(params1, 1));
         CHECK(m1 == "$ol$print$i32"_sv);
 
-        Type* params2[] = { types.list_type(types.i32_type()), types.string_type() };
+        Type* params2[] = {types.list_type(types.i32_type()), types.string_type()};
         StringView m2 = mangle_overload(allocator, "f"_sv, Span<Type*>(params2, 2));
         CHECK(m2 == "$ol$f$List$i32$string"_sv);
 
@@ -1684,4 +1687,4 @@ TEST_SUITE("Semantic") {
         CHECK(ok);
     }
 
-}  // TEST_SUITE("Semantic")
+} // TEST_SUITE("Semantic")

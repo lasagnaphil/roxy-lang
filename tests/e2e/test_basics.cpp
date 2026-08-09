@@ -338,7 +338,7 @@ TEST_SUITE("E2E Basics") {
             std::string src = generate_many_locals(100);
             TestResult result = run_and_capture(src.c_str(), "main");
             CHECK(result.success);
-            CHECK(result.value == 5050);  // 100*101/2
+            CHECK(result.value == 5050); // 100*101/2
         }
 
         SUBCASE("200 locals with summation") {
@@ -346,7 +346,7 @@ TEST_SUITE("E2E Basics") {
             std::string src = generate_many_locals(200);
             TestResult result = run_and_capture(src.c_str(), "main");
             CHECK(result.success);
-            CHECK(result.value == 20100);  // 200*201/2
+            CHECK(result.value == 20100); // 200*201/2
         }
 
         SUBCASE("253 locals with summation - at boundary") {
@@ -354,7 +354,7 @@ TEST_SUITE("E2E Basics") {
             std::string src = generate_many_locals(253);
             TestResult result = run_and_capture(src.c_str(), "main");
             CHECK(result.success);
-            CHECK(result.value == 32131);  // 253*254/2
+            CHECK(result.value == 32131); // 253*254/2
         }
 
         SUBCASE("254 locals with summation - spilling") {
@@ -363,7 +363,7 @@ TEST_SUITE("E2E Basics") {
             std::string src = generate_many_locals(254);
             TestResult result = run_and_capture(src.c_str(), "main");
             CHECK(result.success);
-            CHECK(result.value == 32385);  // 254*255/2
+            CHECK(result.value == 32385); // 254*255/2
         }
 
         SUBCASE("400 locals with summation - heavy spilling") {
@@ -372,7 +372,7 @@ TEST_SUITE("E2E Basics") {
             std::string src = generate_many_locals(400);
             TestResult result = run_and_capture(src.c_str(), "main");
             CHECK(result.success);
-            CHECK(result.value == 80200);  // 400*401/2
+            CHECK(result.value == 80200); // 400*401/2
         }
 
         SUBCASE("500 locals return-last - register reuse") {
@@ -394,20 +394,19 @@ TEST_SUITE("E2E Basics") {
             // frame despite low real pressure. The temp now reuses the call's
             // own reserved window slot just above the packed return slots,
             // which is transient argument space, dead once the call returned.
-            std::string src =
-                "struct Vec2 { x: i32; y: i32; }\n"
-                "fun make(i: i32): Vec2 {\n"
-                "    return Vec2 { x = i, y = i + 1 };\n"
-                "}\n"
-                "fun main(): i32 {\n"
-                "    var total: i32 = 0;\n";
+            std::string src = "struct Vec2 { x: i32; y: i32; }\n"
+                              "fun make(i: i32): Vec2 {\n"
+                              "    return Vec2 { x = i, y = i + 1 };\n"
+                              "}\n"
+                              "fun main(): i32 {\n"
+                              "    var total: i32 = 0;\n";
             for (int i = 0; i < 300; i++) {
                 src += "    total = total + make(" + std::to_string(i) + ").x;\n";
             }
             src += "    return total;\n}\n";
             TestResult result = run_and_capture(src.c_str(), "main");
             CHECK(result.success);
-            CHECK(result.value == 44850);  // 0 + 1 + ... + 299
+            CHECK(result.value == 44850); // 0 + 1 + ... + 299
         }
     }
 
@@ -421,17 +420,17 @@ TEST_SUITE("E2E Basics") {
         for (int i = 0; i < 40000; i++) {
             body += "        n = n * n;\n";
         }
-        std::string source =
-            "fun f(n: i32): i32 {\n"
-            "    if (n > 0) {\n" + body +
-            "    }\n"
-            "    return n;\n"
-            "}\n"
-            "fun main(): i32 { return f(0); }\n";
+        std::string source = "fun f(n: i32): i32 {\n"
+                             "    if (n > 0) {\n" +
+                             body +
+                             "    }\n"
+                             "    return n;\n"
+                             "}\n"
+                             "fun main(): i32 { return f(0); }\n";
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source.c_str());
-        CHECK(module == nullptr);  // branch offset out of i16 range -> compile fails
+        CHECK(module == nullptr); // branch offset out of i16 range -> compile fails
     }
 
-}  // TEST_SUITE("E2E Basics")
+} // TEST_SUITE("E2E Basics")

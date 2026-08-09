@@ -43,11 +43,14 @@ void run_all_harnesses(const std::vector<uint8_t>& bytes) {
 // Replay every regular file directly under `dir` (recursively) through the
 // harnesses. Returns the number of files replayed.
 int replay_directory(const fs::path& dir, const char* extension_filter) {
-    if (!fs::exists(dir)) return 0;
+    if (!fs::exists(dir))
+        return 0;
     int count = 0;
     for (const auto& entry : fs::recursive_directory_iterator(dir)) {
-        if (!entry.is_regular_file()) continue;
-        if (extension_filter && entry.path().extension() != extension_filter) continue;
+        if (!entry.is_regular_file())
+            continue;
+        if (extension_filter && entry.path().extension() != extension_filter)
+            continue;
         std::vector<uint8_t> bytes = read_bytes(entry.path());
         INFO("replaying " << entry.path().string() << " (" << bytes.size() << " bytes)");
         run_all_harnesses(bytes);
@@ -71,7 +74,7 @@ TEST_SUITE("Fuzz Regression") {
     // regression test.
     TEST_CASE("seed corpus survives all harnesses") {
         int replayed = replay_directory(g_project_root / "tests" / "fuzz" / "corpus", nullptr);
-        CHECK(replayed > 0);  // guard against a silently-empty corpus path
+        CHECK(replayed > 0); // guard against a silently-empty corpus path
     }
 
     // The example programs are large, valid inputs — happy-path coverage that a
@@ -89,11 +92,11 @@ TEST_SUITE("Fuzz Regression") {
 
         // Single interesting bytes and short token prefixes.
         const char* snippets[] = {
-            "\"", "'", "{", "}", "(", ")", "[", "]", "<", ">", "\\", ".", ",",
-            ";", ":", "?", "~", "!", "=", "+", "-", "*", "/", "%", "&", "|", "^",
-            "//", "/*", "*/", "0x", "0b", "0o", "1e", "1.", ".1", "1_", "0x_",
-            "f\"", "f\"{", "f\"}", "f\"{}\"", "\"\\", "'\\'", "<<", ">>", "<=",
-            "==", "->", "::", "..", "@#$", "\t\r\n", "     ",
+            "\"", "'",  "{",  "}",  "(",   ")",   "[",    "]",    "<",       ">",     "\\",
+            ".",  ",",  ";",  ":",  "?",   "~",   "!",    "=",    "+",       "-",     "*",
+            "/",  "%",  "&",  "|",  "^",   "//",  "/*",   "*/",   "0x",      "0b",    "0o",
+            "1e", "1.", ".1", "1_", "0x_", "f\"", "f\"{", "f\"}", "f\"{}\"", "\"\\",  "'\\'",
+            "<<", ">>", "<=", "==", "->",  "::",  "..",   "@#$",  "\t\r\n",  "     ",
         };
         for (const char* s : snippets) {
             INFO("snippet: " << s);
@@ -109,7 +112,8 @@ TEST_SUITE("Fuzz Regression") {
         // Raw non-UTF-8 / high bytes.
         {
             std::vector<uint8_t> high_bytes;
-            for (int b = 0x80; b <= 0xFF; b++) high_bytes.push_back((uint8_t)b);
+            for (int b = 0x80; b <= 0xFF; b++)
+                high_bytes.push_back((uint8_t)b);
             run_all_harnesses(high_bytes);
         }
 

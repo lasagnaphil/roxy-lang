@@ -1,18 +1,18 @@
 #include "roxy/core/doctest/doctest.h"
 
-#include "roxy/core/bump_allocator.hpp"
-#include "roxy/shared/lexer.hpp"
+#include "roxy/compiler/codegen/lowering.hpp"
+#include "roxy/compiler/driver/module_registry.hpp"
+#include "roxy/compiler/ir/ir_builder.hpp"
+#include "roxy/compiler/ir/ssa_ir.hpp"
 #include "roxy/compiler/parse/parser.hpp"
 #include "roxy/compiler/sema/semantic.hpp"
 #include "roxy/compiler/types/type_env.hpp"
-#include "roxy/compiler/ir/ssa_ir.hpp"
-#include "roxy/compiler/ir/ir_builder.hpp"
-#include "roxy/compiler/codegen/lowering.hpp"
-#include "roxy/compiler/driver/module_registry.hpp"
-#include "roxy/vm/vm.hpp"
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/shared/lexer.hpp"
+#include "roxy/vm/binding/interop.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/natives.hpp"
-#include "roxy/vm/binding/interop.hpp"
+#include "roxy/vm/vm.hpp"
 
 #include <cmath>
 #include <cstring>
@@ -53,10 +53,10 @@ void my_void_func(i32 x) { (void)x; }
 // that depend on types). Manual bindings will be skipped.
 static Value compile_and_run_with_registry(const char* source, StringView func_name,
                                            BumpAllocator& allocator, TypeEnv& type_env,
-                                           NativeRegistry& registry,
-                                           Span<Value> args = {}) {
+                                           NativeRegistry& registry, Span<Value> args = {}) {
     u32 len = 0;
-    while (source[len]) len++;
+    while (source[len])
+        len++;
 
     Lexer lexer(source, len);
     Parser parser(lexer, allocator);
@@ -116,7 +116,8 @@ static Value compile_and_run_with_builtins(const char* source, StringView func_n
     register_builtin_natives(registry);
 
     u32 len = 0;
-    while (source[len]) len++;
+    while (source[len])
+        len++;
 
     Lexer lexer(source, len);
     Parser parser(lexer, allocator);
@@ -386,7 +387,7 @@ TEST_SUITE("E2E Interop") {
         )";
             Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
             // With untyped registers, bools are 0 or 1
-            CHECK(result.as_u64() == 1);  // true
+            CHECK(result.as_u64() == 1); // true
         }
 
         SUBCASE("is_positive(-5) = false") {
@@ -397,7 +398,7 @@ TEST_SUITE("E2E Interop") {
         )";
             Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
             // With untyped registers, bools are 0 or 1
-            CHECK(result.as_u64() == 0);  // false
+            CHECK(result.as_u64() == 0); // false
         }
 
         SUBCASE("is_even(4) = true") {
@@ -408,7 +409,7 @@ TEST_SUITE("E2E Interop") {
         )";
             Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
             // With untyped registers, bools are 0 or 1
-            CHECK(result.as_u64() == 1);  // true
+            CHECK(result.as_u64() == 1); // true
         }
     }
 
@@ -529,7 +530,7 @@ TEST_SUITE("E2E Interop") {
     // ============================================================================
 
     // Helper for mixed function tests - allows registering custom functions alongside builtins
-    template<typename BindFunc>
+    template <typename BindFunc>
     static Value compile_and_run_mixed(const char* source, StringView func_name, BindFunc bind_fn) {
         BumpAllocator allocator(8192);
         TypeEnv type_env(allocator);
@@ -542,7 +543,8 @@ TEST_SUITE("E2E Interop") {
         bind_fn(registry);
 
         u32 len = 0;
-        while (source[len]) len++;
+        while (source[len])
+            len++;
 
         Lexer lexer(source, len);
         Parser parser(lexer, allocator);
@@ -602,13 +604,12 @@ TEST_SUITE("E2E Interop") {
         }
     )";
 
-        Value result = compile_and_run_mixed(source, "test",
-            [](NativeRegistry& reg) {
-                reg.bind<my_square>("square");
-                reg.bind<my_abs>("abs");
-            });
+        Value result = compile_and_run_mixed(source, "test", [](NativeRegistry& reg) {
+            reg.bind<my_square>("square");
+            reg.bind<my_abs>("abs");
+        });
         CHECK(result.is_int());
-        CHECK(result.as_int == 5 + 16 + 2);  // abs(-5) + square(4) + len(at time of push)
+        CHECK(result.as_int == 5 + 16 + 2); // abs(-5) + square(4) + len(at time of push)
     }
 
     // ============================================================================
@@ -616,24 +617,23 @@ TEST_SUITE("E2E Interop") {
     // ============================================================================
 
     // C++ struct to bind as a native struct
-    struct CppPoint { i32 x, y; };
+    struct CppPoint {
+        i32 x, y;
+    };
 
     // Free functions acting as methods (self pointer first; no RoxyVM*)
-    i32 point_sum(CppPoint* self) { return self->x + self->y; }
-    i32 point_diff(CppPoint* self) { return self->x - self->y; }
-    bool point_is_origin(CppPoint* self) { return self->x == 0 && self->y == 0; }
-    i32 point_scaled_sum(CppPoint* self, i32 scale) { return (self->x + self->y) * scale; }
-    i32 point_weighted(CppPoint* self, i32 wx, i32 wy) { return self->x * wx + self->y * wy; }
+    i32 point_sum(CppPoint * self) { return self->x + self->y; }
+    i32 point_diff(CppPoint * self) { return self->x - self->y; }
+    bool point_is_origin(CppPoint * self) { return self->x == 0 && self->y == 0; }
+    i32 point_scaled_sum(CppPoint * self, i32 scale) { return (self->x + self->y) * scale; }
+    i32 point_weighted(CppPoint * self, i32 wx, i32 wy) { return self->x * wx + self->y * wy; }
 
     TEST_CASE("Native struct with auto-bound method") {
         BumpAllocator alloc(8192);
         TypeEnv type_env(alloc);
         NativeRegistry registry(alloc, type_env.types());
 
-        registry.register_struct("Point", {
-            {"x", NativeTypeKind::I32},
-            {"y", NativeTypeKind::I32}
-        });
+        registry.register_struct("Point", {{"x", NativeTypeKind::I32}, {"y", NativeTypeKind::I32}});
         registry.bind_method<point_sum>("Point", "sum");
 
         const char* source = R"(
@@ -652,10 +652,7 @@ TEST_SUITE("E2E Interop") {
         TypeEnv type_env(alloc);
         NativeRegistry registry(alloc, type_env.types());
 
-        registry.register_struct("Point", {
-            {"x", NativeTypeKind::I32},
-            {"y", NativeTypeKind::I32}
-        });
+        registry.register_struct("Point", {{"x", NativeTypeKind::I32}, {"y", NativeTypeKind::I32}});
 
         // Manual native method: receives (self_ptr, ...) in registers
         auto native_product = [](RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
@@ -683,10 +680,7 @@ TEST_SUITE("E2E Interop") {
         TypeEnv type_env(alloc);
         NativeRegistry registry(alloc, type_env.types());
 
-        registry.register_struct("Point", {
-            {"x", NativeTypeKind::I32},
-            {"y", NativeTypeKind::I32}
-        });
+        registry.register_struct("Point", {{"x", NativeTypeKind::I32}, {"y", NativeTypeKind::I32}});
         registry.bind_method<point_scaled_sum>("Point", "scaled_sum");
 
         const char* source = R"(
@@ -697,7 +691,7 @@ TEST_SUITE("E2E Interop") {
     )";
         Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         CHECK(result.is_int());
-        CHECK(result.as_int == 70);  // (3 + 4) * 10
+        CHECK(result.as_int == 70); // (3 + 4) * 10
     }
 
     TEST_CASE("Multiple methods on one struct") {
@@ -705,10 +699,7 @@ TEST_SUITE("E2E Interop") {
         TypeEnv type_env(alloc);
         NativeRegistry registry(alloc, type_env.types());
 
-        registry.register_struct("Point", {
-            {"x", NativeTypeKind::I32},
-            {"y", NativeTypeKind::I32}
-        });
+        registry.register_struct("Point", {{"x", NativeTypeKind::I32}, {"y", NativeTypeKind::I32}});
         registry.bind_method<point_sum>("Point", "sum");
         registry.bind_method<point_diff>("Point", "diff");
         registry.bind_method<point_is_origin>("Point", "is_origin");
@@ -722,7 +713,7 @@ TEST_SUITE("E2E Interop") {
         )";
             Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
             CHECK(result.is_int());
-            CHECK(result.as_int == 13 + 7);  // sum=13, diff=7
+            CHECK(result.as_int == 13 + 7); // sum=13, diff=7
         }
 
         SUBCASE("is_origin false") {
@@ -733,7 +724,7 @@ TEST_SUITE("E2E Interop") {
             }
         )";
             Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
-            CHECK(result.as_u64() == 0);  // false
+            CHECK(result.as_u64() == 0); // false
         }
 
         SUBCASE("is_origin true") {
@@ -744,7 +735,7 @@ TEST_SUITE("E2E Interop") {
             }
         )";
             Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
-            CHECK(result.as_u64() == 1);  // true
+            CHECK(result.as_u64() == 1); // true
         }
     }
 
@@ -753,10 +744,7 @@ TEST_SUITE("E2E Interop") {
         TypeEnv type_env(alloc);
         NativeRegistry registry(alloc, type_env.types());
 
-        registry.register_struct("Point", {
-            {"x", NativeTypeKind::I32},
-            {"y", NativeTypeKind::I32}
-        });
+        registry.register_struct("Point", {{"x", NativeTypeKind::I32}, {"y", NativeTypeKind::I32}});
         registry.bind_method<point_weighted>("Point", "weighted");
 
         const char* source = R"(
@@ -767,7 +755,7 @@ TEST_SUITE("E2E Interop") {
     )";
         Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         CHECK(result.is_int());
-        CHECK(result.as_int == 26);  // 3*2 + 4*5
+        CHECK(result.as_int == 26); // 3*2 + 4*5
     }
 
     TEST_CASE("Native struct field access") {
@@ -775,10 +763,7 @@ TEST_SUITE("E2E Interop") {
         TypeEnv type_env(alloc);
         NativeRegistry registry(alloc, type_env.types());
 
-        registry.register_struct("Point", {
-            {"x", NativeTypeKind::I32},
-            {"y", NativeTypeKind::I32}
-        });
+        registry.register_struct("Point", {{"x", NativeTypeKind::I32}, {"y", NativeTypeKind::I32}});
 
         const char* source = R"(
         fun test(): i32 {
@@ -796,10 +781,7 @@ TEST_SUITE("E2E Interop") {
         TypeEnv type_env(alloc);
         NativeRegistry registry(alloc, type_env.types());
 
-        registry.register_struct("Point", {
-            {"x", NativeTypeKind::I32},
-            {"y", NativeTypeKind::I32}
-        });
+        registry.register_struct("Point", {{"x", NativeTypeKind::I32}, {"y", NativeTypeKind::I32}});
         registry.bind_method<point_sum>("Point", "sum");
         registry.bind<my_square>("square");
 
@@ -811,7 +793,7 @@ TEST_SUITE("E2E Interop") {
     )";
         Value result = compile_and_run_with_registry(source, "test", alloc, type_env, registry);
         CHECK(result.is_int());
-        CHECK(result.as_int == 49);  // square(7) = 49
+        CHECK(result.as_int == 49); // square(7) = 49
     }
 
     // ============================================================================
@@ -836,9 +818,7 @@ TEST_SUITE("E2E Interop") {
     }
 
     // C++ function with list + primitive params
-    i32 list_get_at(RoxyList<i32> list, i32 index) {
-        return list.get(static_cast<i64>(index));
-    }
+    i32 list_get_at(RoxyList<i32> list, i32 index) { return list.get(static_cast<i64>(index)); }
 
     TEST_CASE("RoxyList: C++ reads list from Roxy") {
         const char* source = R"(
@@ -851,12 +831,10 @@ TEST_SUITE("E2E Interop") {
         }
     )";
 
-        Value result = compile_and_run_mixed(source, "test",
-            [](NativeRegistry& reg) {
-                reg.bind<list_sum>("list_sum");
-            });
+        Value result = compile_and_run_mixed(
+            source, "test", [](NativeRegistry& reg) { reg.bind<list_sum>("list_sum"); });
         CHECK(result.is_int());
-        CHECK(result.as_int == 60);  // 10 + 20 + 30
+        CHECK(result.as_int == 60); // 10 + 20 + 30
     }
 
     TEST_CASE("RoxyList: C++ modifies list") {
@@ -869,12 +847,10 @@ TEST_SUITE("E2E Interop") {
         }
     )";
 
-        Value result = compile_and_run_mixed(source, "test",
-            [](NativeRegistry& reg) {
-                reg.bind<list_push_42>("list_push_42");
-            });
+        Value result = compile_and_run_mixed(
+            source, "test", [](NativeRegistry& reg) { reg.bind<list_push_42>("list_push_42"); });
         CHECK(result.is_int());
-        CHECK(result.as_int == 43);  // 1 + 42
+        CHECK(result.as_int == 43); // 1 + 42
     }
 
     TEST_CASE("RoxyList: C++ reads list with index param") {
@@ -888,10 +864,8 @@ TEST_SUITE("E2E Interop") {
         }
     )";
 
-        Value result = compile_and_run_mixed(source, "test",
-            [](NativeRegistry& reg) {
-                reg.bind<list_get_at>("list_get_at");
-            });
+        Value result = compile_and_run_mixed(
+            source, "test", [](NativeRegistry& reg) { reg.bind<list_get_at>("list_get_at"); });
         CHECK(result.is_int());
         CHECK(result.as_int == 200);
     }
@@ -901,24 +875,16 @@ TEST_SUITE("E2E Interop") {
     // ============================================================================
 
     // C++ function that reads a string from Roxy and returns its length
-    i32 str_get_len(RoxyString str) {
-        return static_cast<i32>(str.length());
-    }
+    i32 str_get_len(RoxyString str) { return static_cast<i32>(str.length()); }
 
     // C++ function that checks if a string equals "hello"
-    bool str_check_hello(RoxyString str) {
-        return str.equals(RoxyString::alloc("hello", 5));
-    }
+    bool str_check_hello(RoxyString str) { return str.equals(RoxyString::alloc("hello", 5)); }
 
     // C++ function that creates a new string and returns it to Roxy
-    RoxyString str_make_greeting() {
-        return RoxyString::alloc("hello from C++");
-    }
+    RoxyString str_make_greeting() { return RoxyString::alloc("hello from C++"); }
 
     // C++ function that concatenates two strings
-    RoxyString str_join(RoxyString a, RoxyString b) {
-        return a.concat(b);
-    }
+    RoxyString str_join(RoxyString a, RoxyString b) { return a.concat(b); }
 
     TEST_CASE("RoxyString: C++ reads string length") {
         const char* source = R"(
@@ -928,10 +894,8 @@ TEST_SUITE("E2E Interop") {
         }
     )";
 
-        Value result = compile_and_run_mixed(source, "test",
-            [](NativeRegistry& reg) {
-                reg.bind<str_get_len>("str_get_len");
-            });
+        Value result = compile_and_run_mixed(
+            source, "test", [](NativeRegistry& reg) { reg.bind<str_get_len>("str_get_len"); });
         CHECK(result.is_int());
         CHECK(result.as_int == 5);
     }
@@ -945,11 +909,10 @@ TEST_SUITE("E2E Interop") {
             }
         )";
 
-            Value result = compile_and_run_mixed(source, "test",
-                [](NativeRegistry& reg) {
-                    reg.bind<str_check_hello>("str_check_hello");
-                });
-            CHECK(result.as_u64() == 1);  // true
+            Value result = compile_and_run_mixed(source, "test", [](NativeRegistry& reg) {
+                reg.bind<str_check_hello>("str_check_hello");
+            });
+            CHECK(result.as_u64() == 1); // true
         }
 
         SUBCASE("non-matching string") {
@@ -960,11 +923,10 @@ TEST_SUITE("E2E Interop") {
             }
         )";
 
-            Value result = compile_and_run_mixed(source, "test",
-                [](NativeRegistry& reg) {
-                    reg.bind<str_check_hello>("str_check_hello");
-                });
-            CHECK(result.as_u64() == 0);  // false
+            Value result = compile_and_run_mixed(source, "test", [](NativeRegistry& reg) {
+                reg.bind<str_check_hello>("str_check_hello");
+            });
+            CHECK(result.as_u64() == 0); // false
         }
     }
 
@@ -976,12 +938,11 @@ TEST_SUITE("E2E Interop") {
         }
     )";
 
-        Value result = compile_and_run_mixed(source, "test",
-            [](NativeRegistry& reg) {
-                reg.bind<str_make_greeting>("str_make_greeting");
-            });
+        Value result = compile_and_run_mixed(source, "test", [](NativeRegistry& reg) {
+            reg.bind<str_make_greeting>("str_make_greeting");
+        });
         CHECK(result.is_int());
-        CHECK(result.as_int == 14);  // "hello from C++" is 14 chars
+        CHECK(result.as_int == 14); // "hello from C++" is 14 chars
     }
 
     TEST_CASE("RoxyString: C++ concatenates strings") {
@@ -994,12 +955,10 @@ TEST_SUITE("E2E Interop") {
         }
     )";
 
-        Value result = compile_and_run_mixed(source, "test",
-            [](NativeRegistry& reg) {
-                reg.bind<str_join>("str_join");
-            });
+        Value result = compile_and_run_mixed(
+            source, "test", [](NativeRegistry& reg) { reg.bind<str_join>("str_join"); });
         CHECK(result.is_int());
-        CHECK(result.as_int == 11);  // "hello world" is 11 chars
+        CHECK(result.as_int == 11); // "hello world" is 11 chars
     }
 
-}  // TEST_SUITE("E2E Interop")
+} // TEST_SUITE("E2E Interop")

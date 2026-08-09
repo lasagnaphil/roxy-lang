@@ -1,8 +1,8 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
-#include "roxy/core/string_view.hpp"
 #include "roxy/core/format.hpp"
+#include "roxy/core/string_view.hpp"
+#include "roxy/core/types.hpp"
 
 #include <cassert>
 #include <cstring>
@@ -12,8 +12,7 @@ namespace rx {
 /// Fixed-capacity stack-allocated string. Buffer is exactly N bytes;
 /// max string length is N-1 (last byte reserved for null terminator).
 /// Drop-in replacement for `char buf[N]` with automatic length tracking.
-template<u32 N>
-class StaticString {
+template <u32 N> class StaticString {
     static_assert(N >= 2, "StaticString capacity must be at least 2");
 
     char m_buf[N];
@@ -27,19 +26,22 @@ public:
     StaticString(const char* s) {
         m_size = s ? static_cast<u32>(strlen(s)) : 0;
         assert(m_size <= N - 1);
-        if (m_size > 0) memcpy(m_buf, s, m_size);
+        if (m_size > 0)
+            memcpy(m_buf, s, m_size);
         m_buf[m_size] = '\0';
     }
 
     StaticString(const char* s, u32 len) : m_size(len) {
         assert(m_size <= N - 1);
-        if (m_size > 0) memcpy(m_buf, s, m_size);
+        if (m_size > 0)
+            memcpy(m_buf, s, m_size);
         m_buf[m_size] = '\0';
     }
 
     StaticString(StringView sv) : m_size(sv.size()) {
         assert(m_size <= N - 1);
-        if (m_size > 0) memcpy(m_buf, sv.data(), m_size);
+        if (m_size > 0)
+            memcpy(m_buf, sv.data(), m_size);
         m_buf[m_size] = '\0';
     }
 
@@ -59,10 +61,22 @@ public:
     bool empty() const { return m_size == 0; }
     static constexpr u32 capacity() { return N - 1; }
 
-    char operator[](u32 i) const { assert(i < m_size); return m_buf[i]; }
-    char& operator[](u32 i) { assert(i < m_size); return m_buf[i]; }
-    char front() const { assert(m_size > 0); return m_buf[0]; }
-    char back() const { assert(m_size > 0); return m_buf[m_size - 1]; }
+    char operator[](u32 i) const {
+        assert(i < m_size);
+        return m_buf[i];
+    }
+    char& operator[](u32 i) {
+        assert(i < m_size);
+        return m_buf[i];
+    }
+    char front() const {
+        assert(m_size > 0);
+        return m_buf[0];
+    }
+    char back() const {
+        assert(m_size > 0);
+        return m_buf[m_size - 1];
+    }
 
     // Iterators
 
@@ -105,42 +119,36 @@ public:
 
     // Comparison
 
-    bool operator==(StringView sv) const {
-        return StringView(m_buf, m_size) == sv;
-    }
+    bool operator==(StringView sv) const { return StringView(m_buf, m_size) == sv; }
     bool operator!=(StringView sv) const { return !(*this == sv); }
 
-    bool operator==(const char* s) const {
-        return StringView(m_buf, m_size) == s;
-    }
+    bool operator==(const char* s) const { return StringView(m_buf, m_size) == s; }
     bool operator!=(const char* s) const { return !(*this == s); }
 
-    template<u32 M>
-    bool operator==(const StaticString<M>& other) const {
+    template <u32 M> bool operator==(const StaticString<M>& other) const {
         return StringView(m_buf, m_size) == StringView(other.data(), other.size());
     }
-    template<u32 M>
-    bool operator!=(const StaticString<M>& other) const { return !(*this == other); }
+    template <u32 M> bool operator!=(const StaticString<M>& other) const {
+        return !(*this == other);
+    }
 
     // Format: clear and write formatted string
-    template<typename... Args>
-    i32 format(runtime_format_string fmt, const Args&... args) {
+    template <typename... Args> i32 format(runtime_format_string fmt, const Args&... args) {
         i32 n = format_to(m_buf, N, fmt, args...);
         m_size = static_cast<u32>(n) < N ? static_cast<u32>(n) : N - 1;
         return n;
     }
-    template<typename... Args>
-    i32 format(fmt_string<sizeof...(Args)> fmt, const Args&... args) {
+    template <typename... Args> i32 format(fmt_string<sizeof...(Args)> fmt, const Args&... args) {
         return format(runtime_format_string{fmt.str}, args...);
     }
 };
 
 /// format_to overload for StaticString: clears and writes formatted string.
-template<u32 N, typename... Args>
+template <u32 N, typename... Args>
 i32 format_to(StaticString<N>& out, runtime_format_string fmt, const Args&... args) {
     return out.format(fmt, args...);
 }
-template<u32 N, typename... Args>
+template <u32 N, typename... Args>
 i32 format_to(StaticString<N>& out, fmt_string<sizeof...(Args)> fmt, const Args&... args) {
     return out.format(fmt, args...);
 }

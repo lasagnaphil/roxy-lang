@@ -1,8 +1,8 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
-#include "test_e2e_backend.hpp"
-#include "roxy/vm/vm.hpp"
 #include "roxy/rt/slab_allocator.hpp"
+#include "roxy/vm/vm.hpp"
+#include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -233,11 +233,12 @@ TEST_SUITE("E2E Lifetime Regressions") {
         }
         )";
         BumpAllocator allocator(1 << 16);
-        CHECK(compile(allocator, src) == nullptr);   // rejected: uniq can't be duplicated
+        CHECK(compile(allocator, src) == nullptr); // rejected: uniq can't be duplicated
 
         // Also rejected: nested containers and Map with an owning key/value.
         auto rejected = [](const char* s) {
-            BumpAllocator a(1 << 16); return compile(a, s) == nullptr;
+            BumpAllocator a(1 << 16);
+            return compile(a, s) == nullptr;
         };
         CHECK(rejected("fun main(): i32 { var l: List<List<i32>> = List<List<i32>>();"
                        " var l2: List<List<i32>> = l.copy(); return 0; }"));
@@ -247,7 +248,8 @@ TEST_SUITE("E2E Lifetime Regressions") {
 
         // NOT over-rejected: copyable elements (incl. ref/weak) still allow .copy().
         auto ok = [](const char* s) {
-            BumpAllocator a(1 << 16); return compile(a, s) != nullptr;
+            BumpAllocator a(1 << 16);
+            return compile(a, s) != nullptr;
         };
         CHECK(ok("fun main(): i32 { var l: List<i32> = List<i32>();"
                  " var l2: List<i32> = l.copy(); return 0; }"));
@@ -573,8 +575,8 @@ TEST_SUITE("E2E Lifetime Regressions") {
     // gate the field/index/inout/global assignment paths already applied
     // ("not for weak ref fields"). Both backends: the bug lived in the shared
     // IR builder.
-    TEST_CASE_TEMPLATE("F10 weak/ref reassignment from a uniq is a snapshot, not a move",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("F10 weak/ref reassignment from a uniq is a snapshot, not a move", Backend,
+                       RX_E2E_BACKENDS) {
         const char* weak_reassign = R"(
         struct Owner { val: i32; }
         fun main(): i32 {

@@ -1,9 +1,9 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
-#include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
+#include "roxy/vm/vm.hpp"
 
 using namespace rx;
 
@@ -106,7 +106,9 @@ TEST_SUITE("E2E Structs") {
         CHECK(result.stdout_output == "12\n17\n");
     }
 
-    TEST_CASE("Struct with float fields returned from main") {  // VM-only: f64 return inspected via raw Value bits (no stdout/exit-code equivalent)
+    TEST_CASE("Struct with float fields returned from main") { // VM-only: f64 return inspected via
+                                                               // raw Value bits (no
+                                                               // stdout/exit-code equivalent)
         // Companion to the parametric case below, which asserts the value through
         // stdout and so must return i32. This one keeps the `main(): f64` return
         // path covered.
@@ -126,7 +128,7 @@ TEST_SUITE("E2E Structs") {
 
         Value result = compile_and_run(source, "main");
         Value float_result = Value::float_from_u64(result.as_u64());
-        CHECK(float_result.as_float == doctest::Approx(4.0));  // 1.5 + 2.5
+        CHECK(float_result.as_float == doctest::Approx(4.0)); // 1.5 + 2.5
     }
 
     TEST_CASE_TEMPLATE("Struct with float fields", Backend, RX_E2E_BACKENDS) {
@@ -147,7 +149,7 @@ TEST_SUITE("E2E Structs") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "4\n");  // 1.5 + 2.5
+        CHECK(result.stdout_output == "4\n"); // 1.5 + 2.5
     }
 
     TEST_CASE_TEMPLATE("Struct in conditional", Backend, RX_E2E_BACKENDS) {
@@ -194,7 +196,7 @@ TEST_SUITE("E2E Structs") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "0\n1\n3\n6\n10\n");  // cumulative: 0, 0+1, 1+2, 3+3, 6+4
+        CHECK(result.stdout_output == "0\n1\n3\n6\n10\n"); // cumulative: 0, 0+1, 1+2, 3+3, 6+4
     }
 
     TEST_CASE_TEMPLATE("Nested structs", Backend, RX_E2E_BACKENDS) {
@@ -437,7 +439,7 @@ TEST_SUITE("E2E Structs") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "10\n15\n");  // 5*2=10, 5+10=15
+        CHECK(result.stdout_output == "10\n15\n"); // 5*2=10, 5+10=15
     }
 
     TEST_CASE_TEMPLATE("Struct literal with 64-bit field", Backend, RX_E2E_BACKENDS) {
@@ -484,7 +486,7 @@ TEST_SUITE("E2E Structs") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "25\n");  // 3^2 + 4^2 = 9 + 16
+        CHECK(result.stdout_output == "25\n"); // 3^2 + 4^2 = 9 + 16
     }
 
     TEST_CASE_TEMPLATE("Struct parameter value semantics", Backend, RX_E2E_BACKENDS) {
@@ -509,7 +511,8 @@ TEST_SUITE("E2E Structs") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "100\n5\n");  // modify returns 100, but pt.x is still 5 (value semantics)
+        CHECK(result.stdout_output ==
+              "100\n5\n"); // modify returns 100, but pt.x is still 5 (value semantics)
     }
 
     TEST_CASE_TEMPLATE("Multiple struct parameters", Backend, RX_E2E_BACKENDS) {
@@ -563,7 +566,7 @@ TEST_SUITE("E2E Structs") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "3\n7\n5\n50\n");  // p.x, p.y, factor, result
+        CHECK(result.stdout_output == "3\n7\n5\n50\n"); // p.x, p.y, factor, result
     }
 
     // ============================================================================
@@ -618,7 +621,7 @@ TEST_SUITE("E2E Structs") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "10\n20\n");  // 5*2, 10*2
+        CHECK(result.stdout_output == "10\n20\n"); // 5*2, 10*2
     }
 
     TEST_CASE_TEMPLATE("Chain struct returns", Backend, RX_E2E_BACKENDS) {
@@ -729,7 +732,7 @@ TEST_SUITE("E2E Structs") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "999\n1\n");  // modify_big returns 999, but data.a is still 1
+        CHECK(result.stdout_output == "999\n1\n"); // modify_big returns 999, but data.a is still 1
     }
 
     TEST_CASE_TEMPLATE("Large struct chained returns", Backend, RX_E2E_BACKENDS) {
@@ -752,7 +755,7 @@ TEST_SUITE("E2E Structs") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "25\n");  // 5 * 5
+        CHECK(result.stdout_output == "25\n"); // 5 * 5
     }
 
     TEST_CASE_TEMPLATE("Large struct return with 64-bit field", Backend, RX_E2E_BACKENDS) {
@@ -800,7 +803,7 @@ TEST_SUITE("E2E Structs") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "6\n12\n");  // 2*3=6, 3*4=12
+        CHECK(result.stdout_output == "6\n12\n"); // 2*3=6, 3*4=12
     }
 
     TEST_CASE_TEMPLATE("Large struct return chained function calls", Backend, RX_E2E_BACKENDS) {
@@ -834,7 +837,7 @@ TEST_SUITE("E2E Structs") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "15\n15\n15\n15\n15\n");  // 10+5 for each field
+        CHECK(result.stdout_output == "15\n15\n15\n15\n15\n"); // 10+5 for each field
     }
 
     // ============================================================================
@@ -857,7 +860,7 @@ TEST_SUITE("E2E Structs") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 4);  // 1.5 + 2.5 = 4.0 -> 4
+        CHECK(result.value == 4); // 1.5 + 2.5 = 4.0 -> 4
     }
 
     TEST_CASE_TEMPLATE("Struct with mixed i32 and f32 fields", Backend, RX_E2E_BACKENDS) {
@@ -876,7 +879,7 @@ TEST_SUITE("E2E Structs") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 25);  // 10 * 2.5 = 25.0 -> 25
+        CHECK(result.value == 25); // 10 * 2.5 = 25.0 -> 25
     }
 
     // ── Declaration-order independence ──────────────────────────────────
@@ -884,7 +887,8 @@ TEST_SUITE("E2E Structs") {
     // declared first; a forward reference was misdiagnosed as "recursive
     // struct type has infinite size". Member resolution now recurses.
 
-    TEST_CASE_TEMPLATE("Value field referencing a later-declared struct", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Value field referencing a later-declared struct", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Outer {
             inner: Inner;
@@ -928,7 +932,8 @@ TEST_SUITE("E2E Structs") {
         CHECK(result.value == 43);
     }
 
-    TEST_CASE_TEMPLATE("Generic instance embedding a later-declared struct", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic instance embedding a later-declared struct", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Wrap {
             boxed: Box<Later>;
@@ -953,4 +958,4 @@ TEST_SUITE("E2E Structs") {
         CHECK(result.value == 7);
     }
 
-}  // TEST_SUITE("E2E Structs")
+} // TEST_SUITE("E2E Structs")

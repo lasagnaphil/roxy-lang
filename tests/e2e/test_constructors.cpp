@@ -1,9 +1,9 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
-#include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
+#include "roxy/vm/vm.hpp"
 
 using namespace rx;
 
@@ -38,7 +38,8 @@ TEST_SUITE("E2E Constructors") {
         CHECK(result.stdout_output == "10\n20\n");
     }
 
-    TEST_CASE_TEMPLATE("synthesized ctor initializes deeply nested defaults", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("synthesized ctor initializes deeply nested defaults", Backend,
+                       RX_E2E_BACKENDS) {
         // Regression: the synthesized default constructor used to unroll
         // nested-struct init exactly one level, so a struct field inside a
         // nested struct was null-filled instead of taking its declared
@@ -306,7 +307,7 @@ TEST_SUITE("E2E Constructors") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "50\n");  // 10 * 5
+        CHECK(result.stdout_output == "50\n"); // 10 * 5
     }
 
     TEST_CASE_TEMPLATE("Destructor: multiple destructors", Backend, RX_E2E_BACKENDS) {
@@ -397,7 +398,7 @@ TEST_SUITE("E2E Constructors") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "0\n");  // zero-initialized
+        CHECK(result.stdout_output == "0\n"); // zero-initialized
     }
 
     TEST_CASE_TEMPLATE("no constructor defined (zero-init stack)", Backend, RX_E2E_BACKENDS) {
@@ -415,7 +416,7 @@ TEST_SUITE("E2E Constructors") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "0\n");  // zero-initialized
+        CHECK(result.stdout_output == "0\n"); // zero-initialized
     }
 
     // ============================================================================
@@ -490,4 +491,4 @@ TEST_SUITE("E2E Constructors") {
         CHECK(result.stdout_output == "42\n99\n");
     }
 
-}  // TEST_SUITE("E2E Constructors")
+} // TEST_SUITE("E2E Constructors")

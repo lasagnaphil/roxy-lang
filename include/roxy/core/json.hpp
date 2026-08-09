@@ -1,11 +1,11 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/span.hpp"
 #include "roxy/core/string.hpp"
 #include "roxy/core/string_view.hpp"
-#include "roxy/core/span.hpp"
+#include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
-#include "roxy/core/bump_allocator.hpp"
 
 #include <cassert>
 #include <cstdlib>
@@ -32,7 +32,10 @@ struct JsonValue {
 
     JsonValue() : type(JsonType::Null), int_value(0) {}
 
-    static JsonValue make_null() { JsonValue v; return v; }
+    static JsonValue make_null() {
+        JsonValue v;
+        return v;
+    }
 
     static JsonValue make_bool(bool b) {
         JsonValue v;
@@ -84,12 +87,30 @@ struct JsonValue {
     bool is_array() const { return type == JsonType::Array; }
     bool is_object() const { return type == JsonType::Object; }
 
-    bool as_bool() const { assert(is_bool()); return bool_value; }
-    i64 as_int() const { assert(is_int()); return int_value; }
-    f64 as_double() const { assert(is_double()); return double_value; }
-    StringView as_string() const { assert(is_string()); return string_value; }
-    Span<JsonValue> as_array() const { assert(is_array()); return array_value; }
-    Span<JsonMember> as_object() const { assert(is_object()); return object_value; }
+    bool as_bool() const {
+        assert(is_bool());
+        return bool_value;
+    }
+    i64 as_int() const {
+        assert(is_int());
+        return int_value;
+    }
+    f64 as_double() const {
+        assert(is_double());
+        return double_value;
+    }
+    StringView as_string() const {
+        assert(is_string());
+        return string_value;
+    }
+    Span<JsonValue> as_array() const {
+        assert(is_array());
+        return array_value;
+    }
+    Span<JsonMember> as_object() const {
+        assert(is_object());
+        return object_value;
+    }
 
     // Object key lookup (linear scan)
     const JsonValue* find(StringView key) const;
@@ -142,8 +163,7 @@ struct JsonDefaultHandler {
 class JsonParser {
 public:
     // source must be mutable (in-situ decoding). Must outlive any returned StringViews.
-    template<typename Handler>
-    bool parse(char* source, u32 length, Handler& handler);
+    template <typename Handler> bool parse(char* source, u32 length, Handler& handler);
 
     bool has_error() const { return m_has_error; }
     const JsonParseError& error() const { return m_error; }
@@ -157,14 +177,10 @@ private:
     bool m_has_error = false;
     JsonParseError m_error = {};
 
-    template<typename Handler>
-    bool parse_value(Handler& handler);
-    template<typename Handler>
-    bool parse_object(Handler& handler);
-    template<typename Handler>
-    bool parse_array(Handler& handler);
-    template<typename Handler>
-    bool parse_number(Handler& handler);
+    template <typename Handler> bool parse_value(Handler& handler);
+    template <typename Handler> bool parse_object(Handler& handler);
+    template <typename Handler> bool parse_array(Handler& handler);
+    template <typename Handler> bool parse_number(Handler& handler);
 
     bool parse_string(StringView& out);
 
@@ -183,8 +199,7 @@ private:
 
 // --- Template implementations (must be in header) ---
 
-template<typename Handler>
-bool JsonParser::parse(char* source, u32 length, Handler& handler) {
+template <typename Handler> bool JsonParser::parse(char* source, u32 length, Handler& handler) {
     m_source = source;
     m_length = length;
     m_current = 0;
@@ -199,7 +214,8 @@ bool JsonParser::parse(char* source, u32 length, Handler& handler) {
         return false;
     }
 
-    if (!parse_value(handler)) return false;
+    if (!parse_value(handler))
+        return false;
 
     skip_whitespace();
     if (m_current < m_length) {
@@ -210,8 +226,7 @@ bool JsonParser::parse(char* source, u32 length, Handler& handler) {
     return true;
 }
 
-template<typename Handler>
-bool JsonParser::parse_value(Handler& handler) {
+template <typename Handler> bool JsonParser::parse_value(Handler& handler) {
     skip_whitespace();
 
     if (m_current >= m_length) {
@@ -221,67 +236,62 @@ bool JsonParser::parse_value(Handler& handler) {
 
     char c = peek();
     switch (c) {
-    case 'n':
-        if (m_current + 4 <= m_length &&
-            m_source[m_current + 1] == 'u' &&
-            m_source[m_current + 2] == 'l' &&
-            m_source[m_current + 3] == 'l') {
-            m_current += 4;
-            return handler.on_null();
+        case 'n':
+            if (m_current + 4 <= m_length && m_source[m_current + 1] == 'u' &&
+                m_source[m_current + 2] == 'l' && m_source[m_current + 3] == 'l') {
+                m_current += 4;
+                return handler.on_null();
+            }
+            set_error("invalid token");
+            return false;
+
+        case 't':
+            if (m_current + 4 <= m_length && m_source[m_current + 1] == 'r' &&
+                m_source[m_current + 2] == 'u' && m_source[m_current + 3] == 'e') {
+                m_current += 4;
+                return handler.on_bool(true);
+            }
+            set_error("invalid token");
+            return false;
+
+        case 'f':
+            if (m_current + 5 <= m_length && m_source[m_current + 1] == 'a' &&
+                m_source[m_current + 2] == 'l' && m_source[m_current + 3] == 's' &&
+                m_source[m_current + 4] == 'e') {
+                m_current += 5;
+                return handler.on_bool(false);
+            }
+            set_error("invalid token");
+            return false;
+
+        case '"': {
+            StringView str;
+            if (!parse_string(str))
+                return false;
+            return handler.on_string(str);
         }
-        set_error("invalid token");
-        return false;
 
-    case 't':
-        if (m_current + 4 <= m_length &&
-            m_source[m_current + 1] == 'r' &&
-            m_source[m_current + 2] == 'u' &&
-            m_source[m_current + 3] == 'e') {
-            m_current += 4;
-            return handler.on_bool(true);
-        }
-        set_error("invalid token");
-        return false;
+        case '{':
+            return parse_object(handler);
 
-    case 'f':
-        if (m_current + 5 <= m_length &&
-            m_source[m_current + 1] == 'a' &&
-            m_source[m_current + 2] == 'l' &&
-            m_source[m_current + 3] == 's' &&
-            m_source[m_current + 4] == 'e') {
-            m_current += 5;
-            return handler.on_bool(false);
-        }
-        set_error("invalid token");
-        return false;
+        case '[':
+            return parse_array(handler);
 
-    case '"': {
-        StringView str;
-        if (!parse_string(str)) return false;
-        return handler.on_string(str);
-    }
-
-    case '{':
-        return parse_object(handler);
-
-    case '[':
-        return parse_array(handler);
-
-    default:
-        if (c == '-' || (c >= '0' && c <= '9')) {
-            return parse_number(handler);
-        }
-        set_error("unexpected character");
-        return false;
+        default:
+            if (c == '-' || (c >= '0' && c <= '9')) {
+                return parse_number(handler);
+            }
+            set_error("unexpected character");
+            return false;
     }
 }
 
-template<typename Handler>
-bool JsonParser::parse_object(Handler& handler) {
+template <typename Handler> bool JsonParser::parse_object(Handler& handler) {
     assert(peek() == '{');
     advance();
 
-    if (!handler.on_start_object()) return false;
+    if (!handler.on_start_object())
+        return false;
 
     skip_whitespace();
     if (m_current < m_length && peek() == '}') {
@@ -298,13 +308,17 @@ bool JsonParser::parse_object(Handler& handler) {
         }
 
         StringView key;
-        if (!parse_string(key)) return false;
-        if (!handler.on_key(key)) return false;
+        if (!parse_string(key))
+            return false;
+        if (!handler.on_key(key))
+            return false;
 
         skip_whitespace();
-        if (!expect(':', "object")) return false;
+        if (!expect(':', "object"))
+            return false;
 
-        if (!parse_value(handler)) return false;
+        if (!parse_value(handler))
+            return false;
 
         count++;
 
@@ -319,16 +333,17 @@ bool JsonParser::parse_object(Handler& handler) {
             return handler.on_end_object(count);
         }
 
-        if (!expect(',', "object")) return false;
+        if (!expect(',', "object"))
+            return false;
     }
 }
 
-template<typename Handler>
-bool JsonParser::parse_array(Handler& handler) {
+template <typename Handler> bool JsonParser::parse_array(Handler& handler) {
     assert(peek() == '[');
     advance();
 
-    if (!handler.on_start_array()) return false;
+    if (!handler.on_start_array())
+        return false;
 
     skip_whitespace();
     if (m_current < m_length && peek() == ']') {
@@ -338,7 +353,8 @@ bool JsonParser::parse_array(Handler& handler) {
 
     u32 count = 0;
     for (;;) {
-        if (!parse_value(handler)) return false;
+        if (!parse_value(handler))
+            return false;
 
         count++;
 
@@ -353,17 +369,18 @@ bool JsonParser::parse_array(Handler& handler) {
             return handler.on_end_array(count);
         }
 
-        if (!expect(',', "array")) return false;
+        if (!expect(',', "array"))
+            return false;
     }
 }
 
-template<typename Handler>
-bool JsonParser::parse_number(Handler& handler) {
+template <typename Handler> bool JsonParser::parse_number(Handler& handler) {
     u32 start = m_current;
     bool is_float = false;
 
     // Optional minus
-    if (m_current < m_length && m_source[m_current] == '-') m_current++;
+    if (m_current < m_length && m_source[m_current] == '-')
+        m_current++;
 
     // Integer part
     if (m_current >= m_length) {
@@ -414,17 +431,20 @@ bool JsonParser::parse_number(Handler& handler) {
     // Temporarily null-terminate for strtoll/strtod
     u32 end = m_current;
     char saved = (end < m_length) ? m_source[end] : '\0';
-    if (end < m_length) m_source[end] = '\0';
+    if (end < m_length)
+        m_source[end] = '\0';
 
     if (is_float) {
         char* endptr;
         f64 value = strtod(m_source + start, &endptr);
-        if (end < m_length) m_source[end] = saved;
+        if (end < m_length)
+            m_source[end] = saved;
         return handler.on_double(value);
     } else {
         char* endptr;
         i64 value = strtoll(m_source + start, &endptr, 10);
-        if (end < m_length) m_source[end] = saved;
+        if (end < m_length)
+            m_source[end] = saved;
         return handler.on_int(value);
     }
 }
@@ -433,10 +453,12 @@ bool JsonParser::parse_number(Handler& handler) {
 
 class JsonDomHandler {
 public:
-    explicit JsonDomHandler(BumpAllocator& allocator)
-        : m_allocator(allocator), m_has_root(false) {}
+    explicit JsonDomHandler(BumpAllocator& allocator) : m_allocator(allocator), m_has_root(false) {}
 
-    JsonValue root() const { assert(m_has_root); return m_root; }
+    JsonValue root() const {
+        assert(m_has_root);
+        return m_root;
+    }
     bool has_root() const { return m_has_root; }
 
     bool on_null() {
@@ -589,8 +611,8 @@ private:
 // Parse JSON source into a DOM tree. source is modified in-place.
 // source must outlive the returned JsonValue (StringViews borrow from it).
 // allocator must outlive the returned JsonValue (Spans are allocated from it).
-bool json_parse(char* source, u32 length, BumpAllocator& allocator,
-                JsonValue& out_root, JsonParseError* out_error = nullptr);
+bool json_parse(char* source, u32 length, BumpAllocator& allocator, JsonValue& out_root,
+                JsonParseError* out_error = nullptr);
 
 // Serialize a JsonValue to a JSON string.
 String json_stringify(const JsonValue& value);

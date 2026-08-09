@@ -1,10 +1,10 @@
 #include "roxy/vm/vm.hpp"
-#include "roxy/vm/interpreter.hpp"
-#include "roxy/vm/object.hpp"
 #include "roxy/core/trace.hpp"
 #include "roxy/rt/slab_allocator.hpp"
-#include "roxy/vm/string.hpp"
 #include "roxy/rt/string_intern.hpp"
+#include "roxy/vm/interpreter.hpp"
+#include "roxy/vm/object.hpp"
+#include "roxy/vm/string.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -14,21 +14,10 @@ namespace rx {
 
 // RoxyVM constructor/destructor defined here where SlabAllocator is complete
 RoxyVM::RoxyVM()
-    : module(nullptr)
-    , register_file_size(0)
-    , register_top(0)
-    , local_stack_size(0)
-    , local_stack_top(0)
-    , call_stack_size(0)
-    , call_stack_capacity(0)
-    , function_ptrs(nullptr)
-    , function_count(0)
-    , running(false)
-    , error(nullptr)
-    , in_flight_exception(nullptr)
-    , in_flight_exception_type_id(0)
-    , in_flight_message_fn_idx(UINT32_MAX)
-{}
+    : module(nullptr), register_file_size(0), register_top(0), local_stack_size(0),
+      local_stack_top(0), call_stack_size(0), call_stack_capacity(0), function_ptrs(nullptr),
+      function_count(0), running(false), error(nullptr), in_flight_exception(nullptr),
+      in_flight_exception_type_id(0), in_flight_message_fn_idx(UINT32_MAX) {}
 
 RoxyVM::~RoxyVM() {
     // Clean up function pointer cache
@@ -146,8 +135,8 @@ void vm_destroy(RoxyVM* vm) {
 
     // Tear down noncopyable globals while the heap/allocator is still alive and
     // the execution machinery (register file, local stack) is intact.
-    if (vm->module && vm->global_slots && !vm->error
-        && vm->module->find_function("__module_shutdown"_sv) >= 0) {
+    if (vm->module && vm->global_slots && !vm->error &&
+        vm->module->find_function("__module_shutdown"_sv) >= 0) {
         vm_call(vm, "__module_shutdown"_sv, {});
     }
 
@@ -261,7 +250,7 @@ bool vm_load_module(RoxyVM* vm, BCModule* module) {
     }
     if (module->find_function("__module_init"_sv) >= 0) {
         if (!vm_call(vm, "__module_init"_sv, {})) {
-            return false;  // global initializer failed (vm->error set)
+            return false; // global initializer failed (vm->error set)
         }
     }
 
@@ -324,7 +313,7 @@ bool vm_call_index(RoxyVM* vm, u32 func_index, Span<Value> args) {
     }
 
     // Allocate local stack space for this function (16-byte aligned)
-    u32 local_stack_base = (vm->local_stack_top + 3) & ~3u;  // Align to 4 slots (16 bytes)
+    u32 local_stack_base = (vm->local_stack_top + 3) & ~3u; // Align to 4 slots (16 bytes)
     if (local_stack_base + func->local_stack_slots > vm->local_stack_size) {
         vm->error = "Local stack overflow";
         return false;
@@ -340,7 +329,8 @@ bool vm_call_index(RoxyVM* vm, u32 func_index, Span<Value> args) {
 
     // Push call frame
     // For top-level call, return_reg is 0 (result goes to R0 of this frame)
-    vm->call_stack[vm->call_stack_size++] = CallFrame(func, func->code.data(), registers, 0, local_stack_base);
+    vm->call_stack[vm->call_stack_size++] =
+        CallFrame(func, func->code.data(), registers, 0, local_stack_base);
 
     // Activate this VM's context for the duration of the call so native
     // functions and runtime helpers can fetch it via `roxy_get_ctx()`. The
@@ -377,13 +367,9 @@ roxy_heap_stats vm_heap_stats(RoxyVM* vm) {
     return out;
 }
 
-const char* vm_get_error(RoxyVM* vm) {
-    return vm->error;
-}
+const char* vm_get_error(RoxyVM* vm) { return vm->error; }
 
-void vm_clear_error(RoxyVM* vm) {
-    vm->error = nullptr;
-}
+void vm_clear_error(RoxyVM* vm) { vm->error = nullptr; }
 
 void vm_register_native(RoxyVM* vm, StringView name, NativeFunction func, u32 param_count) {
     if (vm->module == nullptr) {
@@ -397,4 +383,4 @@ void vm_register_native(RoxyVM* vm, StringView name, NativeFunction func, u32 pa
     vm->module->native_functions.push_back(native);
 }
 
-}
+} // namespace rx

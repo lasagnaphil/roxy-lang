@@ -17,17 +17,10 @@ struct RoxyVM;
 using RoxyString = roxy::String;
 
 // RoxyType specialization for RoxyString
-template<>
-struct RoxyType<RoxyString> {
-    static Type* get(TypeCache& tc) {
-        return tc.string_type();
-    }
-    static RoxyString from_reg(u64 r) {
-        return RoxyString(reinterpret_cast<void*>(r));
-    }
-    static u64 to_reg(RoxyString str) {
-        return reinterpret_cast<u64>(str.data());
-    }
+template <> struct RoxyType<RoxyString> {
+    static Type* get(TypeCache& tc) { return tc.string_type(); }
+    static RoxyString from_reg(u64 r) { return RoxyString(reinterpret_cast<void*>(r)); }
+    static u64 to_reg(RoxyString str) { return reinterpret_cast<u64>(str.data()); }
 };
 
-}
+} // namespace rx

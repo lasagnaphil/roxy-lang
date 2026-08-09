@@ -1,8 +1,8 @@
 #pragma once
 
+#include "roxy/core/tsl/robin_map.h"
 #include "roxy/core/types.hpp"
 #include "roxy/core/unique_ptr.hpp"
-#include "roxy/core/tsl/robin_map.h"
 #include "roxy/rt/roxy_rt.h"
 #include "roxy/vm/bytecode.hpp"
 #include "roxy/vm/map_dispatch.hpp"
@@ -16,11 +16,11 @@ struct StringInternTable;
 
 // Call frame - represents an active function call
 struct CallFrame {
-    const BCFunction* func;     // Current function
-    const u32* pc;              // Program counter (pointer into code)
-    u64* registers;             // Register window base (untyped 8-byte slots)
-    u8 return_reg;              // Register to store return value in caller
-    u32 local_stack_base;       // Base slot index in local_stack for this frame
+    const BCFunction* func; // Current function
+    const u32* pc;          // Program counter (pointer into code)
+    u64* registers;         // Register window base (untyped 8-byte slots)
+    u8 return_reg;          // Register to store return value in caller
+    u32 local_stack_base;   // Base slot index in local_stack for this frame
 
     CallFrame()
         : func(nullptr), pc(nullptr), registers(nullptr), return_reg(0), local_stack_base(0) {}
@@ -31,15 +31,14 @@ struct CallFrame {
 
 // VM configuration
 struct VMConfig {
-    u32 register_file_size;     // Maximum number of registers (8-byte slots)
-    u32 local_stack_size;       // Maximum local stack size (4-byte slots)
-    u32 max_call_depth;         // Maximum call stack depth
+    u32 register_file_size; // Maximum number of registers (8-byte slots)
+    u32 local_stack_size;   // Maximum local stack size (4-byte slots)
+    u32 max_call_depth;     // Maximum call stack depth
 
     VMConfig()
-        : register_file_size(65536)
-        , local_stack_size(262144)  // 256K slots = 1MB
-        , max_call_depth(1024)
-    {}
+        : register_file_size(65536), local_stack_size(262144) // 256K slots = 1MB
+          ,
+          max_call_depth(1024) {}
 };
 
 // Roxy Virtual Machine
@@ -55,9 +54,9 @@ struct RoxyVM {
     u32 register_file_size;         // Total register capacity
     u32 register_top;               // Current top of register allocation
 
-    UniquePtr<u32[]> local_stack;   // Local stack for struct data (4-byte slots)
-    u32 local_stack_size;           // Total local stack capacity in slots
-    u32 local_stack_top;            // Current top of local stack allocation
+    UniquePtr<u32[]> local_stack; // Local stack for struct data (4-byte slots)
+    u32 local_stack_size;         // Total local stack capacity in slots
+    u32 local_stack_top;          // Current top of local stack allocation
 
     // Module-level global storage (4-byte slots). Sized to the loaded module's
     // global_slot_count, zero-initialized, persistent for the VM's lifetime.
@@ -66,9 +65,9 @@ struct RoxyVM {
     UniquePtr<u32[]> global_slots;
     u32 global_slots_size;
 
-    UniquePtr<SlabAllocator> allocator;  // Slab allocator for heap objects
-    roxy_allocator slab_vtable;          // Vtable view of `allocator` plugged into ctx
-    UniquePtr<StringInternTable> string_intern;  // Content-keyed dedup of heap strings
+    UniquePtr<SlabAllocator> allocator;         // Slab allocator for heap objects
+    roxy_allocator slab_vtable;                 // Vtable view of `allocator` plugged into ctx
+    UniquePtr<StringInternTable> string_intern; // Content-keyed dedup of heap strings
 
     // Per-map bytecode-dispatch indices for `Map<Struct, V>` with custom
     // `impl Hash` / `impl Eq`. Replaces the old in-header `hash_fn_index` /
@@ -83,15 +82,15 @@ struct RoxyVM {
     // cleanup here by the env's type_id (built at vm_load_module).
     tsl::robin_map<u32, u32> closure_env_dtors;
 
-    UniquePtr<CallFrame[]> call_stack;  // Pre-allocated call stack
-    u32 call_stack_size;                // Current call stack depth
-    u32 call_stack_capacity;            // Maximum call stack depth
+    UniquePtr<CallFrame[]> call_stack; // Pre-allocated call stack
+    u32 call_stack_size;               // Current call stack depth
+    u32 call_stack_capacity;           // Maximum call stack depth
 
-    const BCFunction** function_ptrs;   // Flat function pointer cache (owned by module)
-    u32 function_count;                 // Number of cached function pointers
+    const BCFunction** function_ptrs; // Flat function pointer cache (owned by module)
+    u32 function_count;               // Number of cached function pointers
 
-    bool running;                   // Execution state
-    const char* error;              // Error message (null if no error)
+    bool running;      // Execution state
+    const char* error; // Error message (null if no error)
 
     // Heap census taken by vm_destroy at the true end of the VM's life — after
     // __module_shutdown has torn down globals, before the slabs are freed.
@@ -106,9 +105,9 @@ struct RoxyVM {
     Vector<std::pair<u32, u64>> teardown_leaks_by_type;
 
     // Exception handling state
-    void* in_flight_exception;          // Exception object being propagated (nullptr if none)
-    u32 in_flight_exception_type_id;    // type_id from ObjectHeader
-    u32 in_flight_message_fn_idx;       // Function index for message() method (UINT32_MAX = none)
+    void* in_flight_exception;       // Exception object being propagated (nullptr if none)
+    u32 in_flight_exception_type_id; // type_id from ObjectHeader
+    u32 in_flight_message_fn_idx;    // Function index for message() method (UINT32_MAX = none)
 
     // Inline call stack accessors
     CallFrame& call_stack_back() { return call_stack[call_stack_size - 1]; }
@@ -154,4 +153,4 @@ void vm_clear_error(RoxyVM* vm);
 // Register a native function
 void vm_register_native(RoxyVM* vm, StringView name, NativeFunction func, u32 param_count);
 
-}
+} // namespace rx

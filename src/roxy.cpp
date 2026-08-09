@@ -1,25 +1,25 @@
 // Roxy standalone interpreter
 // Usage: roxy [options] <source_file> [program_args...]
 
+#include "roxy/compiler/driver/compiler.hpp"
+#include "roxy/compiler/ir/ssa_ir.hpp"
 #include "roxy/core/bump_allocator.hpp"
-#include "roxy/core/trace.hpp"
 #include "roxy/core/file.hpp"
+#include "roxy/core/trace.hpp"
 #include "roxy/core/unique_ptr.hpp"
 #include "roxy/core/vector.hpp"
 #include "roxy/shared/lexer.hpp"
-#include "roxy/compiler/driver/compiler.hpp"
-#include "roxy/compiler/ir/ssa_ir.hpp"
 #include "roxy/vm/bytecode.hpp"
-#include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
-#include "roxy/vm/string.hpp"
-#include "roxy/vm/object.hpp"
 #include "roxy/vm/list.hpp"
+#include "roxy/vm/object.hpp"
+#include "roxy/vm/string.hpp"
+#include "roxy/vm/vm.hpp"
 
-#include <cstdio>
-#include <cstring>
-#include <cstdlib>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 // tsl::robin_map for visited module tracking (used as set with bool values)
 #include "roxy/core/tsl/robin_map.h"
@@ -28,8 +28,7 @@ using namespace rx;
 
 // Monotonic nanosecond timestamp (matches Compiler's phase clock).
 static inline u64 now_ns() {
-    return static_cast<u64>(
-        std::chrono::steady_clock::now().time_since_epoch().count());
+    return static_cast<u64>(std::chrono::steady_clock::now().time_since_epoch().count());
 }
 
 // Print the compile-phase breakdown (see `roxy --time`). `t` holds summed
@@ -37,30 +36,36 @@ static inline u64 now_ns() {
 // per-compile average. `execute_ns` is the program's run time (0 = omit, e.g.
 // in the compile-only --repeat harness).
 static void print_timings(const CompileTimings& t, u64 runs, u64 execute_ns) {
-    auto ms = [runs](u64 ns) { return static_cast<double>(ns) / 1.0e6 / static_cast<double>(runs); };
+    auto ms = [runs](u64 ns) {
+        return static_cast<double>(ns) / 1.0e6 / static_cast<double>(runs);
+    };
     double total = ms(t.total_ns);
     auto pct = [total](double v) { return total > 0.0 ? 100.0 * v / total : 0.0; };
 
-    struct Row { const char* name; double val; };
+    struct Row {
+        const char* name;
+        double val;
+    };
     // Sub-phases sum to slightly less than total; the remainder (IR merge,
     // native binding, registry setup) is reported as "link-other".
-    u64 accounted = t.parse_ns + t.topo_ns + t.sema_ns + t.ir_build_ns +
-                    t.coro_lower_ns + t.ir_optimize_ns + t.ir_validate_ns + t.bc_lower_ns;
+    u64 accounted = t.parse_ns + t.topo_ns + t.sema_ns + t.ir_build_ns + t.coro_lower_ns +
+                    t.ir_optimize_ns + t.ir_validate_ns + t.bc_lower_ns;
     double other = ms(t.total_ns > accounted ? t.total_ns - accounted : 0);
     Row rows[] = {
-        {"parse",       ms(t.parse_ns)},
-        {"topo-sort",   ms(t.topo_ns)},
-        {"sema",        ms(t.sema_ns)},
-        {"ir-build",    ms(t.ir_build_ns)},
-        {"coro-lower",  ms(t.coro_lower_ns)},
+        {"parse", ms(t.parse_ns)},
+        {"topo-sort", ms(t.topo_ns)},
+        {"sema", ms(t.sema_ns)},
+        {"ir-build", ms(t.ir_build_ns)},
+        {"coro-lower", ms(t.coro_lower_ns)},
         {"ir-optimize", ms(t.ir_optimize_ns)},
         {"ir-validate", ms(t.ir_validate_ns)},
-        {"bc-lower",    ms(t.bc_lower_ns)},
-        {"link-other",  other},
+        {"bc-lower", ms(t.bc_lower_ns)},
+        {"link-other", other},
     };
 
     fprintf(stderr, "\n== roxy --time: compile phases");
-    if (runs > 1) fprintf(stderr, " (avg of %llu runs)", (unsigned long long)runs);
+    if (runs > 1)
+        fprintf(stderr, " (avg of %llu runs)", (unsigned long long)runs);
     fprintf(stderr, " ==\n");
     for (const Row& r : rows) {
         fprintf(stderr, "  %-12s %10.3f ms  %5.1f%%\n", r.name, r.val, pct(r.val));
@@ -68,8 +73,7 @@ static void print_timings(const CompileTimings& t, u64 runs, u64 execute_ns) {
     fprintf(stderr, "  %-12s %10s  %6s\n", "", "----------", "------");
     fprintf(stderr, "  %-12s %10.3f ms  %5.1f%%\n", "compile", total, 100.0);
     if (execute_ns > 0) {
-        fprintf(stderr, "  %-12s %10.3f ms\n", "execute",
-                static_cast<double>(execute_ns) / 1.0e6);
+        fprintf(stderr, "  %-12s %10.3f ms\n", "execute", static_cast<double>(execute_ns) / 1.0e6);
     }
 }
 
@@ -84,10 +88,13 @@ static void print_usage(const char* program) {
     fprintf(stderr, "  --help, -h     Show this help message\n");
     fprintf(stderr, "  --dump-ir      Print SSA IR to stderr after compilation\n");
     fprintf(stderr, "  --dump-bc      Print bytecode disassembly to stderr after compilation\n");
-    fprintf(stderr, "  --time         Print per-phase compile timing and compile-vs-execute split\n");
+    fprintf(stderr,
+            "  --time         Print per-phase compile timing and compile-vs-execute split\n");
     fprintf(stderr, "  --repeat=N     Compile N times and report averaged phase timing (skips\n");
-    fprintf(stderr, "                 execution when N>1; the in-process loop for sampling profilers)\n");
-    fprintf(stderr, "  --check-leaks  After the program exits, report any heap objects still alive\n");
+    fprintf(stderr,
+            "                 execution when N>1; the in-process loop for sampling profilers)\n");
+    fprintf(stderr,
+            "  --check-leaks  After the program exits, report any heap objects still alive\n");
     fprintf(stderr, "                 (a missing drop or unbalanced retain); exit 70 if any\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "The program must define a main() function as the entry point.\n");
@@ -96,12 +103,12 @@ static void print_usage(const char* program) {
 
 struct Options {
     const char* source_file = nullptr;
-    int program_args_start = 0;  // Index into argv where program args begin (0 = none)
+    int program_args_start = 0; // Index into argv where program args begin (0 = none)
     bool dump_ir = false;
     bool dump_bc = false;
-    bool time = false;           // Print per-phase compile timing + compile-vs-execute split
-    u32 repeat = 1;              // Compile-only benchmark loop count (>1 skips execution)
-    bool check_leaks = false;    // Report objects still alive at VM teardown
+    bool time = false;        // Print per-phase compile timing + compile-vs-execute split
+    u32 repeat = 1;           // Compile-only benchmark loop count (>1 skips execution)
+    bool check_leaks = false; // Report objects still alive at VM teardown
 };
 
 static bool parse_args(int argc, char** argv, Options& opts) {
@@ -124,7 +131,7 @@ static bool parse_args(int argc, char** argv, Options& opts) {
                 return false;
             }
             opts.repeat = static_cast<u32>(n);
-            opts.time = true;  // repeat implies timing output
+            opts.time = true; // repeat implies timing output
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
             return false;
@@ -150,7 +157,8 @@ static bool parse_args(int argc, char** argv, Options& opts) {
 static String get_directory(const char* path) {
     const char* last_sep = nullptr;
     for (const char* p = path; *p; p++) {
-        if (*p == '/' || *p == '\\') last_sep = p;
+        if (*p == '/' || *p == '\\')
+            last_sep = p;
     }
     if (!last_sep) {
         return String("./", 2);
@@ -162,7 +170,8 @@ static String get_directory(const char* path) {
 static String get_module_name(const char* path) {
     const char* last_sep = nullptr;
     for (const char* p = path; *p; p++) {
-        if (*p == '/' || *p == '\\') last_sep = p;
+        if (*p == '/' || *p == '\\')
+            last_sep = p;
     }
     const char* basename = last_sep ? last_sep + 1 : path;
     u32 basename_len = static_cast<u32>(strlen(basename));
@@ -180,7 +189,8 @@ static void scan_imports(const char* source, u32 len, Vector<String>& module_nam
     Lexer lexer(source, len);
     while (true) {
         Token token = lexer.next_token();
-        if (token.kind == TokenKind::Eof) break;
+        if (token.kind == TokenKind::Eof)
+            break;
 
         // Imports are top-of-file: the first top-level declaration keyword
         // (`pub`/`native` always prefix one, never an import) means no import can
@@ -228,17 +238,16 @@ static void scan_imports(const char* source, u32 len, Vector<String>& module_nam
 // Stored source file data - keeps the buffer alive for the compiler
 struct SourceFile {
     String module_name;
-    Vector<u8> buffer;  // Source bytes (null-terminated by read_file_to_buf)
+    Vector<u8> buffer; // Source bytes (null-terminated by read_file_to_buf)
 };
 
 // Recursively discover all imported modules starting from the main file.
 // Returns false on error (e.g., missing imported file).
-static bool discover_modules(const String& base_dir,
-                             const String& module_name,
-                             const char* source, u32 source_len,
-                             Vector<SourceFile>& discovered,
+static bool discover_modules(const String& base_dir, const String& module_name, const char* source,
+                             u32 source_len, Vector<SourceFile>& discovered,
                              tsl::robin_map<String, bool>& visited) {
-    if (visited.count(module_name)) return true;
+    if (visited.count(module_name))
+        return true;
     visited[module_name] = true;
 
     // Scan this source for imports
@@ -247,7 +256,8 @@ static bool discover_modules(const String& base_dir,
 
     // Process each import
     for (auto& import_name : imports) {
-        if (visited.count(import_name)) continue;
+        if (visited.count(import_name))
+            continue;
 
         // Build file path: base_dir + import_name + ".roxy"
         // For dotted paths like "foo.bar", use "foo.bar.roxy" (flat directory)
@@ -269,8 +279,7 @@ static bool discover_modules(const String& base_dir,
         u32 mod_len = static_cast<u32>(source_file.buffer.size() - 1);
 
         // Recursively discover this module's imports
-        if (!discover_modules(base_dir, import_name, mod_source, mod_len,
-                              discovered, visited)) {
+        if (!discover_modules(base_dir, import_name, mod_source, mod_len, discovered, visited)) {
             return false;
         }
 
@@ -303,8 +312,8 @@ int main(int argc, char** argv) {
     // Discover all imported modules recursively
     Vector<SourceFile> discovered_modules;
     tsl::robin_map<String, bool> visited;
-    if (!discover_modules(base_dir, main_module_name, main_source, main_len,
-                          discovered_modules, visited)) {
+    if (!discover_modules(base_dir, main_module_name, main_source, main_len, discovered_modules,
+                          visited)) {
         return 1;
     }
 
@@ -319,8 +328,7 @@ int main(int argc, char** argv) {
                                     static_cast<u32>(source_file.module_name.size())),
                          source, len);
         }
-        c.add_source(StringView(main_module_name.data(),
-                                static_cast<u32>(main_module_name.size())),
+        c.add_source(StringView(main_module_name.data(), static_cast<u32>(main_module_name.size())),
                      main_source, main_len);
     };
 
@@ -343,12 +351,16 @@ int main(int argc, char** argv) {
                 return 1;
             }
             const CompileTimings& t = loop_compiler.timings();
-            agg.parse_ns += t.parse_ns;         agg.topo_ns += t.topo_ns;
-            agg.sema_ns += t.sema_ns;           agg.ir_build_ns += t.ir_build_ns;
-            agg.coro_lower_ns += t.coro_lower_ns; agg.ir_optimize_ns += t.ir_optimize_ns;
-            agg.ir_validate_ns += t.ir_validate_ns; agg.bc_lower_ns += t.bc_lower_ns;
+            agg.parse_ns += t.parse_ns;
+            agg.topo_ns += t.topo_ns;
+            agg.sema_ns += t.sema_ns;
+            agg.ir_build_ns += t.ir_build_ns;
+            agg.coro_lower_ns += t.coro_lower_ns;
+            agg.ir_optimize_ns += t.ir_optimize_ns;
+            agg.ir_validate_ns += t.ir_validate_ns;
+            agg.bc_lower_ns += t.bc_lower_ns;
             agg.total_ns += t.total_ns;
-            ROXY_FRAME_MARK;  // one Tracy frame per compile (no-op unless ENABLE_TRACY)
+            ROXY_FRAME_MARK; // one Tracy frame per compile (no-op unless ENABLE_TRACY)
         }
         print_timings(agg, opts.repeat, 0);
         return 0;
@@ -433,7 +445,7 @@ int main(int argc, char** argv) {
         roxy::ScopedContext ctx_guard(&vm.ctx);
 
         // Count program args: source file + remaining CLI arguments
-        int program_arg_count = 1;  // source file is args[0]
+        int program_arg_count = 1; // source file is args[0]
         if (opts.program_args_start > 0) {
             program_arg_count += argc - opts.program_args_start;
         }
@@ -458,9 +470,8 @@ int main(int argc, char** argv) {
         args_value = Value::make_ptr(list_data);
     }
 
-    Span<Value> call_args = main_func->param_count == 1
-        ? Span<Value>(&args_value, 1)
-        : Span<Value>();
+    Span<Value> call_args =
+        main_func->param_count == 1 ? Span<Value>(&args_value, 1) : Span<Value>();
 
     u64 exec_start = now_ns();
     bool run_ok = vm_call(&vm, main_func_name, call_args);
@@ -485,12 +496,12 @@ int main(int argc, char** argv) {
                 (unsigned long long)vm.teardown_heap_stats.leaked);
         for (const auto& entry : vm.teardown_leaks_by_type) {
             const ObjectTypeInfo* info = get_object_type(entry.first);
-            StringView name = info && !info->name.empty() ? info->name
-                                                          : StringView("<unknown type>");
-            fprintf(stderr, "  %8llu  %.*s\n", (unsigned long long)entry.second,
-                    (int)name.size(), name.data());
+            StringView name =
+                info && !info->name.empty() ? info->name : StringView("<unknown type>");
+            fprintf(stderr, "  %8llu  %.*s\n", (unsigned long long)entry.second, (int)name.size(),
+                    name.data());
         }
-        return 70;  // EX_SOFTWARE — distinct from a program's own exit code
+        return 70; // EX_SOFTWARE — distinct from a program's own exit code
     }
 
     // Phase timing: compile breakdown (from the compiler) + execute split.

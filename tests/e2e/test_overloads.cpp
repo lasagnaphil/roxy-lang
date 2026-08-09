@@ -1,10 +1,10 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 #include "roxy/compiler/driver/compiler.hpp"
-#include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
+#include "roxy/vm/vm.hpp"
 
 #include <cstring>
 
@@ -142,7 +142,8 @@ TEST_SUITE("E2E Overloads") {
         CHECK(result.stdout_output == "42\n20\n");
     }
 
-    TEST_CASE_TEMPLATE("Noncopyable argument moves into the chosen overload", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Noncopyable argument moves into the chosen overload", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun consume(xs: List<i32>): i32 { return xs.len(); }
         fun consume(xs: List<i32>, extra: i32): i32 { return xs.len() + extra; }
@@ -191,7 +192,8 @@ TEST_SUITE("E2E Overloads") {
               "hello\n42\n9999999999\ntrue\n1.5\n4000000000\n18446744073709551615\n2.5\n");
     }
 
-    TEST_CASE_TEMPLATE("print Printable fallback: struct, enum, containers", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("print Printable fallback: struct, enum, containers", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Vec { x: i32; }
         fun Vec.to_string(): string for Printable { return f"Vec[{self.x}]"; }
@@ -216,7 +218,8 @@ TEST_SUITE("E2E Overloads") {
         CHECK(result.stdout_output == "Vec[7]\n2\n[1, 2, 3]\n{potion: 3}\n");
     }
 
-    TEST_CASE_TEMPLATE("print passed as fun(string) value keeps working", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("print passed as fun(string) value keeps working", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun greet_via(f: fun(string), name: string) { f(name); }
         fun main(): i32 {
@@ -346,4 +349,4 @@ TEST_SUITE("E2E Overloads") {
         CHECK_FALSE(result.success);
     }
 
-}  // TEST_SUITE("E2E Overloads")
+} // TEST_SUITE("E2E Overloads")

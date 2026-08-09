@@ -1,13 +1,13 @@
 #pragma once
 
+#include "roxy/compiler/parse/ast.hpp"
+#include "roxy/compiler/sema/sema_context.hpp"
+#include "roxy/compiler/support/error_reporter.hpp"
+#include "roxy/compiler/types/symbol_table.hpp"
+#include "roxy/compiler/types/types.hpp"
 #include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
 #include "roxy/shared/token.hpp"
-#include "roxy/compiler/parse/ast.hpp"
-#include "roxy/compiler/types/types.hpp"
-#include "roxy/compiler/types/symbol_table.hpp"
-#include "roxy/compiler/support/error_reporter.hpp"
-#include "roxy/compiler/sema/sema_context.hpp"
 
 #include "roxy/core/tsl/robin_map.h"
 
@@ -15,9 +15,9 @@ namespace rx {
 
 // Move state for uniq ownership tracking
 enum class MoveState : u8 {
-    Live,         // Variable owns a valid value
-    Moved,        // Ownership has been transferred (use is an error)
-    MaybeValid,   // Conditionally moved (e.g., moved in one branch of if/else)
+    Live,       // Variable owns a valid value
+    Moved,      // Ownership has been transferred (use is an error)
+    MaybeValid, // Conditionally moved (e.g., moved in one branch of if/else)
 };
 
 // Move-state map for noncopyable variables (per-function).
@@ -49,10 +49,9 @@ public:
     class FunctionScope {
     public:
         explicit FunctionScope(LifetimeChecker& checker)
-            : m_checker(checker)
-            , m_saved_states(std::move(checker.m_move_states))
-            , m_saved_terminates(checker.m_branch_terminates) {
-            checker.m_move_states.clear();  // moved-from map: guarantee empty
+            : m_checker(checker), m_saved_states(std::move(checker.m_move_states)),
+              m_saved_terminates(checker.m_branch_terminates) {
+            checker.m_move_states.clear(); // moved-from map: guarantee empty
             checker.m_branch_terminates = false;
         }
         ~FunctionScope() {
@@ -73,7 +72,8 @@ public:
     // Begin tracking a noncopyable variable/parameter as Live. Null-safe:
     // callers pass the result of a symbol lookup directly.
     void track_live(Symbol* sym) {
-        if (sym) m_move_states[sym] = MoveState::Live;
+        if (sym)
+            m_move_states[sym] = MoveState::Live;
     }
 
     // Mark a uniq variable as moved
@@ -90,7 +90,8 @@ public:
     // move-tracked; false (out untouched) otherwise.
     bool lookup_state(Symbol* sym, MoveState& out) const {
         auto it = m_move_states.find(sym);
-        if (it == m_move_states.end()) return false;
+        if (it == m_move_states.end())
+            return false;
         out = it->second;
         return true;
     }
@@ -98,7 +99,8 @@ public:
     // Overwrite the state of an already-tracked symbol (no-op if untracked).
     void set_state(Symbol* sym, MoveState state) {
         auto it = m_move_states.find(sym);
-        if (it != m_move_states.end()) it.value() = state;
+        if (it != m_move_states.end())
+            it.value() = state;
     }
 
     // Check if a uniq variable is in a moved state and report an error
@@ -134,7 +136,8 @@ public:
     void restore_move_states(const MoveStateSnapshot& snapshot) { m_move_states = snapshot; }
 
     // Merge move states from two branches (e.g., if/else)
-    void merge_move_states(const MoveStateSnapshot& then_states, const MoveStateSnapshot& else_states);
+    void merge_move_states(const MoveStateSnapshot& then_states,
+                           const MoveStateSnapshot& else_states);
 
     // Two-way merge for if/else: keeps the surviving branch's snapshot when one
     // branch terminates, merges both when neither does, and sets
@@ -142,8 +145,8 @@ public:
     // calls this with else_states = pre_branch and else_terminates = false.
     void merge_two_branches(const MoveStateSnapshot& pre_branch,
                             const MoveStateSnapshot& then_states,
-                            const MoveStateSnapshot& else_states,
-                            bool then_terminates, bool else_terminates);
+                            const MoveStateSnapshot& else_states, bool then_terminates,
+                            bool else_terminates);
 
     // N-way merge for when/try: merges every non-terminating snapshot into
     // the current move states. Returns true when every branch terminates (the
@@ -159,8 +162,7 @@ public:
     // noncopyable variable that is Live before the loop but Moved/MaybeValid
     // after the body would be used-after-move on the next iteration — unless the
     // body unconditionally reassigns it first (see loop_reassigns_var_first).
-    void check_loop_cross_iteration_moves(Stmt* body,
-                                          const MoveStateSnapshot& pre_loop_states,
+    void check_loop_cross_iteration_moves(Stmt* body, const MoveStateSnapshot& pre_loop_states,
                                           const MoveStateSnapshot& post_body_states,
                                           SourceLocation loc);
 
@@ -172,10 +174,10 @@ public:
 
 private:
     // True if `expr` is a reference to an `out`/`inout` parameter — a member of
-    // the second-class family that must flow downward only (lifetimes.md "The second-class family").
-    // Used to reject escapes (bind-to-ref, store, return, capture). `self` is
-    // NOT covered here: it is typed ref<T> and its retention goes through the
-    // runtime promotion gate, not a compile error.
+    // the second-class family that must flow downward only (lifetimes.md "The second-class
+    // family"). Used to reject escapes (bind-to-ref, store, return, capture). `self` is NOT covered
+    // here: it is typed ref<T> and its retention goes through the runtime promotion gate, not a
+    // compile error.
     bool is_out_inout_param(Expr* expr);
 
     // True if `expr` reads a container element through a native accessor whose
@@ -208,4 +210,4 @@ private:
     bool m_branch_terminates = false;
 };
 
-}
+} // namespace rx

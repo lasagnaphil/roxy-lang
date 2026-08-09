@@ -1,9 +1,9 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
-#include "roxy/core/string_view.hpp"
-#include "roxy/core/vector.hpp"
 #include "roxy/compiler/ir/ssa_ir.hpp"
+#include "roxy/core/string_view.hpp"
+#include "roxy/core/types.hpp"
+#include "roxy/core/vector.hpp"
 
 #include "roxy/core/tsl/robin_map.h"
 
@@ -28,7 +28,7 @@ struct OwnedLocalInfo {
     bool is_temporary;     // True for compiler-generated temporaries (__tmp*/__str*)
     BlockId start_block;   // Block where variable becomes live (for cleanup records)
     ValueId initial_value; // SSA value at declaration (for cleanup record register mapping)
-    OwnedKind kind = OwnedKind::Owned;  // Owned value vs ref borrow vs owned string
+    OwnedKind kind = OwnedKind::Owned; // Owned value vs ref borrow vs owned string
 
     // A temporary whose ownership a *declaration* adopted in the temporary's own
     // register (`var s: string = a + "!"`): the new binding tracks the same SSA
@@ -115,7 +115,7 @@ public:
 private:
     Vector<OwnedLocalInfo> m_entries;
     tsl::robin_map<StringView, u32> m_index_by_name;
-    tsl::robin_map<u32, u32> m_temp_index_by_value;  // ValueId.id -> entry index
+    tsl::robin_map<u32, u32> m_temp_index_by_value; // ValueId.id -> entry index
 };
 
-}
+} // namespace rx

@@ -4,7 +4,8 @@
 
 namespace rx {
 
-void ModuleRegistry::register_native_module(StringView name, NativeRegistry* natives, TypeCache& types) {
+void ModuleRegistry::register_native_module(StringView name, NativeRegistry* natives,
+                                            TypeCache& types) {
     // Create module info
     ModuleInfo* module = m_allocator.emplace<ModuleInfo>();
     module->name = name;
@@ -15,7 +16,8 @@ void ModuleRegistry::register_native_module(StringView name, NativeRegistry* nat
     // Methods (is_method=true) are accessed via method dispatch, not as module exports
     for (u32 i = 0; i < natives->size(); i++) {
         const NativeFunctionEntry& entry = natives->get_entry(i);
-        if (entry.is_method) continue;
+        if (entry.is_method)
+            continue;
 
         ModuleExport exp;
         // Overloaded natives export under their source-visible name; the
@@ -24,7 +26,7 @@ void ModuleRegistry::register_native_module(StringView name, NativeRegistry* nat
         exp.symbol_name = entry.source_name.empty() ? StringView{} : entry.name;
         exp.kind = ExportKind::Function;
         exp.is_native = true;
-        exp.is_pub = true;  // All native functions are public
+        exp.is_pub = true; // All native functions are public
         exp.index = i;
         exp.decl = nullptr;
 
@@ -54,8 +56,8 @@ ModuleInfo* ModuleRegistry::register_script_module(StringView name) {
     return module;
 }
 
-void ModuleRegistry::add_export(ModuleInfo* module, StringView name, ExportKind kind,
-                                Type* type, bool is_pub, u32 index, Decl* decl) {
+void ModuleRegistry::add_export(ModuleInfo* module, StringView name, ExportKind kind, Type* type,
+                                bool is_pub, u32 index, Decl* decl) {
     ModuleExport exp;
     exp.name = name;
     exp.kind = kind;
@@ -76,21 +78,35 @@ void ModuleRegistry::add_export(ModuleInfo* module, StringView name, ExportKind 
 // Helper function to convert NativeTypeKind to Type*
 Type* type_from_kind(NativeTypeKind kind, TypeCache& types) {
     switch (kind) {
-        case NativeTypeKind::Void: return types.void_type();
-        case NativeTypeKind::Bool: return types.bool_type();
-        case NativeTypeKind::I8: return types.i8_type();
-        case NativeTypeKind::I16: return types.i16_type();
-        case NativeTypeKind::I32: return types.i32_type();
-        case NativeTypeKind::I64: return types.i64_type();
-        case NativeTypeKind::U8: return types.u8_type();
-        case NativeTypeKind::U16: return types.u16_type();
-        case NativeTypeKind::U32: return types.u32_type();
-        case NativeTypeKind::U64: return types.u64_type();
-        case NativeTypeKind::F32: return types.f32_type();
-        case NativeTypeKind::F64: return types.f64_type();
-        case NativeTypeKind::String: return types.string_type();
-        default: return types.error_type();
+        case NativeTypeKind::Void:
+            return types.void_type();
+        case NativeTypeKind::Bool:
+            return types.bool_type();
+        case NativeTypeKind::I8:
+            return types.i8_type();
+        case NativeTypeKind::I16:
+            return types.i16_type();
+        case NativeTypeKind::I32:
+            return types.i32_type();
+        case NativeTypeKind::I64:
+            return types.i64_type();
+        case NativeTypeKind::U8:
+            return types.u8_type();
+        case NativeTypeKind::U16:
+            return types.u16_type();
+        case NativeTypeKind::U32:
+            return types.u32_type();
+        case NativeTypeKind::U64:
+            return types.u64_type();
+        case NativeTypeKind::F32:
+            return types.f32_type();
+        case NativeTypeKind::F64:
+            return types.f64_type();
+        case NativeTypeKind::String:
+            return types.string_type();
+        default:
+            return types.error_type();
     }
 }
 
-}
+} // namespace rx

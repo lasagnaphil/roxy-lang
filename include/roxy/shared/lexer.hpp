@@ -29,10 +29,10 @@ public:
 private:
     const char* m_source;
     u32 m_length;
-    u32 m_start;        // Start of current token
-    u32 m_current;      // Current position
+    u32 m_start;   // Start of current token
+    u32 m_current; // Current position
     u32 m_line;
-    u32 m_line_start;   // Offset where current line started
+    u32 m_line_start; // Offset where current line started
 
     char advance();
     char peek() const;
@@ -56,4 +56,4 @@ private:
     u32 m_fstring_brace_depth = 0;
 };
 
-}
+} // namespace rx

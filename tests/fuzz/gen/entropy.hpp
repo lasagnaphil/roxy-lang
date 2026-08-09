@@ -25,23 +25,26 @@ public:
     explicit Entropy(uint64_t seed)
         : m_mode(Mode::Prng), m_state(seed * 0x9e3779b97f4a7c15ull + 0x2545f4914f6cdd1dull) {}
 
-    Entropy(const uint8_t* data, size_t size)
-        : m_mode(Mode::Bytes), m_data(data), m_size(size) {}
+    Entropy(const uint8_t* data, size_t size) : m_mode(Mode::Bytes), m_data(data), m_size(size) {}
 
     bool dry() const { return m_mode == Mode::Bytes && m_pos >= m_size; }
 
     // Uniform-ish value in [0, n). n == 0 or 1 returns 0 without consuming
     // entropy. Modulo bias is irrelevant for generation purposes.
     uint32_t range(uint32_t n) {
-        if (n <= 1) return 0;
+        if (n <= 1)
+            return 0;
         uint32_t value;
         if (m_mode == Mode::Prng) {
             value = static_cast<uint32_t>(splitmix64() >> 32);
         } else {
-            if (dry()) return 0;
+            if (dry())
+                return 0;
             value = next_byte();
-            if (n > 0x100) value |= static_cast<uint32_t>(next_byte()) << 8;
-            if (n > 0x10000) value |= static_cast<uint32_t>(next_byte()) << 16;
+            if (n > 0x100)
+                value |= static_cast<uint32_t>(next_byte()) << 8;
+            if (n > 0x10000)
+                value |= static_cast<uint32_t>(next_byte()) << 16;
         }
         return value % n;
     }
@@ -49,7 +52,8 @@ public:
     // True with roughly `percent`% probability. Dry byte-buffer -> false, so
     // callers must phrase decisions with `true` as the *more* elaborate path.
     bool chance(uint32_t percent) {
-        if (dry()) return false;
+        if (dry())
+            return false;
         return range(100) < percent;
     }
 

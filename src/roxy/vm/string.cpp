@@ -1,6 +1,6 @@
 #include "roxy/vm/string.hpp"
-#include "roxy/vm/object.hpp"
 #include "roxy/rt/roxy_rt.h"
+#include "roxy/vm/object.hpp"
 
 namespace rx {
 
@@ -14,9 +14,7 @@ u32 register_string_type() {
     return g_string_type_id;
 }
 
-u32 get_string_type_id() {
-    return g_string_type_id;
-}
+u32 get_string_type_id() { return g_string_type_id; }
 
 // `vm_call_index` activates `vm->ctx` via ScopedContext, which carries the
 // allocator vtable + intern table the runtime needs. So these wrappers can
@@ -40,4 +38,4 @@ bool string_equals(const void* str1, const void* str2) {
     return roxy_string_eq(const_cast<void*>(str1), const_cast<void*>(str2));
 }
 
-}
+} // namespace rx

@@ -1,8 +1,8 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
-#include "test_e2e_backend.hpp"
-#include "roxy/vm/vm.hpp"
 #include "roxy/rt/slab_allocator.hpp"
+#include "roxy/vm/vm.hpp"
+#include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -239,7 +239,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.value == 105);
     }
 
-    TEST_CASE_TEMPLATE("Exception stack unwinding through multiple frames", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Exception stack unwinding through multiple frames", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct DeepError {
             level: i32;
@@ -319,7 +320,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.value == 10);
     }
 
-    TEST_CASE("Unhandled exception") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE("Unhandled exception") { // VM-only: runtime-trap/abort behavior differs on C backend
+                                       // (VM-only by nature)
         const char* source = R"(
         struct FatalError {
             code: i32;
@@ -487,7 +489,8 @@ TEST_SUITE("E2E Exceptions") {
     // Exception Safety Tests - RAII Cleanup During Exception Handling
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("Exception safety: throw cleans up current scope uniq", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Exception safety: throw cleans up current scope uniq", Backend,
+                       RX_E2E_BACKENDS) {
         // A uniq variable in the same scope as a throw should be cleaned up
         const char* source = R"(
         struct Resource {
@@ -526,7 +529,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.stdout_output == "~Resource\ncaught\n");
     }
 
-    TEST_CASE_TEMPLATE("Exception safety: catch handler cleans up try scope", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Exception safety: catch handler cleans up try scope", Backend,
+                       RX_E2E_BACKENDS) {
         // A uniq variable declared in try body should be cleaned up when a called
         // function throws an exception that is caught
         const char* source = R"(
@@ -570,7 +574,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.stdout_output == "~Resource\ncaught\n");
     }
 
-    TEST_CASE_TEMPLATE("Exception safety: cross-frame unwinding cleanup", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Exception safety: cross-frame unwinding cleanup", Backend,
+                       RX_E2E_BACKENDS) {
         // A uniq variable in an intermediate function (no handler) should be cleaned
         // up when the exception propagates through
         const char* source = R"(
@@ -725,7 +730,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.stdout_output == "~Inner\ninner caught\n~Outer\ndone\n");
     }
 
-    TEST_CASE_TEMPLATE("Exception safety: value struct destructor during unwinding", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Exception safety: value struct destructor during unwinding", Backend,
+                       RX_E2E_BACKENDS) {
         // A value struct with a custom destructor should have its destructor
         // called during exception unwinding
         const char* source = R"(
@@ -806,7 +812,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.stdout_output == "finally\ncaught\n");
     }
 
-    TEST_CASE_TEMPLATE("Exception safety: already-moved uniq skipped during cleanup", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Exception safety: already-moved uniq skipped during cleanup", Backend,
+                       RX_E2E_BACKENDS) {
         // A uniq variable that was moved before the throw should not be double-freed
         const char* source = R"(
         struct Resource {
@@ -882,7 +889,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.stdout_output == "~Resource\n10\n");
     }
 
-    TEST_CASE_TEMPLATE("Exception move tracking: moved in try, used in catch", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Exception move tracking: moved in try, used in catch", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Resource { id: i32; }
         fun delete Resource() { print(f"{"~Resource"}"); }
@@ -908,7 +916,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(!result.success);
     }
 
-    TEST_CASE_TEMPLATE("Exception move tracking: moved in try, reassigned in catch, used after", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Exception move tracking: moved in try, reassigned in catch, used after",
+                       Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Resource { id: i32; }
         fun delete Resource() { print(f"{"~Resource"}"); }
@@ -940,7 +949,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.value == 99);
     }
 
-    TEST_CASE_TEMPLATE("Exception move tracking: not moved in try, moved in catch, used after", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Exception move tracking: not moved in try, moved in catch, used after",
+                       Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Resource { id: i32; }
         fun delete Resource() { print(f"{"~Resource"}"); }
@@ -990,7 +1000,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.success);
     }
 
-    TEST_CASE_TEMPLATE("Exception move tracking: no leak between catch clauses", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Exception move tracking: no leak between catch clauses", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Resource { id: i32; }
         fun delete Resource() { print(f"{"~Resource"}"); }
@@ -1029,7 +1040,8 @@ TEST_SUITE("E2E Exceptions") {
     // Container cleanup on exception unwind
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("Exception cleanup: List<uniq T> elements destroyed on unwind", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Exception cleanup: List<uniq T> elements destroyed on unwind", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Widget {
             id: i32;
@@ -1074,7 +1086,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.stdout_output.find("del:30") != String::npos);
     }
 
-    TEST_CASE_TEMPLATE("Exception cleanup: Map<string, uniq T> values destroyed on unwind", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Exception cleanup: Map<string, uniq T> values destroyed on unwind", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Resource {
             value: i32;
@@ -1112,7 +1125,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.stdout_output.find("free:200") != String::npos);
     }
 
-    TEST_CASE_TEMPLATE("Exception cleanup: temporary uniq destroyed on unwind", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Exception cleanup: temporary uniq destroyed on unwind", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Widget {
             id: i32;
@@ -1263,7 +1277,9 @@ TEST_SUITE("E2E Exceptions") {
     // dereferences an uninitialized SSA value (segfault for struct returns,
     // silently-wrong value for primitives).
 
-    TEST_CASE_TEMPLATE("Try/catch: throwing call to pre-declared struct local preserves prior value", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE(
+        "Try/catch: throwing call to pre-declared struct local preserves prior value", Backend,
+        RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         struct Pt { x: i32; y: i32; z: i32; }
         struct E { c: i32; }
@@ -1289,7 +1305,9 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.value == 7);
     }
 
-    TEST_CASE_TEMPLATE("Try/catch: throwing call to pre-declared primitive local preserves prior value", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE(
+        "Try/catch: throwing call to pre-declared primitive local preserves prior value", Backend,
+        RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         struct E { c: i32; }
         fun E.message(): string for Exception { return "e"; }
@@ -1314,7 +1332,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.value == 7);
     }
 
-    TEST_CASE_TEMPLATE("Try/catch: non-throwing call still rebinds the pre-declared local", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Try/catch: non-throwing call still rebinds the pre-declared local", Backend,
+                       RX_E2E_BACKENDS) {
         // Sanity check that the IR-builder rollback doesn't break the happy path:
         // when the call succeeds, the assignment must take effect.
         const char* source = R"ROXY(
@@ -1348,7 +1367,8 @@ TEST_SUITE("E2E Exceptions") {
     // exception surfaced as "Unhandled exception" instead of being caught.)
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("Try/catch around while loop catches throw from inside", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Try/catch around while loop catches throw from inside", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         struct Err { code: i32; }
         fun Err.message(): string for Exception { return "boom"; }
@@ -1376,7 +1396,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("Try/catch around for loop catches throw from inside", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Try/catch around for loop catches throw from inside", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         struct Err { code: i32; }
         fun Err.message(): string for Exception { return "boom"; }
@@ -1402,7 +1423,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("Try/catch around loop: normal exit still reaches code after", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Try/catch around loop: normal exit still reaches code after", Backend,
+                       RX_E2E_BACKENDS) {
         // Make sure the per-range handler table doesn't accidentally catch past
         // the try when the loop runs to completion without throwing.
         const char* source = R"ROXY(
@@ -1427,7 +1449,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(result.value == 6);
     }
 
-    TEST_CASE_TEMPLATE("Try/catch around nested loops catches throw from inner iteration", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Try/catch around nested loops catches throw from inner iteration", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         struct Err { code: i32; }
         fun Err.message(): string for Exception { return "boom"; }
@@ -1463,7 +1486,8 @@ TEST_SUITE("E2E Exceptions") {
     // continue, re-throw, and a new throw unwinding out of the catch). These
     // assert dtor ordering / count to pin that down on both backends.
 
-    TEST_CASE_TEMPLATE("caught exception runs its destructor exactly once", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("caught exception runs its destructor exactly once", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct E { code: i32; }
         fun E.message(): string for Exception { return "boom"; }
@@ -1480,7 +1504,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(r.stdout_output == "caught\n~E\ndone\n");
     }
 
-    TEST_CASE_TEMPLATE("re-throwing a caught exception hands it off (dtor once)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("re-throwing a caught exception hands it off (dtor once)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct E { code: i32; }
         fun E.message(): string for Exception { return "boom"; }
@@ -1501,7 +1526,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(r.stdout_output == "inner\nouter\n~E\ndone\n");
     }
 
-    TEST_CASE_TEMPLATE("throwing a new exception from a catch frees the old one", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("throwing a new exception from a catch frees the old one", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct E { id: i32; }
         fun E.message(): string for Exception { return "boom"; }
@@ -1538,7 +1564,8 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(r.stdout_output == "caught\n~E\nx=7\n");
     }
 
-    TEST_CASE_TEMPLATE("finally runs after the caught exception is freed", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("finally runs after the caught exception is freed", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct E { code: i32; }
         fun E.message(): string for Exception { return "boom"; }
@@ -1618,7 +1645,8 @@ TEST_SUITE("E2E Exceptions") {
     // must NOT leak into the code after the try (reached only via the normal,
     // non-terminating path where the variable is still live). An empty finally
     // must not change that — the reconciliation keeps the normal-path state.
-    TEST_CASE_TEMPLATE("terminating catch move does not leak past the try", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("terminating catch move does not leak past the try", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
             struct Err { code: i32; }
             fun Err.message(): string for Exception { return "e"; }
@@ -1654,8 +1682,8 @@ TEST_SUITE("E2E Exceptions") {
     // unwind path recorded moved entries too (a throw *before* a move still has
     // to clean up), so two records named one register and unwinding released the
     // string twice — the handler then read a freed value and printed nothing.
-    TEST_CASE_TEMPLATE("a string adopted by its binding is released once when unwinding",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("a string adopted by its binding is released once when unwinding", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct E { v: string; }
         fun E.message(): string for Exception { return "e"; }
@@ -1809,7 +1837,9 @@ TEST_SUITE("E2E Exceptions") {
     // This was the very last Lox leak: `Interpreter.call_fun` throws its arity
     // error out of exactly this shape, leaking the by-value args list —
     // test_run_arity_error / test_run_clock's `clock(1)`.
-    TEST_CASE_TEMPLATE("a throwing branch laid out past the scope's normal exit still frees an owned param", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE(
+        "a throwing branch laid out past the scope's normal exit still frees an owned param",
+        Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct E { msg: string; }
         fun new E(m: string) { self.msg = m; }
@@ -1835,7 +1865,9 @@ TEST_SUITE("E2E Exceptions") {
     // try: the handler is inside the list's coverage — including the throwing
     // branch's extension record — so the unwind must NOT free it, and the list
     // is still usable after the catch.
-    TEST_CASE_TEMPLATE("in-frame catch frees a list scoped inside the try, spares one scoped outside", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE(
+        "in-frame catch frees a list scoped inside the try, spares one scoped outside", Backend,
+        RX_E2E_BACKENDS) {
         const char* scope_inside_try = R"(
         struct E { msg: string; }
         fun new E(m: string) { self.msg = m; }
@@ -1875,7 +1907,9 @@ TEST_SUITE("E2E Exceptions") {
     // freed by its own covered record at the rethrow — not at the original
     // throw, which would hand the finally body a freed value; and not never,
     // which leaked it once the rethrow escaped the frame.
-    TEST_CASE_TEMPLATE("a value in scope at a finally survives the finally body and is freed at the rethrow", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE(
+        "a value in scope at a finally survives the finally body and is freed at the rethrow",
+        Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct E { msg: string; }
         fun new E(m: string) { self.msg = m; }
@@ -1899,4 +1933,4 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(r.stdout_output == "finally: len=1\nbad\n");
     }
 
-}  // TEST_SUITE("E2E Exceptions")
+} // TEST_SUITE("E2E Exceptions")

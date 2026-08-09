@@ -4,11 +4,11 @@
 
 // Force inline macro for performance-critical code
 #if defined(_MSC_VER)
-    #define RX_FORCEINLINE __forceinline
+#define RX_FORCEINLINE __forceinline
 #elif defined(__GNUC__) || defined(__clang__)
-    #define RX_FORCEINLINE __attribute__((always_inline)) inline
+#define RX_FORCEINLINE __attribute__((always_inline)) inline
 #else
-    #define RX_FORCEINLINE inline
+#define RX_FORCEINLINE inline
 #endif
 
 namespace rx {
@@ -24,4 +24,4 @@ using u64 = uint64_t;
 using f32 = float;
 using f64 = double;
 
-}
+} // namespace rx

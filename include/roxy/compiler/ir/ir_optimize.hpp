@@ -1,10 +1,10 @@
 #pragma once
 
+#include "roxy/compiler/ir/ssa_ir.hpp"
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/span.hpp"
 #include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
-#include "roxy/core/span.hpp"
-#include "roxy/core/bump_allocator.hpp"
-#include "roxy/compiler/ir/ssa_ir.hpp"
 
 namespace rx {
 
@@ -68,7 +68,7 @@ bool has_side_effect(IROp op);
 // is a ConstBool with a Goto to the taken target. Returns true if changed.
 bool run_branch_folding(IRFunction* func);
 
-struct PredecessorMap;  // defined below; passes take it by reference
+struct PredecessorMap; // defined below; passes take it by reference
 
 // Phase 3: block merging. Merges block B into its sole predecessor A when
 // A's terminator is an unconditional Goto to B. Skips merges that would
@@ -95,8 +95,8 @@ bool run_trivial_block_arg_elim(IRFunction* func, const PredecessorMap& preds);
 // block-merging and trivial-arg-elim (block-merging refreshes it only after a
 // pass that actually merged), so the common no-op iteration builds it once.
 struct PredecessorMap {
-    Vector<u32> offsets;    // size num_blocks+1; block b: edges[offsets[b] .. offsets[b+1])
-    Vector<BlockId> edges;  // flattened predecessor block ids
+    Vector<u32> offsets;   // size num_blocks+1; block b: edges[offsets[b] .. offsets[b+1])
+    Vector<BlockId> edges; // flattened predecessor block ids
 
     u32 count(u32 block) const { return offsets[block + 1] - offsets[block]; }
     Span<const BlockId> operator[](u32 block) const {
@@ -135,43 +135,82 @@ bool is_cse_eligible(IROp op);
 // IMPORTANT: This switch covers every IROp — it is the single operand-shape
 // enumeration shared by the optimizer passes and BytecodeBuilder's liveness /
 // const-use analyses. New ops must be added here.
-template <typename Fn>
-inline void for_each_operand(IRInst* inst, Fn&& fn) {
+template <typename Fn> inline void for_each_operand(IRInst* inst, Fn&& fn) {
     switch (inst->op) {
         // ── Binary ops ──
-        case IROp::AddI: case IROp::SubI: case IROp::MulI:
-        case IROp::DivI: case IROp::ModI:
-        case IROp::DivU: case IROp::ModU:
-        case IROp::AddF: case IROp::SubF: case IROp::MulF: case IROp::DivF:
-        case IROp::AddD: case IROp::SubD: case IROp::MulD: case IROp::DivD:
-        case IROp::EqI: case IROp::NeI: case IROp::LtI:
-        case IROp::LeI: case IROp::GtI: case IROp::GeI:
-        case IROp::LtU: case IROp::LeU: case IROp::GtU: case IROp::GeU:
-        case IROp::EqF: case IROp::NeF: case IROp::LtF:
-        case IROp::LeF: case IROp::GtF: case IROp::GeF:
-        case IROp::EqD: case IROp::NeD: case IROp::LtD:
-        case IROp::LeD: case IROp::GtD: case IROp::GeD:
-        case IROp::And: case IROp::Or:
-        case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor:
-        case IROp::Shl: case IROp::Shr: case IROp::UShr:
+        case IROp::AddI:
+        case IROp::SubI:
+        case IROp::MulI:
+        case IROp::DivI:
+        case IROp::ModI:
+        case IROp::DivU:
+        case IROp::ModU:
+        case IROp::AddF:
+        case IROp::SubF:
+        case IROp::MulF:
+        case IROp::DivF:
+        case IROp::AddD:
+        case IROp::SubD:
+        case IROp::MulD:
+        case IROp::DivD:
+        case IROp::EqI:
+        case IROp::NeI:
+        case IROp::LtI:
+        case IROp::LeI:
+        case IROp::GtI:
+        case IROp::GeI:
+        case IROp::LtU:
+        case IROp::LeU:
+        case IROp::GtU:
+        case IROp::GeU:
+        case IROp::EqF:
+        case IROp::NeF:
+        case IROp::LtF:
+        case IROp::LeF:
+        case IROp::GtF:
+        case IROp::GeF:
+        case IROp::EqD:
+        case IROp::NeD:
+        case IROp::LtD:
+        case IROp::LeD:
+        case IROp::GtD:
+        case IROp::GeD:
+        case IROp::And:
+        case IROp::Or:
+        case IROp::BitAnd:
+        case IROp::BitOr:
+        case IROp::BitXor:
+        case IROp::Shl:
+        case IROp::Shr:
+        case IROp::UShr:
             fn(inst->binary.left);
             fn(inst->binary.right);
             break;
 
         // ── Unary ops ──
-        case IROp::NegI: case IROp::NegF: case IROp::NegD:
-        case IROp::BitNot: case IROp::Not:
-        case IROp::I_TO_F64: case IROp::F64_TO_I:
-        case IROp::I_TO_B: case IROp::B_TO_I:
+        case IROp::NegI:
+        case IROp::NegF:
+        case IROp::NegD:
+        case IROp::BitNot:
+        case IROp::Not:
+        case IROp::I_TO_F64:
+        case IROp::F64_TO_I:
+        case IROp::I_TO_B:
+        case IROp::B_TO_I:
         case IROp::Copy:
-        case IROp::RefInc: case IROp::RefDec:
-        case IROp::StrRetain: case IROp::StrRelease:
-        case IROp::WeakCheck: case IROp::WeakCreate:
+        case IROp::RefInc:
+        case IROp::RefDec:
+        case IROp::StrRetain:
+        case IROp::StrRelease:
+        case IROp::WeakCheck:
+        case IROp::WeakCreate:
         case IROp::Delete:
-        case IROp::Throw: case IROp::Yield:
+        case IROp::Throw:
+        case IROp::Yield:
         case IROp::Nullify:
         case IROp::AssertHeap:
-        case IROp::ContainerPin: case IROp::ContainerUnpin:
+        case IROp::ContainerPin:
+        case IROp::ContainerUnpin:
             fn(inst->unary);
             break;
 
@@ -250,8 +289,12 @@ inline void for_each_operand(IRInst* inst, Fn&& fn) {
             break;
 
         // ── No-operand ops ──
-        case IROp::ConstNull: case IROp::ConstBool: case IROp::ConstInt:
-        case IROp::ConstF: case IROp::ConstD: case IROp::ConstString:
+        case IROp::ConstNull:
+        case IROp::ConstBool:
+        case IROp::ConstInt:
+        case IROp::ConstF:
+        case IROp::ConstD:
+        case IROp::ConstString:
         case IROp::StackAlloc:
         case IROp::GlobalAddr:
         case IROp::FuncIndex:
@@ -262,8 +305,7 @@ inline void for_each_operand(IRInst* inst, Fn&& fn) {
 
 // Visit every ValueId operand inside a block's Terminator: Goto args,
 // Branch condition + then/else args, Return value. Mutable references.
-template <typename Fn>
-inline void for_each_terminator_operand(Terminator& term, Fn&& fn) {
+template <typename Fn> inline void for_each_terminator_operand(Terminator& term, Fn&& fn) {
     switch (term.kind) {
         case TerminatorKind::Goto:
             for (u32 i = 0; i < term.goto_target.args.size(); i++) {
@@ -280,7 +322,8 @@ inline void for_each_terminator_operand(Terminator& term, Fn&& fn) {
             }
             break;
         case TerminatorKind::Return:
-            if (term.return_value.is_valid()) fn(term.return_value);
+            if (term.return_value.is_valid())
+                fn(term.return_value);
             break;
         case TerminatorKind::None:
         case TerminatorKind::Unreachable:
@@ -288,4 +331,4 @@ inline void for_each_terminator_operand(Terminator& term, Fn&& fn) {
     }
 }
 
-}  // namespace rx
+} // namespace rx

@@ -41,7 +41,8 @@ int main(int argc, char** argv) {
             seed = strtoull(argv[i] + 7, nullptr, 10);
         } else if (strncmp(argv[i], "--modules=", 10) == 0) {
             config.num_modules = static_cast<uint32_t>(strtoul(argv[i] + 10, nullptr, 10));
-            if (config.num_modules == 0) config.num_modules = 1;
+            if (config.num_modules == 0)
+                config.num_modules = 1;
         } else if (strncmp(argv[i], "--funcs=", 8) == 0) {
             config.max_funcs_per_module = static_cast<uint32_t>(strtoul(argv[i] + 8, nullptr, 10));
             if (config.max_funcs_per_module < config.min_funcs_per_module) {
@@ -89,7 +90,8 @@ int main(int argc, char** argv) {
     }
 
     const rx::gen::GenStats& stats = program.stats;
-    fprintf(stderr, "Generated: %u modules, %u functions, %u structs, %u enums, %u lines (seed %llu)\n",
+    fprintf(stderr,
+            "Generated: %u modules, %u functions, %u structs, %u enums, %u lines (seed %llu)\n",
             stats.modules, stats.functions, stats.structs, stats.enums, stats.lines,
             static_cast<unsigned long long>(seed));
     if (out_dir) {

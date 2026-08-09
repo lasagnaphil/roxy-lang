@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -33,7 +33,7 @@ TEST_SUITE("E2E Narrow Arithmetic") {
         )";
             auto result = Backend::run(source);
             CHECK(result.success);
-            CHECK(result.stdout_output == "300\n");  // would wrap to 44 at u8 width
+            CHECK(result.stdout_output == "300\n"); // would wrap to 44 at u8 width
         }
 
         SUBCASE("u16 * u16 does not wrap") {
@@ -47,7 +47,7 @@ TEST_SUITE("E2E Narrow Arithmetic") {
         )";
             auto result = Backend::run(source);
             CHECK(result.success);
-            CHECK(result.stdout_output == "90000\n");  // exceeds u16 max (65535)
+            CHECK(result.stdout_output == "90000\n"); // exceeds u16 max (65535)
         }
 
         SUBCASE("i8 subtraction yields signed i32") {
@@ -147,7 +147,7 @@ TEST_SUITE("E2E Narrow Arithmetic") {
         )";
             auto result = Backend::run(source);
             CHECK(result.success);
-            CHECK(result.stdout_output == "48\n-4\n");  // 3<<4=48; arithmetic -16>>2=-4
+            CHECK(result.stdout_output == "48\n-4\n"); // 3<<4=48; arithmetic -16>>2=-4
         }
 
         SUBCASE("unary negate and bitnot") {
@@ -162,7 +162,7 @@ TEST_SUITE("E2E Narrow Arithmetic") {
         )";
             auto result = Backend::run(source);
             CHECK(result.success);
-            CHECK(result.stdout_output == "5\n-1\n");  // -(-5)=5; ~0 (i32) = -1
+            CHECK(result.stdout_output == "5\n-1\n"); // -(-5)=5; ~0 (i32) = -1
         }
     }
 
@@ -178,7 +178,7 @@ TEST_SUITE("E2E Narrow Arithmetic") {
         )";
             auto result = Backend::run(source);
             CHECK(result.success);
-            CHECK(result.stdout_output == "4\n");  // 260 & 0xFF = 4
+            CHECK(result.stdout_output == "4\n"); // 260 & 0xFF = 4
         }
 
         SUBCASE("u8 -= underflows into u8") {
@@ -192,7 +192,7 @@ TEST_SUITE("E2E Narrow Arithmetic") {
         )";
             auto result = Backend::run(source);
             CHECK(result.success);
-            CHECK(result.stdout_output == "251\n");  // -5 & 0xFF = 251
+            CHECK(result.stdout_output == "251\n"); // -5 & 0xFF = 251
         }
 
         SUBCASE("u8 *= narrows the product") {
@@ -206,7 +206,7 @@ TEST_SUITE("E2E Narrow Arithmetic") {
         )";
             auto result = Backend::run(source);
             CHECK(result.success);
-            CHECK(result.stdout_output == "44\n");  // 300 & 0xFF = 44
+            CHECK(result.stdout_output == "44\n"); // 300 & 0xFF = 44
         }
     }
 
@@ -253,7 +253,7 @@ TEST_SUITE("E2E Narrow Arithmetic") {
         )";
             auto result = Backend::run(source);
             CHECK(result.success);
-            CHECK(result.stdout_output == "44\n");  // 300 & 0xFF = 44
+            CHECK(result.stdout_output == "44\n"); // 300 & 0xFF = 44
         }
     }
 
@@ -271,7 +271,8 @@ TEST_SUITE("E2E Narrow Arithmetic") {
         CHECK(result.stdout_output == "300\n");
     }
 
-    TEST_CASE_TEMPLATE("Storing a narrow arithmetic result requires an explicit cast", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Storing a narrow arithmetic result requires an explicit cast", Backend,
+                       RX_E2E_BACKENDS) {
         // Plain assignment does NOT auto-narrow: `a + b` is i32 and cannot be
         // stored into a u8 lvalue implicitly (compound assignment is the exception).
         const char* source = R"(
@@ -286,4 +287,4 @@ TEST_SUITE("E2E Narrow Arithmetic") {
         CHECK_FALSE(result.success);
     }
 
-}  // TEST_SUITE("E2E Narrow Arithmetic")
+} // TEST_SUITE("E2E Narrow Arithmetic")

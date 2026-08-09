@@ -1328,7 +1328,7 @@ TEST_SUITE("E2E C Backend") {
         CBackendResult result = compile_and_run_cpp(source);
         CHECK(result.compile_success);
         CHECK(result.run_success);
-        CHECK(result.exit_code == 23);  // len_after=2, bits=3 → 23
+        CHECK(result.exit_code == 23); // len_after=2, bits=3 → 23
     }
 
     // ===========================================================================
@@ -1375,7 +1375,7 @@ TEST_SUITE("E2E C Backend") {
         CHECK(result.compile_success);
         CHECK(result.run_success);
         // 1 * 100 + 200 = 300
-        CHECK(result.exit_code == 44);  // 300 % 256 = 44
+        CHECK(result.exit_code == 44); // 300 % 256 = 44
     }
 
     TEST_CASE("Map<Struct, i32> custom hash survives rehash") {
@@ -1591,7 +1591,9 @@ TEST_SUITE("E2E C Backend") {
     // User-bound C++ native function used by the AOT NativeRegistry test.
     // Defined inline in a temp header; the VM-side `bind<>` registration just
     // references it by symbol.
-    namespace { i32 my_aot_add(i32 a, i32 b) { return a + b; } }
+    namespace {
+    i32 my_aot_add(i32 a, i32 b) { return a + b; }
+    } // namespace
 
     TEST_CASE("C Backend AOT: user-registered native dispatches via NativeRegistry") {
         BumpAllocator alloc(8192);
@@ -1613,8 +1615,7 @@ TEST_SUITE("E2E C Backend") {
             "#include <stdint.h>\n"
             "inline int32_t my_aot_add(int32_t a, int32_t b) { return a + b; }\n";
 
-        CBackendResult result = compile_and_run_cpp_with_registry(
-            source, &registry, native_header);
+        CBackendResult result = compile_and_run_cpp_with_registry(source, &registry, native_header);
         CHECK(result.compile_success);
         CHECK(result.run_success);
         CHECK(result.exit_code == 42);
@@ -1644,8 +1645,7 @@ TEST_SUITE("E2E C Backend") {
             "#include <stdint.h>\n"
             "inline int32_t my_aot_add(int32_t a, int32_t b) { return a + b; }\n";
 
-        CBackendResult result = compile_and_run_cpp_with_registry(
-            source, &registry, native_header);
+        CBackendResult result = compile_and_run_cpp_with_registry(source, &registry, native_header);
         REQUIRE(result.compile_success);
         REQUIRE(result.run_success);
         CHECK(result.exit_code == 3);
@@ -1657,7 +1657,9 @@ TEST_SUITE("E2E C Backend") {
     // AOT-symbol-override target. The Roxy program calls `alias_add`, but the
     // registered C++ function is `actual_add` — the bound name and the C++
     // symbol differ on purpose.
-    namespace { i32 actual_add(i32 a, i32 b) { return a + b; } }
+    namespace {
+    i32 actual_add(i32 a, i32 b) { return a + b; }
+    } // namespace
 
     TEST_CASE("C Backend AOT: bind<>(roxy_name, aot_symbol) routes to a different C++ symbol") {
         BumpAllocator alloc(8192);
@@ -1683,8 +1685,7 @@ TEST_SUITE("E2E C Backend") {
             "#include <stdint.h>\n"
             "inline int32_t actual_add(int32_t a, int32_t b) { return a + b; }\n";
 
-        CBackendResult result = compile_and_run_cpp_with_registry(
-            source, &registry, native_header);
+        CBackendResult result = compile_and_run_cpp_with_registry(source, &registry, native_header);
         CHECK(result.compile_success);
         CHECK(result.run_success);
         CHECK(result.exit_code == 42);
@@ -1713,9 +1714,9 @@ TEST_SUITE("E2E C Backend") {
             "#include <stdint.h>\n"
             "extern \"C++\" int32_t my_aot_add(int32_t a, int32_t b) { return a + b; }\n";
 
-        CBackendResult result = compile_and_run_cpp_with_registry(
-            source, &registry, /*native_header_text=*/nullptr,
-            /*extra_cpp_text=*/impl_cpp);
+        CBackendResult result =
+            compile_and_run_cpp_with_registry(source, &registry, /*native_header_text=*/nullptr,
+                                              /*extra_cpp_text=*/impl_cpp);
         CHECK(result.compile_success);
         CHECK(result.run_success);
         CHECK(result.exit_code == 15);
@@ -1730,13 +1731,12 @@ TEST_SUITE("E2E C Backend") {
     // no path = no `#line` directives (matches the existing default behavior).
 
     TEST_CASE("C Backend AOT: #line directives reference the user's source path") {
-        const char* source =
-            "fun helper(x: i32): i32 {\n"        // line 1
-            "    return x * 2;\n"                 // line 2
-            "}\n"                                 // line 3
-            "fun main(): i32 {\n"                 // line 4
-            "    return helper(21);\n"            // line 5
-            "}\n";                                // line 6
+        const char* source = "fun helper(x: i32): i32 {\n" // line 1
+                             "    return x * 2;\n"         // line 2
+                             "}\n"                         // line 3
+                             "fun main(): i32 {\n"         // line 4
+                             "    return helper(21);\n"    // line 5
+                             "}\n";                        // line 6
         String cpp = compile_to_cpp(source, /*debug=*/false, "user.roxy");
         REQUIRE(!cpp.empty());
 
@@ -1756,7 +1756,7 @@ TEST_SUITE("E2E C Backend") {
             return 7;
         }
     )";
-        String cpp = compile_to_cpp(source);  // no source_path
+        String cpp = compile_to_cpp(source); // no source_path
         REQUIRE(!cpp.empty());
         CHECK(cpp.find("#line ") == String::npos);
     }
@@ -1771,13 +1771,12 @@ TEST_SUITE("E2E C Backend") {
         // (three `var` initializers folded into a single `return 60`) checked
         // for directives belonging to statements that no longer existed. Side
         // effects keep these alive.
-        const char* source =
-            "fun main(): i32 {\n"     // line 1
-            "    print(\"a\");\n"     // line 2
-            "    print(\"b\");\n"     // line 3
-            "    print(\"c\");\n"     // line 4
-            "    return 0;\n"         // line 5
-            "}\n";                    // line 6
+        const char* source = "fun main(): i32 {\n" // line 1
+                             "    print(\"a\");\n" // line 2
+                             "    print(\"b\");\n" // line 3
+                             "    print(\"c\");\n" // line 4
+                             "    return 0;\n"     // line 5
+                             "}\n";                // line 6
         String cpp = compile_to_cpp(source, /*debug=*/false, "user.roxy");
         REQUIRE(!cpp.empty());
 
@@ -1794,10 +1793,9 @@ TEST_SUITE("E2E C Backend") {
     TEST_CASE("C Backend AOT: #line directives don't duplicate within a single statement") {
         // A multi-IR-instruction expression shares the same source line; only
         // one #line directive should be emitted for the whole statement.
-        const char* source =
-            "fun main(): i32 {\n"
-            "    return 1 + 2 + 3 + 4 + 5;\n"  // line 2 — many IR ops
-            "}\n";
+        const char* source = "fun main(): i32 {\n"
+                             "    return 1 + 2 + 3 + 4 + 5;\n" // line 2 — many IR ops
+                             "}\n";
         String cpp = compile_to_cpp(source, /*debug=*/false, "user.roxy");
         REQUIRE(!cpp.empty());
 
@@ -1806,7 +1804,8 @@ TEST_SUITE("E2E C Backend") {
         u32 pos = 0;
         while (true) {
             u32 found = cpp.find("#line 2 \"user.roxy\"", pos);
-            if (found == String::npos) break;
+            if (found == String::npos)
+                break;
             count++;
             pos = found + 1;
         }
@@ -2039,7 +2038,7 @@ TEST_SUITE("E2E C Backend") {
         CHECK(result.compile_success);
         CHECK(result.run_success);
         CHECK(result.exit_code == 2);
-        CHECK(result.stdout_output == "x\nx\nx\n");  // all 3 nested Counters freed
+        CHECK(result.stdout_output == "x\nx\nx\n"); // all 3 nested Counters freed
     }
 
     // ── Coroutines ──
@@ -2201,7 +2200,7 @@ TEST_SUITE("E2E C Backend") {
         CHECK(result.compile_success);
         CHECK(result.run_success);
         CHECK(result.exit_code == 42);
-        CHECK(result.stdout_output == "dtor\n");   // freed exactly once
+        CHECK(result.stdout_output == "dtor\n"); // freed exactly once
     }
 
     TEST_CASE("Coroutine uniq promoted, early drop runs $$delete") {
@@ -2940,7 +2939,7 @@ TEST_SUITE("E2E C Backend") {
     )";
         CBackendResult result = compile_and_run_cpp(source);
         CHECK(result.compile_success);
-        CHECK(result.exit_code != 0);   // runtime trap (abort)
+        CHECK(result.exit_code != 0); // runtime trap (abort)
     }
 
     TEST_CASE("Closure: borrowed function value out of a List is callable") {
@@ -3018,4 +3017,4 @@ TEST_SUITE("E2E C Backend") {
         CHECK(result.exit_code == 42);
     }
 
-}  // TEST_SUITE("E2E C Backend")
+} // TEST_SUITE("E2E C Backend")

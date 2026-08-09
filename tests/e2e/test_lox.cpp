@@ -3,13 +3,13 @@
 // as modules, and runs main() from examples/lox/test.roxy. The Roxy test
 // harness returns 0 on success and non-zero if any Lox-side assertion failed.
 
-#include "roxy/core/doctest/doctest.h"
+#include "roxy/compiler/driver/compiler.hpp"
 #include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/doctest/doctest.h"
 #include "roxy/core/file.hpp"
 #include "roxy/core/vector.hpp"
-#include "roxy/compiler/driver/compiler.hpp"
-#include "roxy/vm/vm.hpp"
 #include "roxy/vm/value.hpp"
+#include "roxy/vm/vm.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -34,14 +34,14 @@ TEST_SUITE("E2E Lox") {
 
     TEST_CASE("full interpreter (from examples/lox/test.roxy)") {
         const LoxSourceFile files[] = {
-            {"tokens",      "/examples/lox/tokens.roxy"},
-            {"scanner",     "/examples/lox/scanner.roxy"},
-            {"value",       "/examples/lox/value.roxy"},
-            {"ast",         "/examples/lox/ast.roxy"},
-            {"parser",      "/examples/lox/parser.roxy"},
+            {"tokens", "/examples/lox/tokens.roxy"},
+            {"scanner", "/examples/lox/scanner.roxy"},
+            {"value", "/examples/lox/value.roxy"},
+            {"ast", "/examples/lox/ast.roxy"},
+            {"parser", "/examples/lox/parser.roxy"},
             {"interpreter", "/examples/lox/interpreter.roxy"},
-            {"resolver",    "/examples/lox/resolver.roxy"},
-            {"test",        "/examples/lox/test.roxy"},
+            {"resolver", "/examples/lox/resolver.roxy"},
+            {"test", "/examples/lox/test.roxy"},
         };
 
         // Read each .roxy file off disk.
@@ -94,6 +94,6 @@ TEST_SUITE("E2E Lox") {
         delete module;
     }
 
-    } // namespace rx
+} // namespace rx
 
-}  // TEST_SUITE("E2E Lox")
+} // namespace rx

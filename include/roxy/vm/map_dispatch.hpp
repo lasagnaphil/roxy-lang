@@ -15,9 +15,9 @@ struct RoxyVM;
 // and call `call_user_function`.
 struct MapDispatchFrame {
     RoxyVM* vm;
-    u32 hash_fn_idx;     // UINT32_MAX = no custom hash
-    u32 eq_fn_idx;       // UINT32_MAX = no custom eq
-    u8  key_slot_count;  // For eq's struct-arg packing (≤2 / ≤4 / ≥5 slots)
+    u32 hash_fn_idx;   // UINT32_MAX = no custom hash
+    u32 eq_fn_idx;     // UINT32_MAX = no custom eq
+    u8 key_slot_count; // For eq's struct-arg packing (≤2 / ≤4 / ≥5 slots)
 };
 
 // Push/pop a dispatch frame around a single map operation. The push site
@@ -31,7 +31,7 @@ void map_dispatch_pop();
 // `MapHeader.eq_fn` when bytecode dispatch is in use. Both are stable
 // `extern "C"` function pointers; passing them across the C ABI is safe.
 roxy_map_hash_fn map_dispatch_hash_trampoline();
-roxy_map_eq_fn   map_dispatch_eq_trampoline();
+roxy_map_eq_fn map_dispatch_eq_trampoline();
 
 // Per-map dispatch info kept in a side-table on `RoxyVM`. The unified
 // `MapHeader` no longer carries `hash_fn_index`/`eq_fn_index` fields; they

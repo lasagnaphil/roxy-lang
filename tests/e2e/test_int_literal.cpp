@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -479,7 +479,8 @@ TEST_SUITE("E2E Int Literals") {
         CHECK(result.stdout_output == "3\n1.5\n-2.5\n");
     }
 
-    TEST_CASE_TEMPLATE("Unannotated float literal still defaults to f64", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Unannotated float literal still defaults to f64", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var x = 1.0;
@@ -505,7 +506,7 @@ TEST_SUITE("E2E Int Literals") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE("Compile error: typed i32 and i64 still don't mix") {
@@ -521,7 +522,7 @@ TEST_SUITE("E2E Int Literals") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
-}  // TEST_SUITE("E2E Int Literals")
+} // TEST_SUITE("E2E Int Literals")

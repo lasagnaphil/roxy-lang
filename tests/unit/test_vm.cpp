@@ -1,9 +1,9 @@
 #include "roxy/core/doctest/doctest.h"
 
-#include "roxy/vm/vm.hpp"
-#include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/bytecode.hpp"
+#include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/value.hpp"
+#include "roxy/vm/vm.hpp"
 
 using namespace rx;
 
@@ -15,7 +15,8 @@ BCFunction* create_return_int_func(const char* name, i64 value) {
     func->register_count = 1;
 
     if (value >= -32768 && value <= 32767) {
-        func->code.push_back(encode_abi(Opcode::LOAD_INT, 0, static_cast<u16>(static_cast<i16>(value))));
+        func->code.push_back(
+            encode_abi(Opcode::LOAD_INT, 0, static_cast<u16>(static_cast<i16>(value))));
     } else {
         func->constants.push_back(BCConstant::make_int(value));
         func->code.push_back(encode_abi(Opcode::LOAD_CONST, 0, 0));
@@ -267,7 +268,7 @@ TEST_SUITE("VM") {
             CHECK(vm_call(&vm, "lt", Span<Value>(args, 2)));
             Value result = vm_get_result(&vm);
             // With untyped registers, bools are 0 or 1
-            CHECK(result.as_u64() == 1);  // true
+            CHECK(result.as_u64() == 1); // true
         }
 
         SUBCASE("Less than (false)") {
@@ -286,7 +287,7 @@ TEST_SUITE("VM") {
             CHECK(vm_call(&vm, "lt", Span<Value>(args, 2)));
             Value result = vm_get_result(&vm);
             // With untyped registers, bools are 0 or 1
-            CHECK(result.as_u64() == 0);  // false
+            CHECK(result.as_u64() == 0); // false
         }
 
         vm_destroy(&vm);
@@ -452,4 +453,4 @@ TEST_SUITE("VM") {
         vm_destroy(&vm);
     }
 
-}  // TEST_SUITE("VM")
+} // TEST_SUITE("VM")

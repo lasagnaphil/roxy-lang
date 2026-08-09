@@ -1,9 +1,9 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
-#include "roxy/core/vector.hpp"
-#include "roxy/core/unique_ptr.hpp"
 #include "roxy/core/tsl/robin_map.h"
+#include "roxy/core/types.hpp"
+#include "roxy/core/unique_ptr.hpp"
+#include "roxy/core/vector.hpp"
 #include "roxy/rt/roxy_rt.h"
 
 namespace rx {
@@ -16,8 +16,8 @@ namespace rx {
 // reads as zero, so is_alive() returns false. There is no TOMBSTONE
 // bookkeeping state — see free_in_slab() for the freeing path.
 enum class SlotState : u8 {
-    FREE,       // Available for allocation
-    ALIVE,      // Currently in use
+    FREE,  // Available for allocation
+    ALIVE, // Currently in use
 };
 
 // Random number generator (xorshift128+)
@@ -38,14 +38,14 @@ private:
 
 // A slab is a contiguous region of memory divided into fixed-size slots
 struct Slab {
-    void* base_addr;            // Start of slab memory
-    u32 page_count;             // Number of pages in this slab
-    u32 slot_size;              // Size of each slot (includes ObjectHeader)
-    u32 slot_count;             // Total slots in slab
-    u32 free_head;              // Index of first free slot (free list, 0xFFFFFFFF = empty)
-    u32 live_count;             // Number of ALIVE objects
-    bool remapped;              // True if slab has been remapped to zeros (reclaimed)
-    Vector<SlotState> states;   // Per-slot state
+    void* base_addr;          // Start of slab memory
+    u32 page_count;           // Number of pages in this slab
+    u32 slot_size;            // Size of each slot (includes ObjectHeader)
+    u32 slot_count;           // Total slots in slab
+    u32 free_head;            // Index of first free slot (free list, 0xFFFFFFFF = empty)
+    u32 live_count;           // Number of ALIVE objects
+    bool remapped;            // True if slab has been remapped to zeros (reclaimed)
+    Vector<SlotState> states; // Per-slot state
 
     // Get pointer to a specific slot
     void* slot_ptr(u32 index) const {
@@ -60,15 +60,13 @@ struct Slab {
     // back when freed slots were never recycled — that condition was
     // rarely met under mixed-lifetime workloads, leading to permanent
     // fragmentation. With recycling, live_count == 0 alone is enough.
-    bool is_drained() const {
-        return live_count == 0;
-    }
+    bool is_drained() const { return live_count == 0; }
 };
 
 // Tracking info for a large object (> 4KB)
 struct LargeObjectInfo {
-    u32 page_count : 31;   // max ~2B pages (~8 TB @ 4KB pages)
-    u32 tombstoned : 1;    // true after free_large; vaddr still mapped (zeros)
+    u32 page_count : 31; // max ~2B pages (~8 TB @ 4KB pages)
+    u32 tombstoned : 1;  // true after free_large; vaddr still mapped (zeros)
 };
 
 // Entry in the sorted slab-range index used by find_slab_containing().
@@ -82,9 +80,9 @@ struct LargeObjectInfo {
 // torn down outside shutdown(), so the index is monotonically growing
 // during normal operation.
 struct SlabRange {
-    void* base;     // slab base address (inclusive)
-    void* end;      // base + page_count * page_size (exclusive)
-    Slab* slab;     // owning slab pointer
+    void* base; // slab base address (inclusive)
+    void* end;  // base + page_count * page_size (exclusive)
+    Slab* slab; // owning slab pointer
 };
 
 // Entry in the sorted large-object range index used by resolve_header() to
@@ -95,8 +93,8 @@ struct SlabRange {
 // shutdown — never removed mid-run, because free_large keeps the vaddr mapped
 // (tombstoned) until shutdown, mirroring the `large_objects` map's lifetime.
 struct LargeRange {
-    void* base;     // allocation base (inclusive) — the header location
-    void* end;      // base + page_count * page_size (exclusive)
+    void* base; // allocation base (inclusive) — the header location
+    void* end;  // base + page_count * page_size (exclusive)
 };
 
 // Main slab allocator
@@ -105,9 +103,8 @@ struct SlabAllocator {
     // Size class configuration
     // Each size class handles allocations up to its slot size
     static constexpr u32 NUM_SIZE_CLASSES = 8;
-    static constexpr u32 SIZE_CLASS_SLOTS[NUM_SIZE_CLASSES] = {
-        32, 64, 128, 256, 512, 1024, 2048, 4096
-    };
+    static constexpr u32 SIZE_CLASS_SLOTS[NUM_SIZE_CLASSES] = {32,  64,   128,  256,
+                                                               512, 1024, 2048, 4096};
 
     // Slabs for each size class
     Vector<UniquePtr<Slab>> size_classes[NUM_SIZE_CLASSES];
@@ -182,9 +179,9 @@ struct SlabAllocator {
     //
     // O(total slots): a debug/teardown diagnostic, not a hot path.
     struct LiveObjectStats {
-        u64 live = 0;      // every ALIVE object
-        u64 immortal = 0;  // interned string literals (never freed by design)
-        u64 leaked = 0;    // live - immortal
+        u64 live = 0;     // every ALIVE object
+        u64 immortal = 0; // interned string literals (never freed by design)
+        u64 leaked = 0;   // live - immortal
         // Leaked objects grouped by ObjectHeader.type_id. The allocator has no
         // type *names* — resolving them is the VM's job (get_object_type) —
         // but the breakdown is what turns "32 objects leaked" into a lead.
@@ -221,4 +218,4 @@ private:
 // outlive any allocations performed through the vtable.
 roxy_allocator make_slab_allocator_vtable(SlabAllocator* slab);
 
-}
+} // namespace rx

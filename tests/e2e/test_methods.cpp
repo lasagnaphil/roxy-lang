@@ -1,9 +1,9 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
-#include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
+#include "roxy/vm/vm.hpp"
 
 using namespace rx;
 
@@ -299,8 +299,7 @@ TEST_SUITE("E2E Methods") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output ==
-              "true\ntrue\ntrue\ntrue\n15\n7\n42\n-7\ntrue\ntrue\ntrue\n");
+        CHECK(result.stdout_output == "true\ntrue\ntrue\ntrue\n15\n7\n42\n-7\ntrue\ntrue\ntrue\n");
     }
 
     TEST_CASE_TEMPLATE("Operator-named methods use unsigned semantics", Backend, RX_E2E_BACKENDS) {
@@ -324,4 +323,4 @@ TEST_SUITE("E2E Methods") {
         CHECK(result.stdout_output == "true\ntrue\n2000000000\n1\n");
     }
 
-}  // TEST_SUITE("E2E Methods")
+} // TEST_SUITE("E2E Methods")

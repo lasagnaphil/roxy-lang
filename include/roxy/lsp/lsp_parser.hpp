@@ -1,11 +1,11 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
 #include "roxy/core/bump_allocator.hpp"
-#include "roxy/core/vector.hpp"
 #include "roxy/core/string.hpp"
-#include "roxy/shared/lexer.hpp"
+#include "roxy/core/types.hpp"
+#include "roxy/core/vector.hpp"
 #include "roxy/lsp/syntax_tree.hpp"
+#include "roxy/shared/lexer.hpp"
 
 namespace rx {
 
@@ -20,7 +20,8 @@ private:
     BumpAllocator& m_allocator;
     Token m_current;
     Token m_previous;
-    bool m_suppress_struct_literal = false;  // Suppresses `Ident { }` struct-literal parsing (e.g. in `when` discriminant position)
+    bool m_suppress_struct_literal = false; // Suppresses `Ident { }` struct-literal parsing (e.g.
+                                            // in `when` discriminant position)
     Vector<ParseDiagnostic> m_diagnostics;
 
     // Source info (cached from lexer)
@@ -53,8 +54,7 @@ private:
     SyntaxNode* make_token_node(const Token& token);
 
     // Allocation helpers
-    template <typename T>
-    Span<T> alloc_span(const Vector<T>& vec);
+    template <typename T> Span<T> alloc_span(const Vector<T>& vec);
 
     // Modifier tokens captured before dispatching to sub-parsers
     struct DeclModifiers {

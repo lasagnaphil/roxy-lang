@@ -6,13 +6,11 @@ namespace rx {
 
 // --- Constructor ---
 
-CstLowering::CstLowering(BumpAllocator& allocator)
-    : m_allocator(allocator) {}
+CstLowering::CstLowering(BumpAllocator& allocator) : m_allocator(allocator) {}
 
 // --- Helpers ---
 
-template<typename T>
-T* CstLowering::alloc() {
+template <typename T> T* CstLowering::alloc() {
     u8* raw = m_allocator.alloc_bytes(sizeof(T), alignof(T));
     memset(raw, 0, sizeof(T));
     return reinterpret_cast<T*>(raw);
@@ -20,14 +18,16 @@ T* CstLowering::alloc() {
 
 SyntaxNode* CstLowering::find_child(SyntaxNode* node, SyntaxKind kind) {
     for (u32 i = 0; i < node->children.size(); i++) {
-        if (node->children[i]->kind == kind) return node->children[i];
+        if (node->children[i]->kind == kind)
+            return node->children[i];
     }
     return nullptr;
 }
 
 SyntaxNode* CstLowering::find_child_after(SyntaxNode* node, SyntaxKind kind, u32 start) {
     for (u32 i = start; i < node->children.size(); i++) {
-        if (node->children[i]->kind == kind) return node->children[i];
+        if (node->children[i]->kind == kind)
+            return node->children[i];
     }
     return nullptr;
 }
@@ -37,7 +37,8 @@ bool CstLowering::has_child(SyntaxNode* node, SyntaxKind kind) {
 }
 
 SourceLocation CstLowering::make_loc(SyntaxNode* node) {
-    if (!node) return SourceLocation{0, 0, 0, 0};
+    if (!node)
+        return SourceLocation{0, 0, 0, 0};
     return SourceLocation{node->range.start, node->range.end, 0, 0};
 }
 
@@ -49,80 +50,124 @@ SourceLocation CstLowering::make_loc(TextRange range) {
 
 static BinaryOp syntax_kind_to_binary_op(SyntaxKind kind) {
     switch (kind) {
-        case SyntaxKind::TokenPlus:            return BinaryOp::Add;
-        case SyntaxKind::TokenMinus:           return BinaryOp::Sub;
-        case SyntaxKind::TokenStar:            return BinaryOp::Mul;
-        case SyntaxKind::TokenSlash:           return BinaryOp::Div;
-        case SyntaxKind::TokenPercent:         return BinaryOp::Mod;
-        case SyntaxKind::TokenEqualEqual:      return BinaryOp::Equal;
-        case SyntaxKind::TokenBangEqual:       return BinaryOp::NotEqual;
-        case SyntaxKind::TokenLess:            return BinaryOp::Less;
-        case SyntaxKind::TokenLessEqual:       return BinaryOp::LessEq;
-        case SyntaxKind::TokenGreater:         return BinaryOp::Greater;
-        case SyntaxKind::TokenGreaterEqual:    return BinaryOp::GreaterEq;
-        case SyntaxKind::TokenAmpAmp:          return BinaryOp::And;
-        case SyntaxKind::TokenPipePipe:        return BinaryOp::Or;
-        case SyntaxKind::TokenAmp:             return BinaryOp::BitAnd;
-        case SyntaxKind::TokenPipe:            return BinaryOp::BitOr;
-        case SyntaxKind::TokenCaret:           return BinaryOp::BitXor;
-        case SyntaxKind::TokenLessLess:        return BinaryOp::Shl;
-        case SyntaxKind::TokenGreaterGreater:  return BinaryOp::Shr;
-        default:                               return BinaryOp::Add;
+        case SyntaxKind::TokenPlus:
+            return BinaryOp::Add;
+        case SyntaxKind::TokenMinus:
+            return BinaryOp::Sub;
+        case SyntaxKind::TokenStar:
+            return BinaryOp::Mul;
+        case SyntaxKind::TokenSlash:
+            return BinaryOp::Div;
+        case SyntaxKind::TokenPercent:
+            return BinaryOp::Mod;
+        case SyntaxKind::TokenEqualEqual:
+            return BinaryOp::Equal;
+        case SyntaxKind::TokenBangEqual:
+            return BinaryOp::NotEqual;
+        case SyntaxKind::TokenLess:
+            return BinaryOp::Less;
+        case SyntaxKind::TokenLessEqual:
+            return BinaryOp::LessEq;
+        case SyntaxKind::TokenGreater:
+            return BinaryOp::Greater;
+        case SyntaxKind::TokenGreaterEqual:
+            return BinaryOp::GreaterEq;
+        case SyntaxKind::TokenAmpAmp:
+            return BinaryOp::And;
+        case SyntaxKind::TokenPipePipe:
+            return BinaryOp::Or;
+        case SyntaxKind::TokenAmp:
+            return BinaryOp::BitAnd;
+        case SyntaxKind::TokenPipe:
+            return BinaryOp::BitOr;
+        case SyntaxKind::TokenCaret:
+            return BinaryOp::BitXor;
+        case SyntaxKind::TokenLessLess:
+            return BinaryOp::Shl;
+        case SyntaxKind::TokenGreaterGreater:
+            return BinaryOp::Shr;
+        default:
+            return BinaryOp::Add;
     }
 }
 
 static UnaryOp syntax_kind_to_unary_op(SyntaxKind kind) {
     switch (kind) {
-        case SyntaxKind::TokenMinus: return UnaryOp::Negate;
-        case SyntaxKind::TokenBang:  return UnaryOp::Not;
-        case SyntaxKind::TokenTilde: return UnaryOp::BitNot;
-        default:                     return UnaryOp::Negate;
+        case SyntaxKind::TokenMinus:
+            return UnaryOp::Negate;
+        case SyntaxKind::TokenBang:
+            return UnaryOp::Not;
+        case SyntaxKind::TokenTilde:
+            return UnaryOp::BitNot;
+        default:
+            return UnaryOp::Negate;
     }
 }
 
 static AssignOp syntax_kind_to_assign_op(SyntaxKind kind) {
     switch (kind) {
-        case SyntaxKind::TokenEqual:                return AssignOp::Assign;
-        case SyntaxKind::TokenPlusEqual:            return AssignOp::AddAssign;
-        case SyntaxKind::TokenMinusEqual:           return AssignOp::SubAssign;
-        case SyntaxKind::TokenStarEqual:            return AssignOp::MulAssign;
-        case SyntaxKind::TokenSlashEqual:           return AssignOp::DivAssign;
-        case SyntaxKind::TokenPercentEqual:         return AssignOp::ModAssign;
-        case SyntaxKind::TokenAmpEqual:             return AssignOp::BitAndAssign;
-        case SyntaxKind::TokenPipeEqual:            return AssignOp::BitOrAssign;
-        case SyntaxKind::TokenCaretEqual:           return AssignOp::BitXorAssign;
-        case SyntaxKind::TokenLessLessEqual:        return AssignOp::ShlAssign;
-        case SyntaxKind::TokenGreaterGreaterEqual:  return AssignOp::ShrAssign;
-        default:                                    return AssignOp::Assign;
+        case SyntaxKind::TokenEqual:
+            return AssignOp::Assign;
+        case SyntaxKind::TokenPlusEqual:
+            return AssignOp::AddAssign;
+        case SyntaxKind::TokenMinusEqual:
+            return AssignOp::SubAssign;
+        case SyntaxKind::TokenStarEqual:
+            return AssignOp::MulAssign;
+        case SyntaxKind::TokenSlashEqual:
+            return AssignOp::DivAssign;
+        case SyntaxKind::TokenPercentEqual:
+            return AssignOp::ModAssign;
+        case SyntaxKind::TokenAmpEqual:
+            return AssignOp::BitAndAssign;
+        case SyntaxKind::TokenPipeEqual:
+            return AssignOp::BitOrAssign;
+        case SyntaxKind::TokenCaretEqual:
+            return AssignOp::BitXorAssign;
+        case SyntaxKind::TokenLessLessEqual:
+            return AssignOp::ShlAssign;
+        case SyntaxKind::TokenGreaterGreaterEqual:
+            return AssignOp::ShrAssign;
+        default:
+            return AssignOp::Assign;
     }
 }
 
 static ParamModifier syntax_kind_to_param_modifier(SyntaxKind kind) {
     switch (kind) {
-        case SyntaxKind::TokenKwOut:   return ParamModifier::Out;
-        case SyntaxKind::TokenKwInout: return ParamModifier::Inout;
-        default:                       return ParamModifier::None;
+        case SyntaxKind::TokenKwOut:
+            return ParamModifier::Out;
+        case SyntaxKind::TokenKwInout:
+            return ParamModifier::Inout;
+        default:
+            return ParamModifier::None;
     }
 }
 
 static RefKind syntax_kind_to_ref_kind(SyntaxKind kind) {
     switch (kind) {
-        case SyntaxKind::TokenKwUniq: return RefKind::Uniq;
-        case SyntaxKind::TokenKwRef:  return RefKind::Ref;
-        case SyntaxKind::TokenKwWeak: return RefKind::Weak;
-        default:                      return RefKind::None;
+        case SyntaxKind::TokenKwUniq:
+            return RefKind::Uniq;
+        case SyntaxKind::TokenKwRef:
+            return RefKind::Ref;
+        case SyntaxKind::TokenKwWeak:
+            return RefKind::Weak;
+        default:
+            return RefKind::None;
     }
 }
 
 // --- Program lowering ---
 
 Program* CstLowering::lower(SyntaxNode* root) {
-    if (!root || root->kind != SyntaxKind::NodeProgram) return nullptr;
+    if (!root || root->kind != SyntaxKind::NodeProgram)
+        return nullptr;
 
     Vector<Decl*> declarations;
     for (u32 i = 0; i < root->children.size(); i++) {
         Decl* decl = lower_top_level_node(root->children[i]);
-        if (decl) declarations.push_back(decl);
+        if (decl)
+            declarations.push_back(decl);
     }
 
     Program* program = m_allocator.emplace<Program>();
@@ -132,27 +177,39 @@ Program* CstLowering::lower(SyntaxNode* root) {
 }
 
 Decl* CstLowering::lower_decl(SyntaxNode* node) {
-    if (!node) return nullptr;
+    if (!node)
+        return nullptr;
     return lower_top_level_node(node);
 }
 
 Decl* CstLowering::lower_top_level_node(SyntaxNode* node) {
-    if (!node || node->kind == SyntaxKind::Error) return nullptr;
+    if (!node || node->kind == SyntaxKind::Error)
+        return nullptr;
 
     switch (node->kind) {
-        case SyntaxKind::NodeVarDecl:          return lower_var_decl(node);
-        case SyntaxKind::NodeFunDecl:          return lower_fun_decl(node);
-        case SyntaxKind::NodeMethodDecl:       return lower_method_decl(node);
-        case SyntaxKind::NodeConstructorDecl:  return lower_constructor_decl(node);
-        case SyntaxKind::NodeDestructorDecl:   return lower_destructor_decl(node);
-        case SyntaxKind::NodeStructDecl:       return lower_struct_decl(node);
-        case SyntaxKind::NodeEnumDecl:         return lower_enum_decl(node);
-        case SyntaxKind::NodeTraitDecl:        return lower_trait_decl(node);
-        case SyntaxKind::NodeImportDecl:       return lower_import_decl(node);
+        case SyntaxKind::NodeVarDecl:
+            return lower_var_decl(node);
+        case SyntaxKind::NodeFunDecl:
+            return lower_fun_decl(node);
+        case SyntaxKind::NodeMethodDecl:
+            return lower_method_decl(node);
+        case SyntaxKind::NodeConstructorDecl:
+            return lower_constructor_decl(node);
+        case SyntaxKind::NodeDestructorDecl:
+            return lower_destructor_decl(node);
+        case SyntaxKind::NodeStructDecl:
+            return lower_struct_decl(node);
+        case SyntaxKind::NodeEnumDecl:
+            return lower_enum_decl(node);
+        case SyntaxKind::NodeTraitDecl:
+            return lower_trait_decl(node);
+        case SyntaxKind::NodeImportDecl:
+            return lower_import_decl(node);
         default: {
             // Statements wrapped as declarations
             Stmt* stmt = lower_stmt(node);
-            if (!stmt) return nullptr;
+            if (!stmt)
+                return nullptr;
             Decl* decl = alloc<Decl>();
             decl->kind = stmt->kind;
             decl->loc = stmt->loc;
@@ -178,7 +235,8 @@ Decl* CstLowering::lower_var_decl(SyntaxNode* node) {
     // Find type
     TypeExpr* type = nullptr;
     SyntaxNode* type_node = find_child(node, SyntaxKind::NodeTypeExpr);
-    if (type_node) type = lower_type_expr(type_node);
+    if (type_node)
+        type = lower_type_expr(type_node);
 
     // Find initializer (expression after '=')
     Expr* initializer = nullptr;
@@ -235,7 +293,8 @@ Decl* CstLowering::lower_fun_decl(SyntaxNode* node) {
     // Body
     Stmt* body = nullptr;
     SyntaxNode* block_node = find_child(node, SyntaxKind::NodeBlockStmt);
-    if (block_node) body = lower_block_stmt(block_node);
+    if (block_node)
+        body = lower_block_stmt(block_node);
 
     decl->fun_decl.name = name;
     decl->fun_decl.type_params = type_params;
@@ -311,7 +370,8 @@ Decl* CstLowering::lower_method_decl(SyntaxNode* node) {
     // Body
     Stmt* body = nullptr;
     SyntaxNode* block_node = find_child(node, SyntaxKind::NodeBlockStmt);
-    if (block_node) body = lower_block_stmt(block_node);
+    if (block_node)
+        body = lower_block_stmt(block_node);
 
     decl->method_decl.struct_name = struct_name;
     decl->method_decl.name = method_name;
@@ -356,7 +416,8 @@ Decl* CstLowering::lower_constructor_decl(SyntaxNode* node) {
     // Body
     Stmt* body = nullptr;
     SyntaxNode* block_node = find_child(node, SyntaxKind::NodeBlockStmt);
-    if (block_node) body = lower_block_stmt(block_node);
+    if (block_node)
+        body = lower_block_stmt(block_node);
 
     decl->constructor_decl.struct_name = struct_name;
     decl->constructor_decl.name = ctor_name;
@@ -396,7 +457,8 @@ Decl* CstLowering::lower_destructor_decl(SyntaxNode* node) {
     // Body
     Stmt* body = nullptr;
     SyntaxNode* block_node = find_child(node, SyntaxKind::NodeBlockStmt);
-    if (block_node) body = lower_block_stmt(block_node);
+    if (block_node)
+        body = lower_block_stmt(block_node);
 
     decl->destructor_decl.struct_name = struct_name;
     decl->destructor_decl.name = dtor_name;
@@ -456,7 +518,8 @@ Decl* CstLowering::lower_struct_decl(SyntaxNode* node) {
             for (u32 j = 0; j < child->children.size(); j++) {
                 if (child->children[j]->kind == SyntaxKind::TokenEqual) {
                     field_past_equal = true;
-                } else if (field_past_equal && child->children[j]->kind != SyntaxKind::TokenSemicolon) {
+                } else if (field_past_equal &&
+                           child->children[j]->kind != SyntaxKind::TokenSemicolon) {
                     field.default_value = lower_expr(child->children[j]);
                     break;
                 }
@@ -585,19 +648,30 @@ Decl* CstLowering::lower_import_decl(SyntaxNode* node) {
 // --- Statement lowering ---
 
 Stmt* CstLowering::lower_stmt(SyntaxNode* node) {
-    if (!node || node->kind == SyntaxKind::Error) return nullptr;
+    if (!node || node->kind == SyntaxKind::Error)
+        return nullptr;
 
     switch (node->kind) {
-        case SyntaxKind::NodeBlockStmt:    return lower_block_stmt(node);
-        case SyntaxKind::NodeIfStmt:       return lower_if_stmt(node);
-        case SyntaxKind::NodeWhileStmt:    return lower_while_stmt(node);
-        case SyntaxKind::NodeForStmt:      return lower_for_stmt(node);
-        case SyntaxKind::NodeReturnStmt:   return lower_return_stmt(node);
-        case SyntaxKind::NodeWhenStmt:     return lower_when_stmt(node);
-        case SyntaxKind::NodeTryStmt:      return lower_try_stmt(node);
-        case SyntaxKind::NodeThrowStmt:    return lower_throw_stmt(node);
-        case SyntaxKind::NodeDeleteStmt:   return lower_delete_stmt(node);
-        case SyntaxKind::NodeExprStmt:     return lower_expr_stmt(node);
+        case SyntaxKind::NodeBlockStmt:
+            return lower_block_stmt(node);
+        case SyntaxKind::NodeIfStmt:
+            return lower_if_stmt(node);
+        case SyntaxKind::NodeWhileStmt:
+            return lower_while_stmt(node);
+        case SyntaxKind::NodeForStmt:
+            return lower_for_stmt(node);
+        case SyntaxKind::NodeReturnStmt:
+            return lower_return_stmt(node);
+        case SyntaxKind::NodeWhenStmt:
+            return lower_when_stmt(node);
+        case SyntaxKind::NodeTryStmt:
+            return lower_try_stmt(node);
+        case SyntaxKind::NodeThrowStmt:
+            return lower_throw_stmt(node);
+        case SyntaxKind::NodeDeleteStmt:
+            return lower_delete_stmt(node);
+        case SyntaxKind::NodeExprStmt:
+            return lower_expr_stmt(node);
         case SyntaxKind::NodeBreakStmt: {
             Stmt* stmt = alloc<Stmt>();
             stmt->kind = AstKind::StmtBreak;
@@ -610,12 +684,14 @@ Stmt* CstLowering::lower_stmt(SyntaxNode* node) {
             stmt->loc = make_loc(node);
             return stmt;
         }
-        default: return nullptr;
+        default:
+            return nullptr;
     }
 }
 
 Stmt* CstLowering::lower_block_stmt(SyntaxNode* node) {
-    if (!node) return nullptr;
+    if (!node)
+        return nullptr;
 
     Stmt* stmt = alloc<Stmt>();
     stmt->kind = AstKind::StmtBlock;
@@ -625,11 +701,12 @@ Stmt* CstLowering::lower_block_stmt(SyntaxNode* node) {
     for (u32 i = 0; i < node->children.size(); i++) {
         SyntaxNode* child = node->children[i];
         // Skip brace tokens
-        if (child->kind == SyntaxKind::TokenLeftBrace ||
-            child->kind == SyntaxKind::TokenRightBrace) continue;
+        if (child->kind == SyntaxKind::TokenLeftBrace || child->kind == SyntaxKind::TokenRightBrace)
+            continue;
 
         Decl* decl = lower_top_level_node(child);
-        if (decl) declarations.push_back(decl);
+        if (decl)
+            declarations.push_back(decl);
     }
 
     stmt->block.declarations = m_allocator.alloc_span(declarations);
@@ -650,10 +727,9 @@ Stmt* CstLowering::lower_if_stmt(SyntaxNode* node) {
     u32 stmt_index = 0;
     for (u32 i = 0; i < node->children.size(); i++) {
         SyntaxNode* child = node->children[i];
-        if (child->kind == SyntaxKind::TokenKwIf ||
-            child->kind == SyntaxKind::TokenLeftParen ||
-            child->kind == SyntaxKind::TokenRightParen ||
-            child->kind == SyntaxKind::TokenKwElse) continue;
+        if (child->kind == SyntaxKind::TokenKwIf || child->kind == SyntaxKind::TokenLeftParen ||
+            child->kind == SyntaxKind::TokenRightParen || child->kind == SyntaxKind::TokenKwElse)
+            continue;
 
         if (expr_index == 0) {
             // First non-token is the condition expression
@@ -681,9 +757,9 @@ Stmt* CstLowering::lower_while_stmt(SyntaxNode* node) {
     u32 part_index = 0;
     for (u32 i = 0; i < node->children.size(); i++) {
         SyntaxNode* child = node->children[i];
-        if (child->kind == SyntaxKind::TokenKwWhile ||
-            child->kind == SyntaxKind::TokenLeftParen ||
-            child->kind == SyntaxKind::TokenRightParen) continue;
+        if (child->kind == SyntaxKind::TokenKwWhile || child->kind == SyntaxKind::TokenLeftParen ||
+            child->kind == SyntaxKind::TokenRightParen)
+            continue;
 
         if (part_index == 0) {
             stmt->while_stmt.condition = lower_expr(child);
@@ -714,10 +790,18 @@ Stmt* CstLowering::lower_for_stmt(SyntaxNode* node) {
     bool past_rparen = false;
     for (u32 i = 0; i < node->children.size(); i++) {
         SyntaxNode* child = node->children[i];
-        if (child->kind == SyntaxKind::TokenKwFor) continue;
-        if (child->kind == SyntaxKind::TokenLeftParen) { past_lparen = true; continue; }
-        if (child->kind == SyntaxKind::TokenRightParen) { past_rparen = true; continue; }
-        if (!past_lparen) continue;
+        if (child->kind == SyntaxKind::TokenKwFor)
+            continue;
+        if (child->kind == SyntaxKind::TokenLeftParen) {
+            past_lparen = true;
+            continue;
+        }
+        if (child->kind == SyntaxKind::TokenRightParen) {
+            past_rparen = true;
+            continue;
+        }
+        if (!past_lparen)
+            continue;
 
         if (past_rparen) {
             // Body
@@ -754,8 +838,8 @@ Stmt* CstLowering::lower_return_stmt(SyntaxNode* node) {
 
     for (u32 i = 0; i < node->children.size(); i++) {
         SyntaxNode* child = node->children[i];
-        if (child->kind == SyntaxKind::TokenKwReturn ||
-            child->kind == SyntaxKind::TokenSemicolon) continue;
+        if (child->kind == SyntaxKind::TokenKwReturn || child->kind == SyntaxKind::TokenSemicolon)
+            continue;
         stmt->return_stmt.value = lower_expr(child);
         break;
     }
@@ -775,8 +859,12 @@ Stmt* CstLowering::lower_when_stmt(SyntaxNode* node) {
     bool past_when = false;
     for (u32 i = 0; i < node->children.size(); i++) {
         SyntaxNode* child = node->children[i];
-        if (child->kind == SyntaxKind::TokenKwWhen) { past_when = true; continue; }
-        if (child->kind == SyntaxKind::TokenLeftBrace) break;
+        if (child->kind == SyntaxKind::TokenKwWhen) {
+            past_when = true;
+            continue;
+        }
+        if (child->kind == SyntaxKind::TokenLeftBrace)
+            break;
         if (past_when && child->kind == SyntaxKind::TokenIdentifier) {
             // First identifier = discriminant
             Expr* expr = alloc<Expr>();
@@ -791,7 +879,8 @@ Stmt* CstLowering::lower_when_stmt(SyntaxNode* node) {
     // Collect cases
     Vector<WhenCase> cases;
     for (u32 i = 0; i < node->children.size(); i++) {
-        if (node->children[i]->kind != SyntaxKind::NodeWhenCase) continue;
+        if (node->children[i]->kind != SyntaxKind::NodeWhenCase)
+            continue;
         SyntaxNode* case_node = node->children[i];
 
         // Check if this is an else case
@@ -802,9 +891,11 @@ Stmt* CstLowering::lower_when_stmt(SyntaxNode* node) {
             for (u32 j = 0; j < case_node->children.size(); j++) {
                 SyntaxNode* case_child = case_node->children[j];
                 if (case_child->kind == SyntaxKind::TokenKwElse ||
-                    case_child->kind == SyntaxKind::TokenColon) continue;
+                    case_child->kind == SyntaxKind::TokenColon)
+                    continue;
                 Decl* decl = lower_top_level_node(case_child);
-                if (decl) else_decls.push_back(decl);
+                if (decl)
+                    else_decls.push_back(decl);
             }
             stmt->when_stmt.else_body = m_allocator.alloc_span(else_decls);
             stmt->when_stmt.else_loc = make_loc(case_node);
@@ -819,8 +910,12 @@ Stmt* CstLowering::lower_when_stmt(SyntaxNode* node) {
         bool past_case = false;
         for (u32 j = 0; j < case_node->children.size(); j++) {
             SyntaxNode* case_child = case_node->children[j];
-            if (case_child->kind == SyntaxKind::TokenKwCase) { past_case = true; continue; }
-            if (case_child->kind == SyntaxKind::TokenColon) break;
+            if (case_child->kind == SyntaxKind::TokenKwCase) {
+                past_case = true;
+                continue;
+            }
+            if (case_child->kind == SyntaxKind::TokenColon)
+                break;
             if (past_case && case_child->kind == SyntaxKind::TokenIdentifier) {
                 case_names.push_back(case_child->token.text());
             }
@@ -832,10 +927,15 @@ Stmt* CstLowering::lower_when_stmt(SyntaxNode* node) {
         bool past_colon = false;
         for (u32 j = 0; j < case_node->children.size(); j++) {
             SyntaxNode* case_child = case_node->children[j];
-            if (case_child->kind == SyntaxKind::TokenColon) { past_colon = true; continue; }
-            if (!past_colon) continue;
+            if (case_child->kind == SyntaxKind::TokenColon) {
+                past_colon = true;
+                continue;
+            }
+            if (!past_colon)
+                continue;
             Decl* decl = lower_top_level_node(case_child);
-            if (decl) body_decls.push_back(decl);
+            if (decl)
+                body_decls.push_back(decl);
         }
         wc.body = m_allocator.alloc_span(body_decls);
 
@@ -856,12 +956,14 @@ Stmt* CstLowering::lower_try_stmt(SyntaxNode* node) {
 
     // Find try body (first block stmt)
     SyntaxNode* try_block = find_child(node, SyntaxKind::NodeBlockStmt);
-    if (try_block) stmt->try_stmt.try_body = lower_block_stmt(try_block);
+    if (try_block)
+        stmt->try_stmt.try_body = lower_block_stmt(try_block);
 
     // Catch clauses
     Vector<CatchClause> catches;
     for (u32 i = 0; i < node->children.size(); i++) {
-        if (node->children[i]->kind != SyntaxKind::NodeCatchClause) continue;
+        if (node->children[i]->kind != SyntaxKind::NodeCatchClause)
+            continue;
         SyntaxNode* catch_node = node->children[i];
 
         CatchClause cc;
@@ -873,15 +975,18 @@ Stmt* CstLowering::lower_try_stmt(SyntaxNode* node) {
 
         // Find variable name
         SyntaxNode* var_name_node = find_child(catch_node, SyntaxKind::TokenIdentifier);
-        if (var_name_node) cc.var_name = var_name_node->token.text();
+        if (var_name_node)
+            cc.var_name = var_name_node->token.text();
 
         // Find exception type
         SyntaxNode* type_node = find_child(catch_node, SyntaxKind::NodeTypeExpr);
-        if (type_node) cc.exception_type = lower_type_expr(type_node);
+        if (type_node)
+            cc.exception_type = lower_type_expr(type_node);
 
         // Find body (block stmt)
         SyntaxNode* body_block = find_child(catch_node, SyntaxKind::NodeBlockStmt);
-        if (body_block) cc.body = lower_block_stmt(body_block);
+        if (body_block)
+            cc.body = lower_block_stmt(body_block);
 
         catches.push_back(cc);
     }
@@ -909,8 +1014,8 @@ Stmt* CstLowering::lower_throw_stmt(SyntaxNode* node) {
 
     for (u32 i = 0; i < node->children.size(); i++) {
         SyntaxNode* child = node->children[i];
-        if (child->kind == SyntaxKind::TokenKwThrow ||
-            child->kind == SyntaxKind::TokenSemicolon) continue;
+        if (child->kind == SyntaxKind::TokenKwThrow || child->kind == SyntaxKind::TokenSemicolon)
+            continue;
         stmt->throw_stmt.expr = lower_expr(child);
         break;
     }
@@ -928,8 +1033,8 @@ Stmt* CstLowering::lower_delete_stmt(SyntaxNode* node) {
 
     for (u32 i = 0; i < node->children.size(); i++) {
         SyntaxNode* child = node->children[i];
-        if (child->kind == SyntaxKind::TokenKwDelete ||
-            child->kind == SyntaxKind::TokenSemicolon) continue;
+        if (child->kind == SyntaxKind::TokenKwDelete || child->kind == SyntaxKind::TokenSemicolon)
+            continue;
         stmt->delete_stmt.expr = lower_expr(child);
         break;
     }
@@ -945,8 +1050,8 @@ Stmt* CstLowering::lower_yield_stmt(SyntaxNode* node) {
 
     for (u32 i = 0; i < node->children.size(); i++) {
         SyntaxNode* child = node->children[i];
-        if (child->kind == SyntaxKind::TokenKwYield ||
-            child->kind == SyntaxKind::TokenSemicolon) continue;
+        if (child->kind == SyntaxKind::TokenKwYield || child->kind == SyntaxKind::TokenSemicolon)
+            continue;
         stmt->yield_stmt.value = lower_expr(child);
         break;
     }
@@ -962,7 +1067,8 @@ Stmt* CstLowering::lower_expr_stmt(SyntaxNode* node) {
 
     for (u32 i = 0; i < node->children.size(); i++) {
         SyntaxNode* child = node->children[i];
-        if (child->kind == SyntaxKind::TokenSemicolon) continue;
+        if (child->kind == SyntaxKind::TokenSemicolon)
+            continue;
         stmt->expr_stmt.expr = lower_expr(child);
         break;
     }
@@ -973,27 +1079,46 @@ Stmt* CstLowering::lower_expr_stmt(SyntaxNode* node) {
 // --- Expression lowering ---
 
 Expr* CstLowering::lower_expr(SyntaxNode* node) {
-    if (!node || node->kind == SyntaxKind::Error) return nullptr;
+    if (!node || node->kind == SyntaxKind::Error)
+        return nullptr;
 
     switch (node->kind) {
-        case SyntaxKind::NodeLiteralExpr:         return lower_literal_expr(node);
-        case SyntaxKind::NodeIdentifierExpr:      return lower_identifier_expr(node);
-        case SyntaxKind::NodeUnaryExpr:           return lower_unary_expr(node);
-        case SyntaxKind::NodeBinaryExpr:          return lower_binary_expr(node);
-        case SyntaxKind::NodeTernaryExpr:         return lower_ternary_expr(node);
-        case SyntaxKind::NodeCallExpr:            return lower_call_expr(node);
-        case SyntaxKind::NodeIndexExpr:           return lower_index_expr(node);
-        case SyntaxKind::NodeGetExpr:             return lower_get_expr(node);
-        case SyntaxKind::NodeStaticGetExpr:       return lower_static_get_expr(node);
-        case SyntaxKind::NodeAssignExpr:          return lower_assign_expr(node);
-        case SyntaxKind::NodeGroupingExpr:        return lower_grouping_expr(node);
-        case SyntaxKind::NodeSelfExpr:            return lower_self_expr(node);
-        case SyntaxKind::NodeSuperExpr:           return lower_super_expr(node);
-        case SyntaxKind::NodeStructLiteralExpr:   return lower_struct_literal_expr(node);
-        case SyntaxKind::NodeStringInterpExpr:    return lower_string_interp_expr(node);
-        case SyntaxKind::NodeUniqExpr:            return lower_call_expr(node); // uniq calls
-        case SyntaxKind::NodeRefExpr:            return lower_ref_expr(node);
-        default: return nullptr;
+        case SyntaxKind::NodeLiteralExpr:
+            return lower_literal_expr(node);
+        case SyntaxKind::NodeIdentifierExpr:
+            return lower_identifier_expr(node);
+        case SyntaxKind::NodeUnaryExpr:
+            return lower_unary_expr(node);
+        case SyntaxKind::NodeBinaryExpr:
+            return lower_binary_expr(node);
+        case SyntaxKind::NodeTernaryExpr:
+            return lower_ternary_expr(node);
+        case SyntaxKind::NodeCallExpr:
+            return lower_call_expr(node);
+        case SyntaxKind::NodeIndexExpr:
+            return lower_index_expr(node);
+        case SyntaxKind::NodeGetExpr:
+            return lower_get_expr(node);
+        case SyntaxKind::NodeStaticGetExpr:
+            return lower_static_get_expr(node);
+        case SyntaxKind::NodeAssignExpr:
+            return lower_assign_expr(node);
+        case SyntaxKind::NodeGroupingExpr:
+            return lower_grouping_expr(node);
+        case SyntaxKind::NodeSelfExpr:
+            return lower_self_expr(node);
+        case SyntaxKind::NodeSuperExpr:
+            return lower_super_expr(node);
+        case SyntaxKind::NodeStructLiteralExpr:
+            return lower_struct_literal_expr(node);
+        case SyntaxKind::NodeStringInterpExpr:
+            return lower_string_interp_expr(node);
+        case SyntaxKind::NodeUniqExpr:
+            return lower_call_expr(node); // uniq calls
+        case SyntaxKind::NodeRefExpr:
+            return lower_ref_expr(node);
+        default:
+            return nullptr;
     }
 }
 
@@ -1114,8 +1239,8 @@ Expr* CstLowering::lower_ternary_expr(SyntaxNode* node) {
     u32 expr_index = 0;
     for (u32 i = 0; i < node->children.size(); i++) {
         SyntaxNode* child = node->children[i];
-        if (child->kind == SyntaxKind::TokenQuestion ||
-            child->kind == SyntaxKind::TokenColon) continue;
+        if (child->kind == SyntaxKind::TokenQuestion || child->kind == SyntaxKind::TokenColon)
+            continue;
 
         if (expr_index == 0) {
             expr->ternary.condition = lower_expr(child);
@@ -1153,7 +1278,10 @@ Expr* CstLowering::lower_call_expr(SyntaxNode* node) {
         bool past_uniq = false;
         for (u32 i = 0; i < node->children.size(); i++) {
             SyntaxNode* child = node->children[i];
-            if (child->kind == SyntaxKind::TokenKwUniq) { past_uniq = true; continue; }
+            if (child->kind == SyntaxKind::TokenKwUniq) {
+                past_uniq = true;
+                continue;
+            }
             if (past_uniq && child->kind == SyntaxKind::TokenIdentifier) {
                 Expr* callee = alloc<Expr>();
                 callee->kind = AstKind::ExprIdentifier;
@@ -1188,7 +1316,8 @@ Expr* CstLowering::lower_call_expr(SyntaxNode* node) {
     // Collect call arguments
     Vector<CallArg> args;
     for (u32 i = 0; i < node->children.size(); i++) {
-        if (node->children[i]->kind != SyntaxKind::NodeCallArg) continue;
+        if (node->children[i]->kind != SyntaxKind::NodeCallArg)
+            continue;
         SyntaxNode* arg_node = node->children[i];
 
         CallArg arg;
@@ -1221,7 +1350,8 @@ Expr* CstLowering::lower_call_expr(SyntaxNode* node) {
                 SyntaxNode* type_expr_node = find_child(type_arg_node, SyntaxKind::NodeTypeExpr);
                 if (type_expr_node) {
                     TypeExpr* te = lower_type_expr(type_expr_node);
-                    if (te) type_args.push_back(te);
+                    if (te)
+                        type_args.push_back(te);
                 }
             }
         }
@@ -1243,7 +1373,8 @@ Expr* CstLowering::lower_index_expr(SyntaxNode* node) {
     for (u32 i = 0; i < node->children.size(); i++) {
         SyntaxNode* child = node->children[i];
         if (child->kind == SyntaxKind::TokenLeftBracket ||
-            child->kind == SyntaxKind::TokenRightBracket) continue;
+            child->kind == SyntaxKind::TokenRightBracket)
+            continue;
 
         if (expr_index == 0) {
             expr->index.object = lower_expr(child);
@@ -1326,8 +1457,8 @@ Expr* CstLowering::lower_grouping_expr(SyntaxNode* node) {
     // Children: '(', inner_expr, ')'
     for (u32 i = 0; i < node->children.size(); i++) {
         SyntaxNode* child = node->children[i];
-        if (child->kind == SyntaxKind::TokenLeftParen ||
-            child->kind == SyntaxKind::TokenRightParen) continue;
+        if (child->kind == SyntaxKind::TokenLeftParen || child->kind == SyntaxKind::TokenRightParen)
+            continue;
         expr->grouping.expr = lower_expr(child);
         break;
     }
@@ -1374,12 +1505,14 @@ Expr* CstLowering::lower_struct_literal_expr(SyntaxNode* node) {
 
     // Find type name (first identifier)
     SyntaxNode* type_ident = find_child(node, SyntaxKind::TokenIdentifier);
-    if (type_ident) expr->struct_literal.type_name = type_ident->token.text();
+    if (type_ident)
+        expr->struct_literal.type_name = type_ident->token.text();
 
     // Collect field initializers
     Vector<FieldInit> fields;
     for (u32 i = 0; i < node->children.size(); i++) {
-        if (node->children[i]->kind != SyntaxKind::NodeFieldInit) continue;
+        if (node->children[i]->kind != SyntaxKind::NodeFieldInit)
+            continue;
         SyntaxNode* field_init_node = node->children[i];
 
         FieldInit field;
@@ -1415,7 +1548,8 @@ Expr* CstLowering::lower_struct_literal_expr(SyntaxNode* node) {
                 SyntaxNode* type_expr_node = find_child(type_arg_node, SyntaxKind::NodeTypeExpr);
                 if (type_expr_node) {
                     TypeExpr* te = lower_type_expr(type_expr_node);
-                    if (te) type_args.push_back(te);
+                    if (te)
+                        type_args.push_back(te);
                 }
             }
         }
@@ -1441,7 +1575,8 @@ Expr* CstLowering::lower_string_interp_expr(SyntaxNode* node) {
             parts.push_back(child->token.text());
         } else {
             Expr* interp = lower_expr(child);
-            if (interp) expressions.push_back(interp);
+            if (interp)
+                expressions.push_back(interp);
         }
     }
 
@@ -1453,7 +1588,8 @@ Expr* CstLowering::lower_string_interp_expr(SyntaxNode* node) {
 // --- Type expression lowering ---
 
 TypeExpr* CstLowering::lower_type_expr(SyntaxNode* node) {
-    if (!node || node->kind != SyntaxKind::NodeTypeExpr) return nullptr;
+    if (!node || node->kind != SyntaxKind::NodeTypeExpr)
+        return nullptr;
 
     TypeExpr* type_expr = m_allocator.emplace<TypeExpr>();
     type_expr->name = StringView();
@@ -1464,8 +1600,7 @@ TypeExpr* CstLowering::lower_type_expr(SyntaxNode* node) {
     // Check for ref kind (uniq, ref, weak)
     for (u32 i = 0; i < node->children.size(); i++) {
         SyntaxNode* child = node->children[i];
-        if (child->kind == SyntaxKind::TokenKwUniq ||
-            child->kind == SyntaxKind::TokenKwRef ||
+        if (child->kind == SyntaxKind::TokenKwUniq || child->kind == SyntaxKind::TokenKwRef ||
             child->kind == SyntaxKind::TokenKwWeak) {
             type_expr->ref_kind = syntax_kind_to_ref_kind(child->kind);
             break;
@@ -1474,7 +1609,8 @@ TypeExpr* CstLowering::lower_type_expr(SyntaxNode* node) {
 
     // Find type name (identifier)
     SyntaxNode* ident = find_child(node, SyntaxKind::TokenIdentifier);
-    if (ident) type_expr->name = ident->token.text();
+    if (ident)
+        type_expr->name = ident->token.text();
 
     // Type args
     SyntaxNode* type_arg_list = find_child(node, SyntaxKind::NodeTypeArgList);
@@ -1486,7 +1622,8 @@ TypeExpr* CstLowering::lower_type_expr(SyntaxNode* node) {
                 SyntaxNode* inner_type = find_child(type_arg_node, SyntaxKind::NodeTypeExpr);
                 if (inner_type) {
                     TypeExpr* te = lower_type_expr(inner_type);
-                    if (te) type_args.push_back(te);
+                    if (te)
+                        type_args.push_back(te);
                 }
             }
         }
@@ -1497,12 +1634,14 @@ TypeExpr* CstLowering::lower_type_expr(SyntaxNode* node) {
 }
 
 Span<Param> CstLowering::lower_param_list(SyntaxNode* node) {
-    if (!node) return Span<Param>();
+    if (!node)
+        return Span<Param>();
 
     Vector<Param> params;
     for (u32 i = 0; i < node->children.size(); i++) {
         SyntaxNode* param_node = node->children[i];
-        if (param_node->kind != SyntaxKind::NodeParam) continue;
+        if (param_node->kind != SyntaxKind::NodeParam)
+            continue;
 
         Param param;
         param.modifier = ParamModifier::None;
@@ -1513,8 +1652,7 @@ Span<Param> CstLowering::lower_param_list(SyntaxNode* node) {
         // Check for modifier (out/inout)
         for (u32 j = 0; j < param_node->children.size(); j++) {
             SyntaxNode* child = param_node->children[j];
-            if (child->kind == SyntaxKind::TokenKwOut ||
-                child->kind == SyntaxKind::TokenKwInout) {
+            if (child->kind == SyntaxKind::TokenKwOut || child->kind == SyntaxKind::TokenKwInout) {
                 param.modifier = syntax_kind_to_param_modifier(child->kind);
                 break;
             }
@@ -1526,7 +1664,8 @@ Span<Param> CstLowering::lower_param_list(SyntaxNode* node) {
 
         // Type
         SyntaxNode* type_node = find_child(param_node, SyntaxKind::NodeTypeExpr);
-        if (type_node) param.type = lower_type_expr(type_node);
+        if (type_node)
+            param.type = lower_type_expr(type_node);
 
         params.push_back(param);
     }
@@ -1535,12 +1674,14 @@ Span<Param> CstLowering::lower_param_list(SyntaxNode* node) {
 }
 
 Span<TypeParam> CstLowering::lower_type_param_list(SyntaxNode* node) {
-    if (!node) return Span<TypeParam>();
+    if (!node)
+        return Span<TypeParam>();
 
     Vector<TypeParam> type_params;
     for (u32 i = 0; i < node->children.size(); i++) {
         SyntaxNode* tp_node = node->children[i];
-        if (tp_node->kind != SyntaxKind::NodeTypeParam) continue;
+        if (tp_node->kind != SyntaxKind::NodeTypeParam)
+            continue;
 
         TypeParam tp;
         tp.bounds = Span<TypeExpr*>();

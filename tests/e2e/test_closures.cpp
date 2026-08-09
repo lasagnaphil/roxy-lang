@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -246,7 +246,7 @@ TEST_SUITE("E2E Closures") {
         )";
             BumpAllocator allocator(65536);
             BCModule* module = compile(allocator, source);
-            CHECK(module == nullptr);  // Should fail: 'c' is moved
+            CHECK(module == nullptr); // Should fail: 'c' is moved
         }
     }
 
@@ -264,7 +264,7 @@ TEST_SUITE("E2E Closures") {
             }
         )";
             BCModule* module = compile(allocator, source);
-            CHECK(module == nullptr);  // Must error: needs [move c]
+            CHECK(module == nullptr); // Must error: needs [move c]
         }
 
         SUBCASE("[move] on copyable type errors") {
@@ -275,7 +275,7 @@ TEST_SUITE("E2E Closures") {
             }
         )";
             BCModule* module = compile(allocator, source);
-            CHECK(module == nullptr);  // [move] reserved for noncopyables
+            CHECK(module == nullptr); // [move] reserved for noncopyables
         }
 
         SUBCASE("[move] of unknown variable errors") {
@@ -304,7 +304,7 @@ TEST_SUITE("E2E Closures") {
             }
         )";
             BCModule* module = compile(allocator, source);
-            CHECK(module == nullptr);  // not all code paths return a value in lambda
+            CHECK(module == nullptr); // not all code paths return a value in lambda
         }
 
         SUBCASE("Empty non-void block lambda errors") {
@@ -623,7 +623,8 @@ TEST_SUITE("E2E Closures") {
 
         SUBCASE("Three-level nesting with transitive capture") {
             // n is captured by all three lambdas; the innermost reads it through
-            // a chain of __env field accesses (innermost env <- middle env <- outer env <- main local).
+            // a chain of __env field accesses (innermost env <- middle env <- outer env <- main
+            // local).
             const char* source = R"(
             fun main() {
                 var n: i32 = 100;
@@ -657,7 +658,7 @@ TEST_SUITE("E2E Closures") {
         }
     }
 
-    TEST_CASE("self capture") {  // VM-only: C backend: closure self-capture / borrow-conversion gap
+    TEST_CASE("self capture") { // VM-only: C backend: closure self-capture / borrow-conversion gap
         SUBCASE("Implicit ref-self on noncopyable struct") {
             // Noncopyable struct ⇒ heap-only ⇒ ref counting protects; no runtime check.
             const char* source = R"(
@@ -712,7 +713,7 @@ TEST_SUITE("E2E Closures") {
             }
         )";
             auto result = VMBackend::run(source);
-            CHECK_FALSE(result.success);  // Runtime trap from ASSERT_HEAP
+            CHECK_FALSE(result.success); // Runtime trap from ASSERT_HEAP
         }
 
         SUBCASE("[copy self] on copyable: snapshot semantics") {
@@ -802,7 +803,10 @@ TEST_SUITE("E2E Closures") {
     // needs_heap_check only for copyable structs) skipped the gate and would
     // snapshot/borrow a bogus header from stack bytes. See lifetimes.md
     // "Promotion" and the lifetime-audit "related items". VM-only (runtime trap).
-    TEST_CASE("self promotion heap gate on noncopyable stack receivers") {  // VM-only: C backend: closure self-capture / runtime-trap reporting gap
+    TEST_CASE(
+        "self promotion heap gate on noncopyable stack receivers") { // VM-only: C backend: closure
+                                                                     // self-capture / runtime-trap
+                                                                     // reporting gap
         // Each trap case must first *compile* (so the failure below is the runtime
         // heap gate, not a compile error), then fail at run time.
         BumpAllocator allocator(65536);
@@ -910,7 +914,9 @@ TEST_SUITE("E2E Closures") {
     // a var-decl, an assignment, or a struct-literal field is equally a promotion
     // of a possibly-stack receiver (maybe_wrap_weak's is_bare_self gate). Without
     // it a stack receiver snapshots a bogus generation from stack bytes. VM-only.
-    TEST_CASE("self to weak binding-site heap gate on noncopyable stack receivers") {  // VM-only: runtime-trap behavior
+    TEST_CASE("self to weak binding-site heap gate on noncopyable stack receivers") { // VM-only:
+                                                                                      // runtime-trap
+                                                                                      // behavior
         BumpAllocator allocator(65536);
 
         SUBCASE("var-decl (weak w = self): stack traps") {
@@ -1017,10 +1023,10 @@ TEST_SUITE("E2E Closures") {
             BCModule* module = compile(allocator, source);
             CHECK(module == nullptr);
         }
-
     }
 
-    TEST_CASE("nested self capture") {  // VM-only: C backend: closure self-capture / borrow-conversion gap
+    TEST_CASE(
+        "nested self capture") { // VM-only: C backend: closure self-capture / borrow-conversion gap
         SUBCASE("Nested [copy self] on copyable + uniq receiver") {
             // Outer takes implicit ref-self (heap check passes for uniq); inner's
             // [copy self] reads via outer's __env.__self and snapshots into its
@@ -1115,7 +1121,8 @@ TEST_SUITE("E2E Closures") {
         }
     }
 
-    TEST_CASE("transitive [move] across nested lambdas") {  // VM-only: C backend: closure self-capture / borrow-conversion gap
+    TEST_CASE("transitive [move] across nested lambdas") { // VM-only: C backend: closure
+                                                           // self-capture / borrow-conversion gap
         SUBCASE("Inner [move c] from a noncopyable across one outer lambda") {
             // `c` lives in main's scope; the outer lambda doesn't reference it
             // directly, but the inner lambda's [move c] propagates a Move
@@ -1198,7 +1205,7 @@ TEST_SUITE("E2E Closures") {
         )";
             auto result = Backend::run(source);
             CHECK(result.success);
-            CHECK(result.stdout_output == "10\n");  // 0+1+2+3+4
+            CHECK(result.stdout_output == "10\n"); // 0+1+2+3+4
         }
 
         SUBCASE("Closure stored in struct field (callable via field access)") {
@@ -1265,7 +1272,7 @@ TEST_SUITE("E2E Closures") {
         )";
             auto result = Backend::run(source);
             CHECK(result.success);
-            CHECK(result.stdout_output == "12\n");  // (5+1)*2
+            CHECK(result.stdout_output == "12\n"); // (5+1)*2
         }
 
         SUBCASE("Closure mutates shared state via captured ref") {
@@ -1417,7 +1424,8 @@ TEST_SUITE("E2E Closures") {
         }
     }
 
-    TEST_CASE("function-to-borrow conversion") {  // VM-only: C backend: closure self-capture / borrow-conversion gap
+    TEST_CASE("function-to-borrow conversion") { // VM-only: C backend: closure self-capture /
+                                                 // borrow-conversion gap
         SUBCASE("pass a fun to a ref fun parameter and call it") {
             // `fun -> ref fun` borrows the closure (like uniq -> ref); the borrow
             // is callable, and the caller's `f` stays usable afterward.
@@ -1487,8 +1495,8 @@ TEST_SUITE("E2E Closures") {
         )";
             BumpAllocator allocator(65536);
             BCModule* module = compile(allocator, source);
-            CHECK(module == nullptr);  // Should fail to compile
+            CHECK(module == nullptr); // Should fail to compile
         }
     }
 
-}  // TEST_SUITE("E2E Closures")
+} // TEST_SUITE("E2E Closures")

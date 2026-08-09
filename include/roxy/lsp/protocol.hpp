@@ -1,7 +1,7 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
 #include "roxy/core/string.hpp"
+#include "roxy/core/types.hpp"
 #include "roxy/lsp/syntax_tree.hpp"
 
 namespace rx {
@@ -61,28 +61,30 @@ inline u32 lsp_position_to_offset(const char* source, u32 length, LspPosition po
     u32 line = 0;
     u32 offset = 0;
     while (offset < length && line < pos.line) {
-        if (source[offset] == '\n') line++;
+        if (source[offset] == '\n')
+            line++;
         offset++;
     }
     // Now at start of target line, advance by character count
     offset += pos.character;
-    if (offset > length) offset = length;
+    if (offset > length)
+        offset = length;
     return offset;
 }
 
 // LSP CompletionItemKind constants
 namespace CompletionItemKind {
-    constexpr i64 Method = 2;
-    constexpr i64 Function = 3;
-    constexpr i64 Constructor = 4;
-    constexpr i64 Field = 5;
-    constexpr i64 Variable = 6;
-    constexpr i64 Class = 7;       // for structs
-    constexpr i64 Interface = 8;   // for traits
-    constexpr i64 Enum = 13;
-    constexpr i64 Keyword = 14;
-    constexpr i64 EnumMember = 20;
-    constexpr i64 Struct = 22;
-}
+constexpr i64 Method = 2;
+constexpr i64 Function = 3;
+constexpr i64 Constructor = 4;
+constexpr i64 Field = 5;
+constexpr i64 Variable = 6;
+constexpr i64 Class = 7;     // for structs
+constexpr i64 Interface = 8; // for traits
+constexpr i64 Enum = 13;
+constexpr i64 Keyword = 14;
+constexpr i64 EnumMember = 20;
+constexpr i64 Struct = 22;
+} // namespace CompletionItemKind
 
 } // namespace rx

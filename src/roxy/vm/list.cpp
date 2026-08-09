@@ -1,6 +1,6 @@
 #include "roxy/vm/list.hpp"
-#include "roxy/vm/object.hpp"
 #include "roxy/rt/roxy_rt.h"
+#include "roxy/vm/object.hpp"
 
 #include <cstring>
 
@@ -16,9 +16,7 @@ u32 register_list_type() {
     return g_list_type_id;
 }
 
-u32 get_list_type_id() {
-    return g_list_type_id;
-}
+u32 get_list_type_id() { return g_list_type_id; }
 
 // VM-side wrappers around the unified `roxy_list_*` runtime. Allocation flows
 // through the ctx allocator (slab in VM mode); the bounds-checked `*_slots`
@@ -26,16 +24,15 @@ u32 get_list_type_id() {
 // rt's `assert`.
 
 void* list_alloc(RoxyVM* /*vm*/, u32 capacity, u32 element_slot_count, bool element_is_inline) {
-    void* data = roxy_list_alloc(static_cast<int32_t>(element_slot_count),
-                                 element_is_inline ? 1 : 0);
-    if (!data) return nullptr;
+    void* data =
+        roxy_list_alloc(static_cast<int32_t>(element_slot_count), element_is_inline ? 1 : 0);
+    if (!data)
+        return nullptr;
     roxy_list_init(data, static_cast<int32_t>(capacity));
     return data;
 }
 
-void* list_copy(RoxyVM* /*vm*/, void* src) {
-    return roxy_list_copy(src);
-}
+void* list_copy(RoxyVM* /*vm*/, void* src) { return roxy_list_copy(src); }
 
 // ── Slot-based API ──
 
@@ -72,9 +69,7 @@ bool list_set_slots(void* data, i64 index, const u32* src, const char** error) {
     return true;
 }
 
-void list_push_slots(void* data, const u32* src) {
-    roxy_list_push(data, src);
-}
+void list_push_slots(void* data, const u32* src) { roxy_list_push(data, src); }
 
 u32* list_pop_ptr(void* data) {
     ListHeader* header = get_list_header(data);
@@ -121,4 +116,4 @@ Value list_pop(void* data) {
     return Value::from_u64(val);
 }
 
-}
+} // namespace rx

@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -316,4 +316,4 @@ TEST_SUITE("E2E Type Inference") {
         }
     }
 
-}  // TEST_SUITE("E2E Type Inference")
+} // TEST_SUITE("E2E Type Inference")

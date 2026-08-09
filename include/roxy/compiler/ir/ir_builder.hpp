@@ -1,16 +1,16 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
-#include "roxy/core/vector.hpp"
-#include "roxy/core/bump_allocator.hpp"
-#include "roxy/core/format.hpp"
-#include "roxy/compiler/parse/ast.hpp"
 #include "roxy/compiler/ir/ir_fold.hpp"
 #include "roxy/compiler/ir/ownership_tracker.hpp"
 #include "roxy/compiler/ir/ssa_ir.hpp"
+#include "roxy/compiler/parse/ast.hpp"
+#include "roxy/compiler/types/symbol_table.hpp"
 #include "roxy/compiler/types/type_env.hpp"
 #include "roxy/compiler/types/types.hpp"
-#include "roxy/compiler/types/symbol_table.hpp"
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/format.hpp"
+#include "roxy/core/types.hpp"
+#include "roxy/core/vector.hpp"
 
 #include "roxy/core/tsl/robin_map.h"
 #include "roxy/core/tsl/robin_set.h"
@@ -86,16 +86,16 @@ private:
     // template_module (single-module compilation) or empty m_module_name falls
     // through and emits from the current module. This filter previously
     // appeared verbatim at five build-phase sites.
-    template<typename Fn>
-    void for_each_concrete_struct_instance(Fn&& fn) {
+    template <typename Fn> void for_each_concrete_struct_instance(Fn&& fn) {
         for (auto* instance : m_type_env.generics().all_struct_instances()) {
-            if (!instance->is_analyzed || !instance->concrete_type) continue;
-            if (instance->is_abstract) continue;
-            bool owns =
-                instance->template_module.empty() ||
-                m_module_name.empty() ||
-                instance->template_module == m_module_name;
-            if (!owns) continue;
+            if (!instance->is_analyzed || !instance->concrete_type)
+                continue;
+            if (instance->is_abstract)
+                continue;
+            bool owns = instance->template_module.empty() || m_module_name.empty() ||
+                        instance->template_module == m_module_name;
+            if (!owns)
+                continue;
             fn(instance);
         }
     }
@@ -175,8 +175,10 @@ private:
     ValueId try_simplify_unary(IROp op, ValueId operand, Type* result_type);
 
     ValueId emit_call(StringView func_name, Span<ValueId> args, Type* result_type);
-    ValueId emit_call_native(StringView func_name, Span<ValueId> args, Type* result_type, u32 native_index);
-    ValueId emit_call_external(StringView module_name, StringView func_name, Span<ValueId> args, Type* result_type);
+    ValueId emit_call_native(StringView func_name, Span<ValueId> args, Type* result_type,
+                             u32 native_index);
+    ValueId emit_call_external(StringView module_name, StringView func_name, Span<ValueId> args,
+                               Type* result_type);
 
     // Native-vs-script dispatch: emit CallNative when `name` is a registered native,
     // otherwise a plain Call. Folds the get_index(name) >= 0 ? ... : ... idiom.
@@ -191,26 +193,31 @@ private:
     ValueId emit_call_indirect(ValueId callee_val, Span<ValueId> args, Type* result_type);
     // Build a method-argument span [self] + args, with a trailing output pointer
     // appended when output_ptr is valid (large struct return convention).
-    Span<ValueId> prepend_self(ValueId self, Span<ValueId> args, ValueId output_ptr = ValueId::invalid());
+    Span<ValueId> prepend_self(ValueId self, Span<ValueId> args,
+                               ValueId output_ptr = ValueId::invalid());
     ValueId emit_index_get(ValueId container, ValueId index, ContainerKind kind, Type* result_type);
     void emit_index_set(ValueId container, ValueId index, ValueId value, ContainerKind kind);
     // Address of a container element (out/inout argument lvalue). result_type is
     // the element/value (pointee) type, mirroring emit_get_field_addr. The pointer
     // is valid only while the container is pinned (lifetimes.md "Container element lvalues").
-    ValueId emit_index_addr(ValueId container, ValueId index, ContainerKind kind, Type* result_type);
+    ValueId emit_index_addr(ValueId container, ValueId index, ContainerKind kind,
+                            Type* result_type);
     ValueId emit_index_try_addr(ValueId map, ValueId key);
     ValueId emit_new(StringView type_name, Span<ValueId> args, Type* result_type);
     ValueId emit_stack_alloc(u32 slot_count, Type* result_type);
-    ValueId emit_get_field(ValueId object, StringView field_name, u32 slot_offset, u32 slot_count, Type* result_type);
-    ValueId emit_get_field_addr(ValueId object, StringView field_name, u32 slot_offset, Type* result_type);
-    ValueId emit_set_field(ValueId object, StringView field_name, u32 slot_offset, u32 slot_count, ValueId value, Type* result_type);
+    ValueId emit_get_field(ValueId object, StringView field_name, u32 slot_offset, u32 slot_count,
+                           Type* result_type);
+    ValueId emit_get_field_addr(ValueId object, StringView field_name, u32 slot_offset,
+                                Type* result_type);
+    ValueId emit_set_field(ValueId object, StringView field_name, u32 slot_offset, u32 slot_count,
+                           ValueId value, Type* result_type);
     ValueId emit_load_ptr(ValueId ptr, u32 slot_count, Type* result_type);
     ValueId emit_store_ptr(ValueId ptr, ValueId value, u32 slot_count, Type* result_type);
     // Bitwise slot copy from one struct's storage to another's. `struct_type` and
     // `kind` are required: see StructCopyKind. A Clone additionally emits the
     // retain glue (emit_struct_clone_glue) for the destination's counted members.
-    void emit_struct_copy(ValueId dest_ptr, ValueId source_ptr, u32 slot_count,
-                          Type* struct_type, StructCopyKind kind);
+    void emit_struct_copy(ValueId dest_ptr, ValueId source_ptr, u32 slot_count, Type* struct_type,
+                          StructCopyKind kind);
 
     // Acquire a count for every counted member reachable from the struct at
     // `struct_ptr` — the exact inverse of emit_field_cleanup. Call this at any
@@ -232,8 +239,8 @@ private:
     // emit_value_retain for a value read out of a struct member. The per-field
     // half of emit_struct_clone_glue; shared by its regular-field and
     // tagged-union-variant walks.
-    void emit_member_retain(ValueId struct_ptr, StringView field_name,
-                            u32 slot_offset, u32 slot_count, Type* field_type);
+    void emit_member_retain(ValueId struct_ptr, StringView field_name, u32 slot_offset,
+                            u32 slot_count, Type* field_type);
 
     // One-operand emission helpers for the void-result annotation/lifecycle ops.
     // emit_delete: typed Delete (runtime handles null checks, destructor
@@ -267,14 +274,13 @@ private:
     // retain — the same traversal with one statement swapped. Returns false
     // (emitting nothing) if the iteration natives are unavailable.
     template <typename OnValue>
-    bool emit_map_value_walk(ValueId map_obj, Type* value_type, StringView tag,
-                             OnValue&& on_value);
+    bool emit_map_value_walk(ValueId map_obj, Type* value_type, StringView tag, OnValue&& on_value);
 
     // Balance a map value's counts around a store: acquire for the map's slot,
     // release whatever that slot held before. Shared by `m.insert(k, v)` and
     // `m[k] = v`, which are the same operation.
-    void emit_map_value_ownership(ValueId map_obj, Type* map_type,
-                                  ValueId key_val, ValueId value_val);
+    void emit_map_value_ownership(ValueId map_obj, Type* map_type, ValueId key_val,
+                                  ValueId value_val);
     // Emit `if (map.contains(key)) delete map[key];` — the contains-guarded
     // destroy of a map value, so an overwritten (`m[k]=v`, `m.insert`) or removed
     // (`m.remove`) value isn't leaked (lifetimes.md "Value lifecycle"). No-op
@@ -298,11 +304,11 @@ private:
     // before the inc (lifetimes.md "Promotion"). Non-`self` sources are statically heap.
     void emit_ref_borrow_inc(ValueId val, Expr* source);
     // Pin/unpin a container around a call so a borrowed element can't be dangled
-    // by a mid-call realloc/free (lifetimes.md "Container element lvalues"). `container` is a List/Map
-    // value (or a pinned copy of one).
+    // by a mid-call realloc/free (lifetimes.md "Container element lvalues"). `container` is a
+    // List/Map value (or a pinned copy of one).
     void emit_container_pin(ValueId container);
     void emit_container_unpin(ValueId container);
-    void emit_ref_param_decrements();  // Emit RefDec for all ref-typed parameters
+    void emit_ref_param_decrements(); // Emit RefDec for all ref-typed parameters
     // A `Copy` that copy propagation will not collapse, minting a distinct SSA
     // value/register that aliases `src` at runtime. Used for call-site receiver
     // borrows so their cleanup identity is independent of the receiver's
@@ -358,7 +364,7 @@ private:
     // ever matters, this type is the single place to swap in an undo log.
     struct ScopeSnapshot {
         Vector<tsl::robin_map<StringView, LocalVar>> scopes;
-        Vector<bool> is_moved;       // captured only when has_move_state
+        Vector<bool> is_moved; // captured only when has_move_state
         bool has_move_state = false;
     };
     ScopeSnapshot snapshot_scopes(bool with_move_state);
@@ -414,7 +420,7 @@ private:
     void gen_expr_stmt(Stmt* stmt);
     void gen_block_stmt(Stmt* stmt);
     void gen_if_stmt(Stmt* stmt);
-    void gen_if_else_chain(Stmt* stmt);  // Flattened codegen for else-if chains
+    void gen_if_else_chain(Stmt* stmt); // Flattened codegen for else-if chains
     void gen_while_stmt(Stmt* stmt);
     void gen_for_stmt(Stmt* stmt);
     void gen_return_stmt(Stmt* stmt);
@@ -440,20 +446,20 @@ private:
     // via lower_call_args, dispatches on callee shape, then reloads inout args and
     // marks moved arguments. The dispatch helpers consume the shared CallLowering.
     struct InoutArg {
-        StringView name;     // identifier to reload after the call
-        ValueId addr;        // stack address passed as the out/inout argument
+        StringView name; // identifier to reload after the call
+        ValueId addr;    // stack address passed as the out/inout argument
         Type* type;
         u32 slot_count;
     };
     struct CallLowering {
-        Span<ValueId> args;           // user args (addresses for out/inout)
-        Span<ValueId> final_args;     // args, plus the hidden output ptr for large struct returns
-        Vector<InoutArg> inout_args;  // primitive out/inout identifiers needing a post-call reload
-        ValueId output_ptr = ValueId::invalid();  // stack slot for large struct returns
+        Span<ValueId> args;          // user args (addresses for out/inout)
+        Span<ValueId> final_args;    // args, plus the hidden output ptr for large struct returns
+        Vector<InoutArg> inout_args; // primitive out/inout identifiers needing a post-call reload
+        ValueId output_ptr = ValueId::invalid(); // stack slot for large struct returns
         bool returns_large_struct = false;
     };
-    ValueId gen_list_constructor(Expr* expr);  // List<T>() / List<T>(cap)
-    ValueId gen_map_constructor(Expr* expr);   // Map<K,V>() / Map<K,V>(cap)
+    ValueId gen_list_constructor(Expr* expr); // List<T>() / List<T>(cap)
+    ValueId gen_map_constructor(Expr* expr);  // Map<K,V>() / Map<K,V>(cap)
     CallLowering lower_call_args(Expr* expr);
     // Shared argument lowering for the simple call shapes — constructor, super,
     // and named-destructor calls (no hidden output pointer, no inout reload
@@ -464,8 +470,9 @@ private:
     // the callee) so scope-exit cleanup skips them.
     Span<ValueId> lower_simple_args(Span<CallArg> arguments);
     void mark_simple_args_moved(Span<CallArg> arguments);
-    ValueId gen_call_direct(Expr* expr, const CallLowering& lowered);  // callee is an identifier
-    ValueId gen_call_member(Expr* expr, const CallLowering& lowered);  // callee is obj.method / module.fn
+    ValueId gen_call_direct(Expr* expr, const CallLowering& lowered); // callee is an identifier
+    ValueId gen_call_member(Expr* expr,
+                            const CallLowering& lowered); // callee is obj.method / module.fn
     void reload_inout_args(const CallLowering& lowered);
     void mark_call_args_moved(Expr* expr);
     // Bytecode function index of struct_type's `method_name` (mangled at its
@@ -474,7 +481,7 @@ private:
 
     ValueId gen_primitive_cast(Expr* expr);
     ValueId gen_constructor_call(Expr* expr);
-    ValueId gen_super_call(Expr* expr);  // Handle super() and super.method() calls
+    ValueId gen_super_call(Expr* expr); // Handle super() and super.method() calls
     ValueId gen_index_expr(Expr* expr);
     ValueId gen_get_expr(Expr* expr);
     ValueId gen_assign_expr(Expr* expr);
@@ -487,9 +494,9 @@ private:
     // (the whole assignment is done); otherwise it folds the RHS against the target's
     // current value and returns the combined value to store, with handled=false.
     ValueId gen_compound_assign(Expr* expr, ValueId rhs, bool& handled);
-    ValueId gen_assign_local(Expr* expr, ValueId value);  // target is an identifier
-    ValueId gen_assign_field(Expr* expr, ValueId value);  // target is obj.field
-    ValueId gen_assign_index(Expr* expr, ValueId value);  // target is container[index]
+    ValueId gen_assign_local(Expr* expr, ValueId value); // target is an identifier
+    ValueId gen_assign_field(Expr* expr, ValueId value); // target is obj.field
+    ValueId gen_assign_index(Expr* expr, ValueId value); // target is container[index]
     ValueId gen_grouping_expr(Expr* expr);
     ValueId gen_this_expr(Expr* expr);
     ValueId gen_struct_literal_expr(Expr* expr);
@@ -518,15 +525,15 @@ private:
     // call op (Call / CallNative / CallExternal) and the cache key.
     struct FunctionRefTarget {
         enum class Kind {
-            Script,           // user-defined script function (incl. generic instances)
-            Native,           // top-level native function (declared with `native`)
-            ImportedScript,   // cross-module script function
-            ImportedNative,   // cross-module native function
+            Script,         // user-defined script function (incl. generic instances)
+            Native,         // top-level native function (declared with `native`)
+            ImportedScript, // cross-module script function
+            ImportedNative, // cross-module native function
         };
         Kind kind = Kind::Script;
-        StringView name;            // body call target + cache key (mangled where applicable)
-        StringView module_name;     // ImportedScript only
-        u32 native_index = 0;       // Native / ImportedNative
+        StringView name;        // body call target + cache key (mangled where applicable)
+        StringView module_name; // ImportedScript only
+        u32 native_index = 0;   // Native / ImportedNative
         Type* function_type = nullptr;
     };
     ValueId gen_function_ref(Expr* expr, const FunctionRefTarget& target);
@@ -552,7 +559,7 @@ private:
 
     // Mangle a name into an arena-allocated StringView without truncation.
     // Thin wrapper over rx::format_to_arena bound to this builder's allocator.
-    template<typename... Args>
+    template <typename... Args>
     StringView intern_format(fmt_string<sizeof...(Args)> fmt, const Args&... args) {
         return format_to_arena(m_allocator, runtime_format_string{fmt.str}, args...);
     }
@@ -565,13 +572,19 @@ private:
     StringView intern_synthetic_name(const char* prefix, u32 id) {
         char buf[24];
         u32 n = 0;
-        while (*prefix) buf[n++] = *prefix++;            // short fixed prefix ("__tmp"/"__str")
-        char rev[10];                                    // u32 is at most 10 decimal digits
+        while (*prefix)
+            buf[n++] = *prefix++; // short fixed prefix ("__tmp"/"__str")
+        char rev[10];             // u32 is at most 10 decimal digits
         u32 digits = 0;
-        do { rev[digits++] = static_cast<char>('0' + id % 10); id /= 10; } while (id);
-        while (digits > 0) buf[n++] = rev[--digits];
+        do {
+            rev[digits++] = static_cast<char>('0' + id % 10);
+            id /= 10;
+        } while (id);
+        while (digits > 0)
+            buf[n++] = rev[--digits];
         char* dst = reinterpret_cast<char*>(m_allocator.alloc_bytes(n + 1, 1));
-        for (u32 i = 0; i < n; i++) dst[i] = buf[i];
+        for (u32 i = 0; i < n; i++)
+            dst[i] = buf[i];
         dst[n] = '\0';
         return StringView(dst, n);
     }
@@ -580,11 +593,17 @@ private:
     // as intern_format("{}...", ...) but without the double formatter pass. Used
     // for synthetic block labels (debug-only names), minted per variant guard.
     StringView intern_concat(const char* a, const char* b) {
-        u32 la = 0; while (a[la]) la++;
-        u32 lb = 0; while (b[lb]) lb++;
+        u32 la = 0;
+        while (a[la])
+            la++;
+        u32 lb = 0;
+        while (b[lb])
+            lb++;
         char* dst = reinterpret_cast<char*>(m_allocator.alloc_bytes(la + lb + 1, 1));
-        for (u32 i = 0; i < la; i++) dst[i] = a[i];
-        for (u32 i = 0; i < lb; i++) dst[la + i] = b[i];
+        for (u32 i = 0; i < la; i++)
+            dst[i] = a[i];
+        for (u32 i = 0; i < lb; i++)
+            dst[la + i] = b[i];
         dst[la + lb] = '\0';
         return StringView(dst, la + lb);
     }
@@ -657,7 +676,7 @@ private:
 
     BumpAllocator& m_allocator;
     TypeEnv& m_type_env;
-    TypeCache& m_types;  // Cached ref to m_type_env.types()
+    TypeCache& m_types; // Cached ref to m_type_env.types()
     NativeRegistry& m_registry;
     SymbolTable& m_symbols;
     ModuleRegistry& m_module_registry;
@@ -714,13 +733,12 @@ private:
     // function bodies resolve to the right slot offset.
     tsl::robin_map<StringView, u32> m_global_indices;
 
-    // Deferred call-site receiver-borrow cleanup records (lifetimes.md "Counting mechanics" / "Promotion").
-    // A borrow's exception-path RefDec must run BEFORE the receiver-owner's
-    // Delete on unwind (else Delete sees ref_count != 0 and spuriously traps).
-    // execute_cleanup runs records in reverse of cleanup_info order, and the
-    // owner's Delete record is pushed late (at scope close), so these are
-    // collected during the body and appended at end_function_body — after every
-    // owned-local record — so reverse iteration releases the borrow first.
+    // Deferred call-site receiver-borrow cleanup records (lifetimes.md "Counting mechanics" /
+    // "Promotion"). A borrow's exception-path RefDec must run BEFORE the receiver-owner's Delete on
+    // unwind (else Delete sees ref_count != 0 and spuriously traps). execute_cleanup runs records
+    // in reverse of cleanup_info order, and the owner's Delete record is pushed late (at scope
+    // close), so these are collected during the body and appended at end_function_body — after
+    // every owned-local record — so reverse iteration releases the borrow first.
     Vector<IRCleanupInfo> m_call_borrow_cleanups;
 
     // Error state
@@ -731,17 +749,17 @@ private:
     struct LoopVarInfo {
         StringView name;
         Type* type;
-        ValueId header_param;   // Block param ValueId in header
-        ValueId initial_value;  // Value before loop
+        ValueId header_param;  // Block param ValueId in header
+        ValueId initial_value; // Value before loop
     };
 
     // Loop control flow info (for break/continue)
     struct LoopInfo {
-        IRBlock* header_block;       // Loop header (for continue in while, or header in for)
-        IRBlock* exit_block;         // Exit block (for break)
-        IRBlock* continue_block;     // Continue target (same as header for while, increment for for)
-        Vector<LoopVarInfo> loop_vars;  // Variables modified in loop
-        u32 scope_depth;             // Scope depth when loop was entered (for RAII cleanup)
+        IRBlock* header_block;   // Loop header (for continue in while, or header in for)
+        IRBlock* exit_block;     // Exit block (for break)
+        IRBlock* continue_block; // Continue target (same as header for while, increment for for)
+        Vector<LoopVarInfo> loop_vars; // Variables modified in loop
+        u32 scope_depth;               // Scope depth when loop was entered (for RAII cleanup)
     };
     Vector<LoopInfo> m_loop_stack;
 
@@ -758,14 +776,14 @@ private:
     // transitions the tracker — mirroring the semantic side's LifetimeChecker.
     OwnershipTracker m_ownership;
 
-    u32 m_next_temp_id = 0;  // Counter for generating unique temporary names (__tmp0, __tmp1, ...)
+    u32 m_next_temp_id = 0; // Counter for generating unique temporary names (__tmp0, __tmp1, ...)
 
     // Function-reference cache. Keyed by the unmangled function name; one
     // trampoline + empty env struct per referenced function, deduped across
     // multiple `var f = name` references in the same module.
     struct FunctionRefInfo {
-        StringView env_struct_name;     // synthesized env struct's name
-        StringView trampoline_name;     // trampoline IRFunction's name (already mangled)
+        StringView env_struct_name; // synthesized env struct's name
+        StringView trampoline_name; // trampoline IRFunction's name (already mangled)
     };
     tsl::robin_map<StringView, FunctionRefInfo> m_function_refs;
     u32 m_funref_id_counter = 0;
@@ -873,14 +891,13 @@ private:
     void emit_default_destructor_epilogue(ValueId self_ptr, Type* struct_type);
 
     // Emit cleanup for a single field (uniq or value-struct with destructor)
-    void emit_single_field_destroy(ValueId obj_ptr, StringView field_name,
-                                   u32 slot_offset, u32 slot_count, Type* field_type);
+    void emit_single_field_destroy(ValueId obj_ptr, StringView field_name, u32 slot_offset,
+                                   u32 slot_count, Type* field_type);
 
     // On a tagged-union discriminant reassignment (`s.kind = NEW`), drop the
     // outgoing variant's owned fields and clear the union storage. See the
     // definition for the full rationale (leak + stale-pointer-free hazards).
-    void emit_discriminant_reassign_cleanup(ValueId obj,
-                                            const WhenClauseInfo& clause,
+    void emit_discriminant_reassign_cleanup(ValueId obj, const WhenClauseInfo& clause,
                                             ValueId new_disc);
 
     // Before dereferencing a `weak T` value (field read/write, method call),
@@ -929,7 +946,7 @@ private:
     // Variable management (declared after LocalVar struct)
     void define_local(StringView name, ValueId value, Type* type, bool is_ptr = false);
     ValueId lookup_local(StringView name);
-    LocalVar* find_local(StringView name);  // Returns pointer to LocalVar or nullptr
+    LocalVar* find_local(StringView name); // Returns pointer to LocalVar or nullptr
 
     // Loop variable analysis (declared after LoopVarInfo struct). The public
     // entry points seed a membership set from `out`'s current contents (call
@@ -953,17 +970,17 @@ private:
     Span<BlockArgPair> make_loop_args(const Vector<LoopVarInfo>& loop_vars);
 
     // Helper to create a span in the allocator
-    template<typename T>
-    Span<T> alloc_span(u32 count) {
-        if (count == 0) return {};
+    template <typename T> Span<T> alloc_span(u32 count) {
+        if (count == 0)
+            return {};
         T* data = reinterpret_cast<T*>(m_allocator.alloc_bytes(sizeof(T) * count, alignof(T)));
         return Span<T>(data, count);
     }
 
     // Helper to allocate a span from a vector
-    template<typename T>
-    Span<T> alloc_span(const Vector<T>& vec) {
-        if (vec.empty()) return {};
+    template <typename T> Span<T> alloc_span(const Vector<T>& vec) {
+        if (vec.empty())
+            return {};
         Span<T> span = alloc_span<T>(static_cast<u32>(vec.size()));
         for (u32 i = 0; i < vec.size(); i++) {
             span[i] = vec[i];
@@ -972,9 +989,9 @@ private:
     }
 
     // Helper to allocate a span from a braced list: alloc_span({a, b, c})
-    template<typename T>
-    Span<T> alloc_span(std::initializer_list<T> items) {
-        if (items.size() == 0) return {};
+    template <typename T> Span<T> alloc_span(std::initializer_list<T> items) {
+        if (items.size() == 0)
+            return {};
         Span<T> span = alloc_span<T>(static_cast<u32>(items.size()));
         u32 i = 0;
         for (const T& item : items) {
@@ -992,4 +1009,4 @@ private:
     void pop_scope();
 };
 
-}
+} // namespace rx

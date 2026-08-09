@@ -8,10 +8,10 @@ namespace rx {
 
 // ===== Builtin trait registration (Pass 1) =====
 
-Type* TraitSystem::register_builtin_trait(
-        StringView name, StringView method_name,
-        Span<Type*> method_param_types, Type* return_type,
-        Span<TypeKind> primitive_kinds, bool register_trait_on_primitives) {
+Type* TraitSystem::register_builtin_trait(StringView name, StringView method_name,
+                                          Span<Type*> method_param_types, Type* return_type,
+                                          Span<TypeKind> primitive_kinds,
+                                          bool register_trait_on_primitives) {
     Type* trait_type = m_types.trait_type(name, nullptr);
     m_type_env.register_trait_type(name, trait_type);
 
@@ -35,8 +35,8 @@ Type* TraitSystem::register_builtin_trait(
         // one registration-driven source of truth. Kinds outside Bool..String
         // (e.g. ExceptionRef's `message`) have no native and keep it empty.
         if (tk >= TypeKind::Bool && tk <= TypeKind::String) {
-            mi.native_name = mangle_method(
-                m_allocator, StringView(type_kind_to_string(tk)), method_name);
+            mi.native_name =
+                mangle_method(m_allocator, StringView(type_kind_to_string(tk)), method_name);
         }
         m_types.register_primitive_method(tk, mi);
         if (register_trait_on_primitives) {
@@ -47,17 +47,21 @@ Type* TraitSystem::register_builtin_trait(
 }
 
 Type* TraitSystem::register_builtin_index_trait(StringView name, StringView method_name,
-                                                     bool is_mut) {
+                                                bool is_mut) {
     Type* trait_type = m_types.trait_type(name, nullptr);
     m_type_env.register_trait_type(name, trait_type);
 
     // Two type params: <Idx, Output>. Output appears in the method's return type
     // (index) or value parameter (index_mut), since Roxy has no associated types.
     Vector<TypeParam> tparams;
-    TypeParam idx_param; idx_param.name = "Idx"_sv;
-    idx_param.loc = SourceLocation{}; idx_param.bounds = Span<TypeExpr*>();
-    TypeParam out_param; out_param.name = "Output"_sv;
-    out_param.loc = SourceLocation{}; out_param.bounds = Span<TypeExpr*>();
+    TypeParam idx_param;
+    idx_param.name = "Idx"_sv;
+    idx_param.loc = SourceLocation{};
+    idx_param.bounds = Span<TypeExpr*>();
+    TypeParam out_param;
+    out_param.name = "Output"_sv;
+    out_param.loc = SourceLocation{};
+    out_param.bounds = Span<TypeExpr*>();
     tparams.push_back(idx_param);
     tparams.push_back(out_param);
     trait_type->trait_info.type_params = m_allocator.alloc_span(tparams);
@@ -69,10 +73,10 @@ Type* TraitSystem::register_builtin_index_trait(StringView name, StringView meth
     method_params.push_back(idx_tp);
     Type* return_type;
     if (is_mut) {
-        method_params.push_back(out_tp);       // index_mut(idx: Idx, val: Output)
+        method_params.push_back(out_tp); // index_mut(idx: Idx, val: Output)
         return_type = m_types.void_type();
     } else {
-        return_type = out_tp;                  // index(idx: Idx): Output
+        return_type = out_tp; // index(idx: Idx): Output
     }
 
     TraitMethodInfo tmi;
@@ -88,13 +92,10 @@ Type* TraitSystem::register_builtin_index_trait(StringView name, StringView meth
 
 void TraitSystem::register_builtin_traits() {
     if (!m_type_env.printable_type()) {
-        TypeKind prim_kinds[] = {
-            TypeKind::Bool, TypeKind::I32, TypeKind::I64, TypeKind::U32, TypeKind::U64,
-            TypeKind::F32, TypeKind::F64, TypeKind::String
-        };
+        TypeKind prim_kinds[] = {TypeKind::Bool, TypeKind::I32, TypeKind::I64, TypeKind::U32,
+                                 TypeKind::U64,  TypeKind::F32, TypeKind::F64, TypeKind::String};
         Type* printable_type = register_builtin_trait(
-            "Printable"_sv, "to_string"_sv,
-            Span<Type*>(nullptr, 0), m_types.string_type(),
+            "Printable"_sv, "to_string"_sv, Span<Type*>(nullptr, 0), m_types.string_type(),
             Span<TypeKind>(prim_kinds, 8), /*register_trait_on_primitives=*/true);
         m_type_env.set_printable_type(printable_type);
         // Enables implements_trait's structural container arm (List<T>/Map<K,V>).
@@ -102,16 +103,12 @@ void TraitSystem::register_builtin_traits() {
     }
 
     if (!m_type_env.hash_type()) {
-        TypeKind hashable_kinds[] = {
-            TypeKind::Bool,
-            TypeKind::I8, TypeKind::I16, TypeKind::I32, TypeKind::I64,
-            TypeKind::U8, TypeKind::U16, TypeKind::U32, TypeKind::U64,
-            TypeKind::F32, TypeKind::F64,
-            TypeKind::String
-        };
+        TypeKind hashable_kinds[] = {TypeKind::Bool, TypeKind::I8,  TypeKind::I16,
+                                     TypeKind::I32,  TypeKind::I64, TypeKind::U8,
+                                     TypeKind::U16,  TypeKind::U32, TypeKind::U64,
+                                     TypeKind::F32,  TypeKind::F64, TypeKind::String};
         Type* hash_trait_type = register_builtin_trait(
-            "Hash"_sv, "hash"_sv,
-            Span<Type*>(nullptr, 0), m_types.u64_type(),
+            "Hash"_sv, "hash"_sv, Span<Type*>(nullptr, 0), m_types.u64_type(),
             Span<TypeKind>(hashable_kinds, 12), /*register_trait_on_primitives=*/true);
         m_type_env.set_hash_type(hash_trait_type);
     }
@@ -135,19 +132,14 @@ void TraitSystem::register_builtin_traits() {
         // registered on primitives (see comment above), so primitive_kinds is
         // empty and register_trait_on_primitives is irrelevant.
         Span<Type*> eq_params(m_allocator.emplace<Type*>(m_types.self_type()), 1);
-        Type* eq_trait_type = register_builtin_trait(
-            "Eq"_sv, "eq"_sv,
-            eq_params, m_types.bool_type(),
-            Span<TypeKind>(), /*register_trait_on_primitives=*/false);
+        Type* eq_trait_type =
+            register_builtin_trait("Eq"_sv, "eq"_sv, eq_params, m_types.bool_type(),
+                                   Span<TypeKind>(), /*register_trait_on_primitives=*/false);
         // Membership for every kind that has eq/ne operator methods (matches
         // register_primitive_operator_methods coverage).
-        TypeKind eq_kinds[] = {
-            TypeKind::Bool,
-            TypeKind::I8, TypeKind::I16, TypeKind::I32, TypeKind::I64,
-            TypeKind::U8, TypeKind::U16, TypeKind::U32, TypeKind::U64,
-            TypeKind::F32, TypeKind::F64,
-            TypeKind::String
-        };
+        TypeKind eq_kinds[] = {TypeKind::Bool, TypeKind::I8,  TypeKind::I16, TypeKind::I32,
+                               TypeKind::I64,  TypeKind::U8,  TypeKind::U16, TypeKind::U32,
+                               TypeKind::U64,  TypeKind::F32, TypeKind::F64, TypeKind::String};
         for (TypeKind tk : eq_kinds) {
             m_types.register_primitive_trait(tk, eq_trait_type);
         }
@@ -166,7 +158,7 @@ void TraitSystem::register_builtin_traits() {
         m_type_env.register_trait_type("Ord"_sv, ord_trait_type);
 
         Span<Type*> ord_params(m_allocator.emplace<Type*>(m_types.self_type()), 1);
-        const StringView ord_method_names[] = { "lt"_sv, "le"_sv, "gt"_sv, "ge"_sv };
+        const StringView ord_method_names[] = {"lt"_sv, "le"_sv, "gt"_sv, "ge"_sv};
         Vector<TraitMethodInfo> ord_methods;
         for (StringView method_name : ord_method_names) {
             TraitMethodInfo tmi;
@@ -179,10 +171,8 @@ void TraitSystem::register_builtin_traits() {
         }
         ord_trait_type->trait_info.methods = m_allocator.alloc_span(ord_methods);
 
-        TypeKind ord_kinds[] = {
-            TypeKind::I32, TypeKind::I64, TypeKind::U32, TypeKind::U64,
-            TypeKind::F32, TypeKind::F64
-        };
+        TypeKind ord_kinds[] = {TypeKind::I32, TypeKind::I64, TypeKind::U32,
+                                TypeKind::U64, TypeKind::F32, TypeKind::F64};
         for (TypeKind tk : ord_kinds) {
             m_types.register_primitive_trait(tk, ord_trait_type);
         }
@@ -193,10 +183,9 @@ void TraitSystem::register_builtin_traits() {
         // `message` is installed on ExceptionRef as a primitive method, but the
         // Exception trait itself is not registered on it (catch-all handles only
         // message()), so register_trait_on_primitives is false.
-        TypeKind exc_kinds[] = { TypeKind::ExceptionRef };
+        TypeKind exc_kinds[] = {TypeKind::ExceptionRef};
         Type* exception_trait_type = register_builtin_trait(
-            "Exception"_sv, "message"_sv,
-            Span<Type*>(nullptr, 0), m_types.string_type(),
+            "Exception"_sv, "message"_sv, Span<Type*>(nullptr, 0), m_types.string_type(),
             Span<TypeKind>(exc_kinds, 1), /*register_trait_on_primitives=*/false);
         m_type_env.set_exception_type(exception_trait_type);
     }
@@ -223,12 +212,13 @@ void TraitSystem::register_builtin_traits() {
 void TraitSystem::register_primitive_operator_methods() {
     // Guard: only register once (TypeEnv persists across modules)
     // Use I32's "add" method as a sentinel — if it's already registered, skip.
-    if (m_types.lookup_primitive_method(TypeKind::I32, "add"_sv)) return;
+    if (m_types.lookup_primitive_method(TypeKind::I32, "add"_sv))
+        return;
 
     // Helper: allocate a Span<Type*> with one element from the bump allocator
     auto make_param_span = [this](Type* param) -> Span<Type*> {
-        Type** data = reinterpret_cast<Type**>(
-            m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
+        Type** data =
+            reinterpret_cast<Type**>(m_allocator.alloc_bytes(sizeof(Type*), alignof(Type*)));
         data[0] = param;
         return Span<Type*>(data, 1);
     };
@@ -254,52 +244,57 @@ void TraitSystem::register_primitive_operator_methods() {
     // reuse the shared ops. `return_type = entry.type` makes `uN op uN -> uN`.
     // U32 values are kept canonically zero-extended (lowering's TRUNC_U 32 hook)
     // so the 64-bit unsigned ops are correct and results wrap at 32 bits.
-    struct { TypeKind kind; Type* type; } int_types[] = {
-        { TypeKind::I32, m_types.i32_type() },
-        { TypeKind::I64, m_types.i64_type() },
-        { TypeKind::U32, m_types.u32_type() },
-        { TypeKind::U64, m_types.u64_type() },
+    struct {
+        TypeKind kind;
+        Type* type;
+    } int_types[] = {
+        {TypeKind::I32, m_types.i32_type()},
+        {TypeKind::I64, m_types.i64_type()},
+        {TypeKind::U32, m_types.u32_type()},
+        {TypeKind::U64, m_types.u64_type()},
     };
     for (auto& entry : int_types) {
         Span<Type*> self_param = make_param_span(entry.type);
 
-        const char* arith_ops[] = { "add", "sub", "mul", "div", "mod" };
+        const char* arith_ops[] = {"add", "sub", "mul", "div", "mod"};
         register_ops(entry.kind, arith_ops, 5, self_param, entry.type);
 
-        const char* bit_ops[] = { "bit_and", "bit_or", "bit_xor", "shl", "shr" };
+        const char* bit_ops[] = {"bit_and", "bit_or", "bit_xor", "shl", "shr"};
         register_ops(entry.kind, bit_ops, 5, self_param, entry.type);
 
-        const char* cmp_ops[] = { "eq", "ne", "lt", "le", "gt", "ge" };
+        const char* cmp_ops[] = {"eq", "ne", "lt", "le", "gt", "ge"};
         register_ops(entry.kind, cmp_ops, 6, self_param, m_types.bool_type());
 
-        const char* unary_ops[] = { "neg", "bit_not" };
+        const char* unary_ops[] = {"neg", "bit_not"};
         register_ops(entry.kind, unary_ops, 2, no_params, entry.type);
 
         const char* compound_ops[] = {
-            "add_assign", "sub_assign", "mul_assign", "div_assign", "mod_assign",
-            "bit_and_assign", "bit_or_assign", "bit_xor_assign", "shl_assign", "shr_assign"
-        };
+            "add_assign",     "sub_assign",    "mul_assign",     "div_assign", "mod_assign",
+            "bit_and_assign", "bit_or_assign", "bit_xor_assign", "shl_assign", "shr_assign"};
         register_ops(entry.kind, compound_ops, 10, self_param, m_types.void_type());
     }
 
     // Register for float types (F32, F64)
-    struct { TypeKind kind; Type* type; } float_types[] = {
-        { TypeKind::F32, m_types.f32_type() },
-        { TypeKind::F64, m_types.f64_type() },
+    struct {
+        TypeKind kind;
+        Type* type;
+    } float_types[] = {
+        {TypeKind::F32, m_types.f32_type()},
+        {TypeKind::F64, m_types.f64_type()},
     };
     for (auto& entry : float_types) {
         Span<Type*> self_param = make_param_span(entry.type);
 
-        const char* arith_ops[] = { "add", "sub", "mul", "div" };
+        const char* arith_ops[] = {"add", "sub", "mul", "div"};
         register_ops(entry.kind, arith_ops, 4, self_param, entry.type);
 
-        const char* cmp_ops[] = { "eq", "ne", "lt", "le", "gt", "ge" };
+        const char* cmp_ops[] = {"eq", "ne", "lt", "le", "gt", "ge"};
         register_ops(entry.kind, cmp_ops, 6, self_param, m_types.bool_type());
 
-        const char* unary_ops[] = { "neg" };
+        const char* unary_ops[] = {"neg"};
         register_ops(entry.kind, unary_ops, 1, no_params, entry.type);
 
-        const char* compound_ops[] = { "add_assign", "sub_assign", "mul_assign", "div_assign" };
+        const char* compound_ops[] = {"add_assign", "sub_assign", "mul_assign", "div_assign"};
         register_ops(entry.kind, compound_ops, 4, self_param, m_types.void_type());
     }
 
@@ -310,13 +305,16 @@ void TraitSystem::register_primitive_operator_methods() {
     // registered: these promote to i32 for arithmetic (handled before operator
     // resolution). (u32 and u64 have native arithmetic — the block above.)
     {
-        struct { TypeKind kind; Type* type; } equality_only_int_types[] = {
-            { TypeKind::I8,  m_types.i8_type()  },
-            { TypeKind::I16, m_types.i16_type() },
-            { TypeKind::U8,  m_types.u8_type()  },
-            { TypeKind::U16, m_types.u16_type() },
+        struct {
+            TypeKind kind;
+            Type* type;
+        } equality_only_int_types[] = {
+            {TypeKind::I8, m_types.i8_type()},
+            {TypeKind::I16, m_types.i16_type()},
+            {TypeKind::U8, m_types.u8_type()},
+            {TypeKind::U16, m_types.u16_type()},
         };
-        const char* eq_ops[] = { "eq", "ne" };
+        const char* eq_ops[] = {"eq", "ne"};
         for (auto& entry : equality_only_int_types) {
             Span<Type*> self_param = make_param_span(entry.type);
             register_ops(entry.kind, eq_ops, 2, self_param, m_types.bool_type());
@@ -326,14 +324,14 @@ void TraitSystem::register_primitive_operator_methods() {
     // Register for bool: eq, ne → bool
     {
         Span<Type*> bool_param = make_param_span(m_types.bool_type());
-        const char* bool_ops[] = { "eq", "ne" };
+        const char* bool_ops[] = {"eq", "ne"};
         register_ops(TypeKind::Bool, bool_ops, 2, bool_param, m_types.bool_type());
     }
 
     // Register for string: eq, ne → bool
     {
         Span<Type*> string_param = make_param_span(m_types.string_type());
-        const char* string_ops[] = { "eq", "ne" };
+        const char* string_ops[] = {"eq", "ne"};
         register_ops(TypeKind::String, string_ops, 2, string_param, m_types.bool_type());
     }
 
@@ -363,8 +361,7 @@ void TraitSystem::collect_trait_declaration(Decl* decl) {
     }
 
     // Check for duplicate type/trait names
-    if (m_type_env.named_type_by_name(name) != nullptr ||
-        existing_trait != nullptr) {
+    if (m_type_env.named_type_by_name(name) != nullptr || existing_trait != nullptr) {
         m_reporter.error_fmt(decl->loc, "duplicate type declaration '{}'", name);
         return;
     }
@@ -390,7 +387,8 @@ void TraitSystem::resolve_trait_parent(Decl* decl) {
         if (!parent_trait) {
             m_reporter.error_fmt(decl->loc, "unknown parent trait '{}'", trait_decl.parent_name);
         } else if (parent_trait == trait_type) {
-            m_reporter.error_fmt(decl->loc, "trait '{}' cannot inherit from itself", trait_decl.name);
+            m_reporter.error_fmt(decl->loc, "trait '{}' cannot inherit from itself",
+                                 trait_decl.name);
         } else {
             trait_type->trait_info.parent = parent_trait;
         }
@@ -398,7 +396,7 @@ void TraitSystem::resolve_trait_parent(Decl* decl) {
 }
 
 Type* TraitSystem::resolve_trait_method_type_expr(TypeExpr* type_expr,
-                                                 const TraitTypeInfo& trait_info) {
+                                                  const TraitTypeInfo& trait_info) {
     if (!type_expr) {
         return m_types.error_type();
     }
@@ -426,7 +424,7 @@ void TraitSystem::register_trait_method_signature(Decl* decl, Type* trait_type) 
     for (auto& trait_method : trait_type_info.methods) {
         if (trait_method.name == method_decl.name) {
             bool is_builtin_redecl = trait_method.decl == nullptr &&
-                trait_method.param_types.size() == method_decl.params.size();
+                                     trait_method.param_types.size() == method_decl.params.size();
             if (is_builtin_redecl) {
                 // The builtin shape (param/return types) stays. When the user's
                 // redeclaration carries a default body, adopt it onto the
@@ -440,7 +438,7 @@ void TraitSystem::register_trait_method_signature(Decl* decl, Type* trait_type) 
                 return;
             }
             m_reporter.error_fmt(decl->loc, "duplicate trait method '{}' in trait '{}'",
-                     method_decl.name, trait_type_info.name);
+                                 method_decl.name, trait_type_info.name);
             return;
         }
     }
@@ -452,9 +450,10 @@ void TraitSystem::register_trait_method_signature(Decl* decl, Type* trait_type) 
     }
 
     // Resolve return type (TypeKind::Self for Self, TypeParam for trait type params)
-    Type* return_type = method_decl.return_type
-        ? resolve_trait_method_type_expr(method_decl.return_type, trait_type_info)
-        : m_types.void_type();
+    Type* return_type =
+        method_decl.return_type
+            ? resolve_trait_method_type_expr(method_decl.return_type, trait_type_info)
+            : m_types.void_type();
 
     // Create trait method info
     TraitMethodInfo trait_method_info;
@@ -492,32 +491,33 @@ void TraitSystem::resolve_trait_impl_member(Decl* decl) {
 
             // Resolve the `for Trait<Args>` type args of this impl.
             Span<Type*> resolved_trait_type_args;
-            if (!resolve_trait_impl_type_args(method_decl, trait_type_info,
-                                              struct_type_lookup, decl->loc,
-                                              resolved_trait_type_args)) {
+            if (!resolve_trait_impl_type_args(method_decl, trait_type_info, struct_type_lookup,
+                                              decl->loc, resolved_trait_type_args)) {
                 return;
             }
 
-            m_pending_trait_impls.push_back({decl, struct_type_lookup, trait_type, resolved_trait_type_args});
+            m_pending_trait_impls.push_back(
+                {decl, struct_type_lookup, trait_type, resolved_trait_type_args});
         }
     }
 }
 
 // ===== Trait impl validation (Pass 2) =====
 
-bool TraitSystem::resolve_trait_impl_type_args(
-        MethodDecl& method_decl, const TraitTypeInfo& trait_info,
-        Type* struct_type, SourceLocation loc, Span<Type*>& out) {
+bool TraitSystem::resolve_trait_impl_type_args(MethodDecl& method_decl,
+                                               const TraitTypeInfo& trait_info, Type* struct_type,
+                                               SourceLocation loc, Span<Type*>& out) {
     out = Span<Type*>();
     if (method_decl.trait_type_args.size() > 0) {
         if (trait_info.type_params.size() == 0) {
-            m_reporter.error_fmt(loc, "trait '{}' does not take type arguments", method_decl.trait_name);
+            m_reporter.error_fmt(loc, "trait '{}' does not take type arguments",
+                                 method_decl.trait_name);
             return false;
         }
         if (method_decl.trait_type_args.size() != trait_info.type_params.size()) {
             m_reporter.error_fmt(loc, "trait '{}' expects {} type argument(s) but got {}",
-                     method_decl.trait_name, trait_info.type_params.size(),
-                     method_decl.trait_type_args.size());
+                                 method_decl.trait_name, trait_info.type_params.size(),
+                                 method_decl.trait_type_args.size());
             return false;
         }
         Vector<Type*> args;
@@ -544,18 +544,26 @@ Vector<TraitSystem::TraitImplGroup> TraitSystem::group_pending_trait_impls() {
     for (auto& pending : m_pending_trait_impls) {
         TraitImplGroup* group = nullptr;
         for (auto& g : groups) {
-            if (g.struct_type != pending.struct_type || g.trait_type != pending.trait_type) continue;
+            if (g.struct_type != pending.struct_type || g.trait_type != pending.trait_type)
+                continue;
             // Match on type args element-wise too.
             bool args_match = g.trait_type_args.size() == pending.trait_type_args.size();
             if (args_match) {
                 for (u32 i = 0; i < g.trait_type_args.size(); i++) {
-                    if (g.trait_type_args[i] != pending.trait_type_args[i]) { args_match = false; break; }
+                    if (g.trait_type_args[i] != pending.trait_type_args[i]) {
+                        args_match = false;
+                        break;
+                    }
                 }
             }
-            if (args_match) { group = &g; break; }
+            if (args_match) {
+                group = &g;
+                break;
+            }
         }
         if (!group) {
-            groups.push_back({pending.struct_type, pending.trait_type, pending.trait_type_args, {}});
+            groups.push_back(
+                {pending.struct_type, pending.trait_type, pending.trait_type_args, {}});
             group = &groups.back();
         }
         group->impl_decls.push_back(pending.decl);
@@ -564,13 +572,15 @@ Vector<TraitSystem::TraitImplGroup> TraitSystem::group_pending_trait_impls() {
 }
 
 bool TraitSystem::check_parent_trait_satisfied(const TraitImplGroup& group,
-                                                    const Vector<TraitImplGroup>& all_groups) {
+                                               const Vector<TraitImplGroup>& all_groups) {
     TraitTypeInfo& trait_type_info = group.trait_type->trait_info;
-    if (!trait_type_info.parent) return true;
+    if (!trait_type_info.parent)
+        return true;
 
     StructTypeInfo& struct_type_info = group.struct_type->struct_info;
     for (const auto& impl : struct_type_info.implemented_traits) {
-        if (impl.trait == trait_type_info.parent) return true;
+        if (impl.trait == trait_type_info.parent)
+            return true;
     }
     // Also satisfied if the parent trait is implemented in this same batch.
     for (const auto& other : all_groups) {
@@ -579,26 +589,28 @@ bool TraitSystem::check_parent_trait_satisfied(const TraitImplGroup& group,
         }
     }
     m_reporter.error_fmt(group.impl_decls[0]->loc,
-             "trait '{}' requires parent trait '{}' to be implemented for '{}'",
-             trait_type_info.name, trait_type_info.parent->trait_info.name, struct_type_info.name);
+                         "trait '{}' requires parent trait '{}' to be implemented for '{}'",
+                         trait_type_info.name, trait_type_info.parent->trait_info.name,
+                         struct_type_info.name);
     return false;
 }
 
 void TraitSystem::validate_and_register_impl_method(const TraitImplGroup& group, Decl* decl,
-                                                         Vector<bool>& implemented) {
+                                                    Vector<bool>& implemented) {
     TraitTypeInfo& trait_type_info = group.trait_type->trait_info;
     StructTypeInfo& struct_type_info = group.struct_type->struct_info;
     MethodDecl& method_decl = decl->method_decl;
 
     for (u32 i = 0; i < trait_type_info.methods.size(); i++) {
         const TraitMethodInfo& trait_method = trait_type_info.methods[i];
-        if (trait_method.name != method_decl.name) continue;
+        if (trait_method.name != method_decl.name)
+            continue;
         implemented[i] = true;
 
         // Validate parameter count matches.
         if (method_decl.params.size() != trait_method.param_types.size()) {
             m_reporter.error_fmt(decl->loc, "method '{}' parameter count mismatch with trait '{}'",
-                     method_decl.name, trait_type_info.name);
+                                 method_decl.name, trait_type_info.name);
         }
 
         // Resolve the impl's param/return types.
@@ -606,42 +618,50 @@ void TraitSystem::validate_and_register_impl_method(const TraitImplGroup& group,
         for (const auto& param : method_decl.params) {
             param_types.push_back(m_context.resolve_type_expr(param.type));
         }
-        Type* return_type = method_decl.return_type ? m_context.resolve_type_expr(method_decl.return_type) : m_types.void_type();
+        Type* return_type = method_decl.return_type
+                                ? m_context.resolve_type_expr(method_decl.return_type)
+                                : m_types.void_type();
 
         // Validate parameter types match the trait signature (Self / trait
         // type-params concretized against this impl).
         if (method_decl.params.size() == trait_method.param_types.size()) {
             for (u32 p = 0; p < param_types.size(); p++) {
-                if (param_types[p]->is_error()) continue;
+                if (param_types[p]->is_error())
+                    continue;
                 Type* expected = concretize_trait_type(trait_method.param_types[p],
                                                        group.struct_type, group.trait_type_args);
                 if (param_types[p] != expected) {
                     auto got_str = m_checker.type_string(param_types[p]);
                     auto exp_str = m_checker.type_string(expected);
-                    m_reporter.error_fmt(decl->loc,
-                             "method '{}' parameter {} has type '{}' but trait '{}' expects '{}'",
-                             method_decl.name, p + 1, got_str.data(), trait_type_info.name, exp_str.data());
+                    m_reporter.error_fmt(
+                        decl->loc,
+                        "method '{}' parameter {} has type '{}' but trait '{}' expects '{}'",
+                        method_decl.name, p + 1, got_str.data(), trait_type_info.name,
+                        exp_str.data());
                 }
             }
         }
 
         // Validate return type matches the trait signature.
         if (!return_type->is_error()) {
-            Type* expected_ret = concretize_trait_type(trait_method.return_type,
-                                                       group.struct_type, group.trait_type_args);
+            Type* expected_ret = concretize_trait_type(trait_method.return_type, group.struct_type,
+                                                       group.trait_type_args);
             if (return_type != expected_ret) {
                 auto got_str = m_checker.type_string(return_type);
                 auto exp_str = m_checker.type_string(expected_ret);
-                m_reporter.error_fmt(decl->loc,
-                         "method '{}' return type is '{}' but trait '{}' expects '{}'",
-                         method_decl.name, got_str.data(), trait_type_info.name, exp_str.data());
+                m_reporter.error_fmt(
+                    decl->loc, "method '{}' return type is '{}' but trait '{}' expects '{}'",
+                    method_decl.name, got_str.data(), trait_type_info.name, exp_str.data());
             }
         }
 
         // Register as a regular method on the struct, unless one already exists.
         bool is_duplicate = false;
         for (const auto& method : struct_type_info.methods) {
-            if (method.name == method_decl.name) { is_duplicate = true; break; }
+            if (method.name == method_decl.name) {
+                is_duplicate = true;
+                break;
+            }
         }
         if (!is_duplicate) {
             MethodInfo method_info;
@@ -651,28 +671,30 @@ void TraitSystem::validate_and_register_impl_method(const TraitImplGroup& group,
             method_info.decl = decl;
             append_method(m_allocator, struct_type_info, method_info);
         }
-        return;  // matched a trait method
+        return; // matched a trait method
     }
 
-    m_reporter.error_fmt(decl->loc, "method '{}' is not defined in trait '{}'",
-             method_decl.name, trait_type_info.name);
+    m_reporter.error_fmt(decl->loc, "method '{}' is not defined in trait '{}'", method_decl.name,
+                         trait_type_info.name);
 }
 
-void TraitSystem::finalize_trait_impl(const TraitImplGroup& group, const Vector<bool>& implemented) {
+void TraitSystem::finalize_trait_impl(const TraitImplGroup& group,
+                                      const Vector<bool>& implemented) {
     TraitTypeInfo& trait_type_info = group.trait_type->trait_info;
     StructTypeInfo& struct_type_info = group.struct_type->struct_info;
 
     // Missing required methods; inject defaults where the trait provides one.
     for (u32 i = 0; i < trait_type_info.methods.size(); i++) {
-        if (implemented[i]) continue;
+        if (implemented[i])
+            continue;
         if (trait_type_info.methods[i].has_default) {
-            inject_default_method(group.struct_type, group.trait_type,
-                                  trait_type_info.methods[i], group.trait_type_args);
+            inject_default_method(group.struct_type, group.trait_type, trait_type_info.methods[i],
+                                  group.trait_type_args);
         } else {
-            m_reporter.error_fmt(group.impl_decls[0]->loc,
-                     "trait '{}' requires method '{}' which is not implemented for '{}'",
-                     trait_type_info.name, trait_type_info.methods[i].name,
-                     struct_type_info.name);
+            m_reporter.error_fmt(
+                group.impl_decls[0]->loc,
+                "trait '{}' requires method '{}' which is not implemented for '{}'",
+                trait_type_info.name, trait_type_info.methods[i].name, struct_type_info.name);
         }
     }
 
@@ -688,7 +710,8 @@ void TraitSystem::finalize_trait_impl(const TraitImplGroup& group, const Vector<
 void TraitSystem::validate_trait_implementations() {
     Vector<TraitImplGroup> groups = group_pending_trait_impls();
     for (auto& group : groups) {
-        if (!check_parent_trait_satisfied(group, groups)) continue;
+        if (!check_parent_trait_satisfied(group, groups))
+            continue;
 
         Vector<bool> implemented(group.trait_type->trait_info.methods.size(), false);
         for (Decl* decl : group.impl_decls) {
@@ -698,17 +721,21 @@ void TraitSystem::validate_trait_implementations() {
     }
 }
 
-Type* TraitSystem::concretize_trait_type(Type* abstract_type, Type* struct_type, Span<Type*> trait_type_args) {
-    if (abstract_type->is_self()) return struct_type;
+Type* TraitSystem::concretize_trait_type(Type* abstract_type, Type* struct_type,
+                                         Span<Type*> trait_type_args) {
+    if (abstract_type->is_self())
+        return struct_type;
     if (abstract_type->is_type_param() && trait_type_args.size() > 0) {
         u32 idx = abstract_type->type_param_info.index;
-        if (idx < trait_type_args.size()) return trait_type_args[idx];
+        if (idx < trait_type_args.size())
+            return trait_type_args[idx];
     }
     return abstract_type;
 }
 
 void TraitSystem::inject_default_method(Type* struct_type, Type* trait_type,
-                                              TraitMethodInfo& trait_method_info, Span<Type*> trait_type_args) {
+                                        TraitMethodInfo& trait_method_info,
+                                        Span<Type*> trait_type_args) {
     // Create a synthetic DeclMethod that targets the implementing struct
     // with a cloned body from the trait's default method
     Decl* trait_decl = trait_method_info.decl;
@@ -765,7 +792,8 @@ void TraitSystem::inject_default_method(Type* struct_type, Type* trait_type,
             cloned_params.push_back(p);
         }
         synth->method_decl.params = m_allocator.alloc_span(cloned_params);
-        synth->method_decl.return_type = m_type_env.generics().substitute_type_expr(trait_md.return_type, subst);
+        synth->method_decl.return_type =
+            m_type_env.generics().substitute_type_expr(trait_md.return_type, subst);
     }
 
     // Resolve concrete param types (Self -> struct_type, TypeParam -> concrete type)
@@ -774,7 +802,8 @@ void TraitSystem::inject_default_method(Type* struct_type, Type* trait_type,
     for (auto* param_type : trait_method_info.param_types) {
         param_types.push_back(concretize_trait_type(param_type, struct_type, trait_type_args));
     }
-    Type* return_type = concretize_trait_type(trait_method_info.return_type, struct_type, trait_type_args);
+    Type* return_type =
+        concretize_trait_type(trait_method_info.return_type, struct_type, trait_type_args);
 
     // Add MethodInfo to struct's method list
     MethodInfo method_info;
@@ -789,4 +818,4 @@ void TraitSystem::inject_default_method(Type* struct_type, Type* trait_type,
     m_synthetic_decls.push_back(synth);
 }
 
-}
+} // namespace rx

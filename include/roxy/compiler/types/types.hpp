@@ -1,11 +1,11 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
+#include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/span.hpp"
 #include "roxy/core/string.hpp"
 #include "roxy/core/string_view.hpp"
+#include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
-#include "roxy/core/bump_allocator.hpp"
 
 #include "roxy/core/tsl/robin_map.h"
 
@@ -21,16 +21,23 @@ struct EnumDecl;
 struct FunDecl;
 struct ConstructorDecl;
 struct DestructorDecl;
-enum class BinaryOp : u8;  // defined in ast.hpp; used by the primitive op tables
+enum class BinaryOp : u8; // defined in ast.hpp; used by the primitive op tables
 enum class UnaryOp : u8;
 
 enum class TypeKind : u8 {
     // Primitives
     Void,
     Bool,
-    I8, I16, I32, I64,
-    U8, U16, U32, U64,
-    F32, F64,
+    I8,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    U64,
+    F32,
+    F64,
     String,
 
     // Compound types
@@ -60,34 +67,34 @@ enum class TypeKind : u8 {
     FloatLiteral,
 
     // Exception handling
-    ExceptionRef,  // Opaque handle in catch-all blocks, only message() callable
+    ExceptionRef, // Opaque handle in catch-all blocks, only message() callable
 
     // Special types
-    Nil,    // Type of nil literal, assignable to reference types
-    Error,  // Sentinel for type errors, allows analysis to continue
+    Nil,   // Type of nil literal, assignable to reference types
+    Error, // Sentinel for type errors, allows analysis to continue
 };
 
 // Constructor information for struct types
 struct ConstructorInfo {
-    StringView name;               // empty for default constructor
+    StringView name; // empty for default constructor
     Span<Type*> param_types;
-    Decl* decl;                    // Points to the ConstructorDecl AST node
+    Decl* decl; // Points to the ConstructorDecl AST node
 };
 
 // Destructor information for struct types
 struct DestructorInfo {
-    StringView name;               // empty for default destructor
-    Span<Type*> param_types;       // Destructors can have params
-    Decl* decl;                    // Points to the DestructorDecl AST node
+    StringView name;         // empty for default destructor
+    Span<Type*> param_types; // Destructors can have params
+    Decl* decl;              // Points to the DestructorDecl AST node
 };
 
 // Method information for struct types
 struct MethodInfo {
     StringView name;
-    Span<Type*> param_types;       // NOT including implicit self
+    Span<Type*> param_types; // NOT including implicit self
     Type* return_type;
-    Decl* decl;                    // Points to the MethodDecl AST node
-    StringView native_name;        // Non-empty for native/builtin methods
+    Decl* decl;             // Points to the MethodDecl AST node
+    StringView native_name; // Non-empty for native/builtin methods
     // The declared return type carried the `borrowed` modifier: this method
     // hands out a *view* of the receiver's interior, not ownership of it
     // (`fun List<T>.index(idx: i32): borrowed T`). Native signatures only —
@@ -115,35 +122,35 @@ struct VariantFieldInfo {
     StringView name;
     Type* type;
     bool is_pub;
-    u32 slot_offset;    // Offset WITHIN the union (from union start)
+    u32 slot_offset; // Offset WITHIN the union (from union start)
     u32 slot_count;
 };
 
 // Variant info for tagged unions (one case in the when clause)
 struct VariantInfo {
-    StringView case_name;           // e.g., "Attack"
-    i64 discriminant_value;         // Enum value for this variant
-    Span<VariantFieldInfo> fields;  // Fields for this variant
-    u32 variant_slot_count;         // Total size of this variant in slots
+    StringView case_name;          // e.g., "Attack"
+    i64 discriminant_value;        // Enum value for this variant
+    Span<VariantFieldInfo> fields; // Fields for this variant
+    u32 variant_slot_count;        // Total size of this variant in slots
 };
 
 // When clause info for tagged unions
 struct WhenClauseInfo {
-    StringView discriminant_name;   // e.g., "type"
-    Type* discriminant_type;        // Enum type
-    u32 discriminant_slot_offset;   // Where discriminant is in struct
-    u32 union_slot_offset;          // Where union data starts
-    u32 union_slot_count;           // Max of all variant sizes
+    StringView discriminant_name; // e.g., "type"
+    Type* discriminant_type;      // Enum type
+    u32 discriminant_slot_offset; // Where discriminant is in struct
+    u32 union_slot_offset;        // Where union data starts
+    u32 union_slot_count;         // Max of all variant sizes
     Span<VariantInfo> variants;
 };
 
 // Trait method information
 struct TraitMethodInfo {
     StringView name;
-    Span<Type*> param_types;   // Self type entries use TypeKind::Self
-    Type* return_type;         // Self type entries use TypeKind::Self
-    Decl* decl;                // Points to the DeclMethod AST node
-    bool has_default;          // true if method has a body (default implementation)
+    Span<Type*> param_types; // Self type entries use TypeKind::Self
+    Type* return_type;       // Self type entries use TypeKind::Self
+    Decl* decl;              // Points to the DeclMethod AST node
+    bool has_default;        // true if method has a body (default implementation)
 };
 
 // Forward declaration
@@ -151,37 +158,38 @@ struct TypeParam;
 
 // Resolved trait bound on a type parameter
 struct TraitBound {
-    Type* trait;            // Resolved trait type
-    Span<Type*> type_args;  // Resolved type args (e.g., {i32} for Add<i32>). Empty for non-generic.
+    Type* trait;           // Resolved trait type
+    Span<Type*> type_args; // Resolved type args (e.g., {i32} for Add<i32>). Empty for non-generic.
 };
 
 // Record of a trait implementation on a struct (includes type args for generic traits)
 struct TraitImplRecord {
     Type* trait;
-    Span<Type*> type_args;  // Empty for non-generic traits
+    Span<Type*> type_args; // Empty for non-generic traits
 };
 
 // Type info for trait types
 struct TraitTypeInfo {
     StringView name;
-    Decl* decl;                        // Points to the DeclTrait AST node
-    Type* parent;                      // Parent trait type, nullptr if no inheritance
-    Span<TraitMethodInfo> methods;     // Trait methods (required and default)
-    Span<TypeParam> type_params;       // Generic type params: <T, U>
+    Decl* decl;                    // Points to the DeclTrait AST node
+    Type* parent;                  // Parent trait type, nullptr if no inheritance
+    Span<TraitMethodInfo> methods; // Trait methods (required and default)
+    Span<TypeParam> type_params;   // Generic type params: <T, U>
 };
 
 // Type info for struct types
 struct StructTypeInfo {
     StringView name;
-    StringView module_name;        // Module that defined this struct (for visibility checking)
-    Decl* decl;                    // Points to the StructDecl AST node
-    Type* parent;                  // Parent struct type, nullptr if no inheritance
-    Span<FieldInfo> fields;        // All fields including inherited
-    Span<ConstructorInfo> constructors;  // Constructors for this struct
-    Span<DestructorInfo> destructors;    // Destructors for this struct
-    Span<MethodInfo> methods;            // Methods for this struct
-    Span<WhenClauseInfo> when_clauses;   // Tagged union discriminants
-    Span<TraitImplRecord> implemented_traits;  // Trait implementations (with type args for generic traits)
+    StringView module_name;             // Module that defined this struct (for visibility checking)
+    Decl* decl;                         // Points to the StructDecl AST node
+    Type* parent;                       // Parent struct type, nullptr if no inheritance
+    Span<FieldInfo> fields;             // All fields including inherited
+    Span<ConstructorInfo> constructors; // Constructors for this struct
+    Span<DestructorInfo> destructors;   // Destructors for this struct
+    Span<MethodInfo> methods;           // Methods for this struct
+    Span<WhenClauseInfo> when_clauses;  // Tagged union discriminants
+    Span<TraitImplRecord>
+        implemented_traits; // Trait implementations (with type args for generic traits)
     // Arena capacities of the constructor/destructor/method tables above, for
     // the geometric growth in the append_* builders (types.cpp). Zero — or
     // stale after a direct span assignment (always <= the span size) — reads
@@ -189,9 +197,9 @@ struct StructTypeInfo {
     u32 constructors_capacity;
     u32 destructors_capacity;
     u32 methods_capacity;
-    u32 slot_count;                // Total u32 slots needed for this struct
-    bool members_resolved;         // Fields/layout resolved (resolve_struct_members ran, or
-                                   // the type is registry-built/synthesized and owns its layout)
+    u32 slot_count;        // Total u32 slots needed for this struct
+    bool members_resolved; // Fields/layout resolved (resolve_struct_members ran, or
+                           // the type is registry-built/synthesized and owns its layout)
 
     // Whether this struct is move-only — see derive_struct_move_only. Read by
     // `noncopyable()`; never set it directly.
@@ -213,8 +221,8 @@ struct StructTypeInfo {
     // Find a variant field by name in any when clause
     // Returns nullptr if not found, sets out_clause and out_variant if found
     const VariantFieldInfo* find_variant_field(StringView field_name,
-                                                const WhenClauseInfo** out_clause = nullptr,
-                                                const VariantInfo** out_variant = nullptr) const;
+                                               const WhenClauseInfo** out_clause = nullptr,
+                                               const VariantInfo** out_variant = nullptr) const;
 };
 
 // One variant of an enum. Variants are resolved through the enum type's own
@@ -229,10 +237,10 @@ struct EnumVariantInfo {
 // Type info for enum types
 struct EnumTypeInfo {
     StringView name;
-    Decl* decl;           // Points to the EnumDecl AST node
-    Type* underlying;     // Underlying integer type (defaults to i32)
-    Span<MethodInfo> methods;  // Builtin methods (eq, ne)
-    Span<EnumVariantInfo> variants;  // Populated by resolve_enum_members
+    Decl* decl;                     // Points to the EnumDecl AST node
+    Type* underlying;               // Underlying integer type (defaults to i32)
+    Span<MethodInfo> methods;       // Builtin methods (eq, ne)
+    Span<EnumVariantInfo> variants; // Populated by resolve_enum_members
 
     // Find a variant by name, returns nullptr if not found
     const EnumVariantInfo* find_variant(StringView variant_name) const;
@@ -241,26 +249,26 @@ struct EnumTypeInfo {
 // Type info for list types
 struct ListTypeInfo {
     Type* element_type;
-    Span<MethodInfo> methods;          // Builtin methods with concrete types
-    StringView alloc_native_name;      // "list_alloc" — set by SemanticAnalyzer
-    StringView copy_native_name;       // "list_copy" — deep-copy for value parameter passing
+    Span<MethodInfo> methods;     // Builtin methods with concrete types
+    StringView alloc_native_name; // "list_alloc" — set by SemanticAnalyzer
+    StringView copy_native_name;  // "list_copy" — deep-copy for value parameter passing
 };
 
 // Type info for map types
 struct MapTypeInfo {
     Type* key_type;
     Type* value_type;
-    Span<MethodInfo> methods;          // Builtin methods with concrete types
-    StringView alloc_native_name;      // "map_alloc" — set by SemanticAnalyzer
-    StringView copy_native_name;       // "map_copy" — deep-copy for value parameter passing
+    Span<MethodInfo> methods;     // Builtin methods with concrete types
+    StringView alloc_native_name; // "map_alloc" — set by SemanticAnalyzer
+    StringView copy_native_name;  // "map_copy" — deep-copy for value parameter passing
 };
 
 // Type info for coroutine types (Coro<T>)
 struct CoroutineTypeInfo {
-    Type* yield_type;                  // T in Coro<T>
-    Type* generated_struct_type;       // Synthetic struct holding coroutine state
-    Span<MethodInfo> methods;          // resume() and done()
-    StringView func_name;             // Name of the coroutine function (for method mangling)
+    Type* yield_type;            // T in Coro<T>
+    Type* generated_struct_type; // Synthetic struct holding coroutine state
+    Span<MethodInfo> methods;    // resume() and done()
+    StringView func_name;        // Name of the coroutine function (for method mangling)
 };
 
 // Type info for function types
@@ -276,8 +284,8 @@ struct RefTypeInfo {
 
 // Type info for generic type parameters (T, U, etc.)
 struct TypeParamInfo {
-    StringView name;    // "T", "U", etc.
-    u32 index;          // Position in type param list
+    StringView name; // "T", "U", etc.
+    u32 index;       // Position in type param list
 };
 
 // The main Type structure - a tagged union
@@ -297,124 +305,74 @@ struct Type {
     };
 
     // Default constructor - initializes to error type with zeroed union
-    Type() : kind(TypeKind::Error) {
-        memset(&struct_info, 0, sizeof(struct_info));
-    }
+    Type() : kind(TypeKind::Error) { memset(&struct_info, 0, sizeof(struct_info)); }
     ~Type() {}
 
     // Helper methods
-    bool is_primitive() const {
-        return kind >= TypeKind::Void && kind <= TypeKind::String;
-    }
+    bool is_primitive() const { return kind >= TypeKind::Void && kind <= TypeKind::String; }
 
-    bool is_integer() const {
-        return kind >= TypeKind::I8 && kind <= TypeKind::U64;
-    }
+    bool is_integer() const { return kind >= TypeKind::I8 && kind <= TypeKind::U64; }
 
-    bool is_signed_integer() const {
-        return kind >= TypeKind::I8 && kind <= TypeKind::I64;
-    }
+    bool is_signed_integer() const { return kind >= TypeKind::I8 && kind <= TypeKind::I64; }
 
-    bool is_unsigned_integer() const {
-        return kind >= TypeKind::U8 && kind <= TypeKind::U64;
-    }
+    bool is_unsigned_integer() const { return kind >= TypeKind::U8 && kind <= TypeKind::U64; }
 
     // Integer types narrower than 32 bits. Under Java/C#-style numeric promotion
     // these have no native arithmetic — they widen to i32 for every operation.
     // (u32/u64 are deliberately excluded: their values can exceed 2^31, so they
     // need genuine unsigned ops rather than promotion.)
     bool is_narrow_integer() const {
-        return kind == TypeKind::I8 || kind == TypeKind::I16 ||
-               kind == TypeKind::U8 || kind == TypeKind::U16;
+        return kind == TypeKind::I8 || kind == TypeKind::I16 || kind == TypeKind::U8 ||
+               kind == TypeKind::U16;
     }
 
-    bool is_float() const {
-        return kind == TypeKind::F32 || kind == TypeKind::F64;
-    }
+    bool is_float() const { return kind == TypeKind::F32 || kind == TypeKind::F64; }
 
-    bool is_numeric() const {
-        return is_integer() || is_float();
-    }
+    bool is_numeric() const { return is_integer() || is_float(); }
 
     bool is_reference() const {
         return kind == TypeKind::Uniq || kind == TypeKind::Ref || kind == TypeKind::Weak;
     }
 
-    bool is_error() const {
-        return kind == TypeKind::Error;
-    }
+    bool is_error() const { return kind == TypeKind::Error; }
 
-    bool is_void() const {
-        return kind == TypeKind::Void;
-    }
+    bool is_void() const { return kind == TypeKind::Void; }
 
-    bool is_bool() const {
-        return kind == TypeKind::Bool;
-    }
+    bool is_bool() const { return kind == TypeKind::Bool; }
 
-    bool is_struct() const {
-        return kind == TypeKind::Struct;
-    }
+    bool is_struct() const { return kind == TypeKind::Struct; }
 
-    bool is_enum() const {
-        return kind == TypeKind::Enum;
-    }
+    bool is_enum() const { return kind == TypeKind::Enum; }
 
-    bool is_trait() const {
-        return kind == TypeKind::Trait;
-    }
+    bool is_trait() const { return kind == TypeKind::Trait; }
 
-    bool is_list() const {
-        return kind == TypeKind::List;
-    }
+    bool is_list() const { return kind == TypeKind::List; }
 
-    bool is_map() const {
-        return kind == TypeKind::Map;
-    }
+    bool is_map() const { return kind == TypeKind::Map; }
 
     // Builtin container types (List, Map) — types that own a collection of elements
     // requiring element-by-element cleanup via native function calls.
-    bool is_container() const {
-        return kind == TypeKind::List || kind == TypeKind::Map;
-    }
+    bool is_container() const { return kind == TypeKind::List || kind == TypeKind::Map; }
 
-    bool is_coroutine() const {
-        return kind == TypeKind::Coroutine;
-    }
+    bool is_coroutine() const { return kind == TypeKind::Coroutine; }
 
-    bool is_function() const {
-        return kind == TypeKind::Function;
-    }
+    bool is_function() const { return kind == TypeKind::Function; }
 
-    bool is_nil() const {
-        return kind == TypeKind::Nil;
-    }
+    bool is_nil() const { return kind == TypeKind::Nil; }
 
-    bool is_type_param() const {
-        return kind == TypeKind::TypeParam;
-    }
+    bool is_type_param() const { return kind == TypeKind::TypeParam; }
 
-    bool is_self() const {
-        return kind == TypeKind::Self;
-    }
+    bool is_self() const { return kind == TypeKind::Self; }
 
-    bool is_int_literal() const {
-        return kind == TypeKind::IntLiteral;
-    }
+    bool is_int_literal() const { return kind == TypeKind::IntLiteral; }
 
-    bool is_float_literal() const {
-        return kind == TypeKind::FloatLiteral;
-    }
+    bool is_float_literal() const { return kind == TypeKind::FloatLiteral; }
 
     // Either polymorphic literal kind — an unsuffixed literal that hasn't been
     // given a concrete type by its context yet.
-    bool is_numeric_literal() const {
-        return is_int_literal() || is_float_literal();
-    }
+    bool is_numeric_literal() const { return is_int_literal() || is_float_literal(); }
 
-    bool is_exception_ref() const {
-        return kind == TypeKind::ExceptionRef;
-    }
+    bool is_exception_ref() const { return kind == TypeKind::ExceptionRef; }
 
     // Returns true for MOVE-ONLY types — those that cannot be implicitly
     // duplicated, so binding one moves its source. This includes:
@@ -432,9 +390,12 @@ struct Type {
     // when its drop has no inverse (lifetimes.md "The value lifecycle"), which is
     // a property of what it *holds*, not of whether it has a destructor.
     bool noncopyable() const {
-        if (kind == TypeKind::Uniq) return true;
-        if (kind == TypeKind::Coroutine) return true;
-        if (kind == TypeKind::Function) return true;
+        if (kind == TypeKind::Uniq)
+            return true;
+        if (kind == TypeKind::Coroutine)
+            return true;
+        if (kind == TypeKind::Function)
+            return true;
         if (kind == TypeKind::Struct) {
             assert(struct_info.move_only_derived &&
                    "noncopyable(): is_move_only read before derive_struct_move_only ran");
@@ -448,8 +409,10 @@ struct Type {
         // Containers own a heap buffer, so they are move-only (like `uniq`): a
         // List/Map is always noncopyable. An explicit `.copy()` deep-copies when
         // a copy is genuinely wanted. (lifetimes.md "Applying the model" / overview.md.)
-        if (kind == TypeKind::List) return true;
-        if (kind == TypeKind::Map) return true;
+        if (kind == TypeKind::List)
+            return true;
+        if (kind == TypeKind::Map)
+            return true;
         return false;
     }
 
@@ -637,8 +600,8 @@ private:
     // (is_primitive() is [Void, String]); the op-count constants are asserted
     // against the enums in build_primitive_operator_tables().
     static constexpr u32 PRIM_OP_KIND_COUNT = static_cast<u32>(TypeKind::String) + 1;
-    static constexpr u32 BINARY_OP_COUNT = 18;  // BinaryOp::Add .. Shr
-    static constexpr u32 UNARY_OP_COUNT = 4;    // UnaryOp::Negate .. Ref
+    static constexpr u32 BINARY_OP_COUNT = 18; // BinaryOp::Add .. Shr
+    static constexpr u32 UNARY_OP_COUNT = 4;   // UnaryOp::Negate .. Ref
     const MethodInfo* m_primitive_binary_ops[PRIM_OP_KIND_COUNT][BINARY_OP_COUNT] = {};
     const MethodInfo* m_primitive_unary_ops[PRIM_OP_KIND_COUNT][UNARY_OP_COUNT] = {};
 };
@@ -652,21 +615,21 @@ private:
 // single-level decision: the recursion into element/field types stays in each
 // backend's lowering.
 enum class DropKind {
-    None,        // no cleanup (free only, if free_obj)
-    CallDtor,    // call the struct/coro `$$delete` (struct_type)
-    WalkFields,  // walk struct_type's owned fields in place (VM); C calls its dtor
-    List,        // List: clean elem_type members, free buffer + header
-    Map,         // Map: clean key_type/elem_type members, free buffers + header
-    Closure,     // type-erased closure env (dispatch by call idx)
-    RefDec,      // release a counted borrow (ref_dec the pointee; never free it)
-    StrRelease,  // release an owned string (owner--; free at zero; no-op if immortal)
+    None,       // no cleanup (free only, if free_obj)
+    CallDtor,   // call the struct/coro `$$delete` (struct_type)
+    WalkFields, // walk struct_type's owned fields in place (VM); C calls its dtor
+    List,       // List: clean elem_type members, free buffer + header
+    Map,        // Map: clean key_type/elem_type members, free buffers + header
+    Closure,    // type-erased closure env (dispatch by call idx)
+    RefDec,     // release a counted borrow (ref_dec the pointee; never free it)
+    StrRelease, // release an owned string (owner--; free at zero; no-op if immortal)
 };
 struct DropPlan {
     DropKind kind = DropKind::None;
-    bool free_obj = false;     // is `type` a heap pointer to free after cleanup
-    Type* struct_type = nullptr;  // CallDtor: dtor target; WalkFields: struct to walk
-    Type* elem_type = nullptr;    // List element / Map value
-    Type* key_type = nullptr;     // Map key
+    bool free_obj = false;       // is `type` a heap pointer to free after cleanup
+    Type* struct_type = nullptr; // CallDtor: dtor target; WalkFields: struct to walk
+    Type* elem_type = nullptr;   // List element / Map value
+    Type* key_type = nullptr;    // Map key
 };
 DropPlan compute_drop_plan(Type* type);
 
@@ -689,14 +652,14 @@ DropPlan compute_drop_plan(Type* type);
 // Consumed by `emit_value_retain` / `emit_struct_clone_glue` at every
 // duplication site, and by the `member_needs_retain` gate below.
 enum class RetainKind {
-    None,        // trivial: duplication is a plain memcpy
-    StrRetain,   // string: owner++ (no-op on an immortal literal)
-    RefInc,      // ref: another counted borrow
-    WalkFields,  // copyable struct: retain each field that needs it
+    None,       // trivial: duplication is a plain memcpy
+    StrRetain,  // string: owner++ (no-op on an immortal literal)
+    RefInc,     // ref: another counted borrow
+    WalkFields, // copyable struct: retain each field that needs it
 };
 struct RetainPlan {
     RetainKind kind = RetainKind::None;
-    Type* struct_type = nullptr;  // WalkFields: the struct whose fields to walk
+    Type* struct_type = nullptr; // WalkFields: the struct whose fields to walk
 };
 RetainPlan compute_retain_plan(Type* type);
 
@@ -736,7 +699,8 @@ RetainPlan compute_retain_plan(Type* type);
 // the map value store — all keyed on *this* predicate, so the acquiring and
 // releasing halves cannot drift apart.
 inline bool member_needs_drop(Type* t) {
-    if (!t) return false;
+    if (!t)
+        return false;
     DropPlan plan = compute_drop_plan(t);
     return plan.kind != DropKind::None || plan.free_obj;
 }
@@ -779,9 +743,11 @@ inline bool map_key_needs_drop(Type* key_type) {
 // call here" test used by sema's synthetic-destructor pass, the IR builder,
 // coroutine lowering, and bytecode lowering.
 inline bool struct_has_default_dtor(const Type* type) {
-    if (!type || !type->is_struct()) return false;
+    if (!type || !type->is_struct())
+        return false;
     for (const auto& dtor : type->struct_info.destructors) {
-        if (dtor.name.empty()) return true;
+        if (dtor.name.empty())
+            return true;
     }
     return false;
 }
@@ -838,7 +804,8 @@ void add_synthetic_default_dtor(BumpAllocator& allocator, StructTypeInfo& info);
 
 // Look up a method in a struct's type hierarchy (walks inheritance chain)
 // Returns the MethodInfo and optionally sets found_in_type to where the method was defined
-const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name, Type** found_in_type = nullptr);
+const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name,
+                                             Type** found_in_type = nullptr);
 
 // Check if 'child' is a subtype of 'parent' (walks inheritance chain)
 bool is_subtype_of(Type* child, Type* parent);
@@ -852,4 +819,4 @@ const MethodInfo* lookup_map_method(const MapTypeInfo& info, StringView name);
 // Look up a method in a coroutine type's builtin methods
 const MethodInfo* lookup_coro_method(const CoroutineTypeInfo& info, StringView name);
 
-}
+} // namespace rx

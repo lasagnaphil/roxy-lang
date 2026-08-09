@@ -1,5 +1,5 @@
 #include "roxy/compiler/types/types.hpp"
-#include "roxy/compiler/support/operator_traits.hpp"  // binary/unary_op_to_trait_method (§3.5)
+#include "roxy/compiler/support/operator_traits.hpp" // binary/unary_op_to_trait_method (§3.5)
 
 #include "roxy/core/string.hpp"
 
@@ -17,54 +17,62 @@ namespace rx {
 
 bool Type::needs_drop() const {
     switch (kind) {
-        case TypeKind::String:      // reference-counted → release (free at zero)
-        case TypeKind::Uniq:        // owns a heap object → run dtor + free
-        case TypeKind::Ref:         // counted borrow → ref_dec the pointee
-        case TypeKind::List:        // owns a heap buffer (+ maybe owning elements)
+        case TypeKind::String: // reference-counted → release (free at zero)
+        case TypeKind::Uniq:   // owns a heap object → run dtor + free
+        case TypeKind::Ref:    // counted borrow → ref_dec the pointee
+        case TypeKind::List:   // owns a heap buffer (+ maybe owning elements)
         case TypeKind::Map:
-        case TypeKind::Coroutine:   // owns a heap state struct
-        case TypeKind::Function:    // closure: owns a heap env
+        case TypeKind::Coroutine: // owns a heap state struct
+        case TypeKind::Function:  // closure: owns a heap env
             return true;
         case TypeKind::Struct: {
             // A struct with a (synthesized or user) destructor always drops.
-            if (noncopyable()) return true;
+            if (noncopyable())
+                return true;
             // An otherwise-copyable struct still drops iff it transitively holds a
             // `ref` (its only count-bearing copyable member).
             for (const auto& field : struct_info.fields) {
-                if (field.type && field.type->needs_drop()) return true;
+                if (field.type && field.type->needs_drop())
+                    return true;
             }
             for (const auto& clause : struct_info.when_clauses) {
                 for (const auto& variant : clause.variants) {
                     for (const auto& vf : variant.fields) {
-                        if (vf.type && vf.type->needs_drop()) return true;
+                        if (vf.type && vf.type->needs_drop())
+                            return true;
                     }
                 }
             }
             return false;
         }
         default:
-            return false;  // primitives, string, weak, enum, …
+            return false; // primitives, string, weak, enum, …
     }
 }
 
 bool Type::needs_retain() const {
-    if (kind == TypeKind::Ref) return true;       // a copy of a borrow is another borrow
-    if (kind == TypeKind::String) return true;    // a copy of a string retains (finding 9b)
-    if (!is_copy()) return false;                 // move-only: no implicit-copy path
+    if (kind == TypeKind::Ref)
+        return true; // a copy of a borrow is another borrow
+    if (kind == TypeKind::String)
+        return true; // a copy of a string retains (finding 9b)
+    if (!is_copy())
+        return false; // move-only: no implicit-copy path
     if (kind == TypeKind::Struct) {
         for (const auto& field : struct_info.fields) {
-            if (field.type && field.type->needs_retain()) return true;
+            if (field.type && field.type->needs_retain())
+                return true;
         }
         for (const auto& clause : struct_info.when_clauses) {
             for (const auto& variant : clause.variants) {
                 for (const auto& vf : variant.fields) {
-                    if (vf.type && vf.type->needs_retain()) return true;
+                    if (vf.type && vf.type->needs_retain())
+                        return true;
                 }
             }
         }
         return false;
     }
-    return false;  // primitives, string, weak, enum, …
+    return false; // primitives, string, weak, enum, …
 }
 
 // === Unified drop derivation (docs/internals/lifetimes.md "Value lifecycle") ===
@@ -74,12 +82,15 @@ bool Type::needs_retain() const {
 // and with a *synthetic* (compiler-generated, body-less) default destructor (a
 // user default destructor has a body that must run, so it stays CallDtor).
 static bool drop_struct_walk_eligible(Type* s) {
-    if (!s || !s->is_struct()) return false;
-    if (s->struct_info.parent != nullptr) return false;
+    if (!s || !s->is_struct())
+        return false;
+    if (s->struct_info.parent != nullptr)
+        return false;
     bool synthetic_default = false;
     for (const auto& dtor : s->struct_info.destructors) {
         if (dtor.name.empty()) {
-            if (dtor.decl != nullptr) return false;  // user-defined default destructor
+            if (dtor.decl != nullptr)
+                return false; // user-defined default destructor
             synthetic_default = true;
         }
     }
@@ -88,21 +99,24 @@ static bool drop_struct_walk_eligible(Type* s) {
 
 DropPlan compute_drop_plan(Type* type) {
     DropPlan p;
-    if (!type) return p;
+    if (!type)
+        return p;
     switch (type->kind) {
         case TypeKind::Uniq: {
-            p.free_obj = true;  // owns a heap object
+            p.free_obj = true; // owns a heap object
             Type* pointee = type->ref_info.inner_type;
             if (drop_struct_walk_eligible(pointee)) {
-                p.kind = DropKind::WalkFields; p.struct_type = pointee;
+                p.kind = DropKind::WalkFields;
+                p.struct_type = pointee;
             } else if (struct_has_default_dtor(pointee)) {
-                p.kind = DropKind::CallDtor; p.struct_type = pointee;
+                p.kind = DropKind::CallDtor;
+                p.struct_type = pointee;
             }
             // else: uniq of a primitive / dtor-less value — just free.
             break;
         }
         case TypeKind::Ref:
-            p.kind = DropKind::RefDec;  // counted borrow, never frees the pointee
+            p.kind = DropKind::RefDec; // counted borrow, never frees the pointee
             break;
         case TypeKind::String:
             // Reference-counted string: release (owner--; free at zero). The
@@ -111,25 +125,29 @@ DropPlan compute_drop_plan(Type* type) {
             p.kind = DropKind::StrRelease;
             break;
         case TypeKind::List:
-            p.kind = DropKind::List; p.free_obj = true;
+            p.kind = DropKind::List;
+            p.free_obj = true;
             p.elem_type = type->list_info.element_type;
             break;
         case TypeKind::Map:
-            p.kind = DropKind::Map; p.free_obj = true;
+            p.kind = DropKind::Map;
+            p.free_obj = true;
             p.key_type = type->map_info.key_type;
             p.elem_type = type->map_info.value_type;
             break;
         case TypeKind::Function:
-            p.kind = DropKind::Closure; p.free_obj = true;
+            p.kind = DropKind::Closure;
+            p.free_obj = true;
             break;
         case TypeKind::Coroutine: {
-            p.free_obj = true;  // heap state struct
+            p.free_obj = true; // heap state struct
             Type* coro_struct = type->coro_info.generated_struct_type;
             if (coro_struct) {
                 // Known coroutine value (per-function type): its concrete state
                 // struct — hence destructor — is statically known, so call it.
                 if (struct_has_default_dtor(coro_struct)) {
-                    p.kind = DropKind::CallDtor; p.struct_type = coro_struct;
+                    p.kind = DropKind::CallDtor;
+                    p.struct_type = coro_struct;
                 }
             } else {
                 // Erased Coro<T> (interned generic type — from an annotation or a
@@ -149,20 +167,23 @@ DropPlan compute_drop_plan(Type* type) {
             // members has a synthetic destructor that releases them, and gating
             // this on move-only-ness is what would skip it.
             if (drop_struct_walk_eligible(type)) {
-                p.kind = DropKind::WalkFields; p.struct_type = type;
+                p.kind = DropKind::WalkFields;
+                p.struct_type = type;
             } else if (struct_has_default_dtor(type)) {
-                p.kind = DropKind::CallDtor; p.struct_type = type;
+                p.kind = DropKind::CallDtor;
+                p.struct_type = type;
             }
             break;
         default:
-            break;  // primitives, string, weak, enum, … — nothing to drop
+            break; // primitives, string, weak, enum, … — nothing to drop
     }
     return p;
 }
 
 RetainPlan compute_retain_plan(Type* type) {
     RetainPlan p;
-    if (!type) return p;
+    if (!type)
+        return p;
     switch (type->kind) {
         case TypeKind::String:
             // Reference-counted: a second location needs its own owner count.
@@ -175,14 +196,16 @@ RetainPlan compute_retain_plan(Type* type) {
         case TypeKind::Struct: {
             // Move-only structs are never implicitly duplicated, so they have no
             // retain — their `.copy()` is a separate, explicit deep copy.
-            if (type->noncopyable()) break;
+            if (type->noncopyable())
+                break;
             // A copyable struct retains iff any field does. Non-recursive at
             // this level for the same reason compute_drop_plan is: WalkFields
             // hands the recursion to the emitter, which walks fields and
             // consults the plan again per field.
             for (const auto& field : type->struct_info.fields) {
                 if (field.type && compute_retain_plan(field.type).kind != RetainKind::None) {
-                    p.kind = RetainKind::WalkFields; p.struct_type = type;
+                    p.kind = RetainKind::WalkFields;
+                    p.struct_type = type;
                     return p;
                 }
             }
@@ -191,7 +214,8 @@ RetainPlan compute_retain_plan(Type* type) {
                     for (const auto& variant_field : variant.fields) {
                         if (variant_field.type &&
                             compute_retain_plan(variant_field.type).kind != RetainKind::None) {
-                            p.kind = RetainKind::WalkFields; p.struct_type = type;
+                            p.kind = RetainKind::WalkFields;
+                            p.struct_type = type;
                             return p;
                         }
                     }
@@ -210,7 +234,8 @@ RetainPlan compute_retain_plan(Type* type) {
 
 // Hash function for type interning
 u64 TypeHash::operator()(const Type* t) const {
-    if (!t) return 0;
+    if (!t)
+        return 0;
 
     u64 hash = static_cast<u64>(t->kind);
 
@@ -269,9 +294,12 @@ u64 TypeHash::operator()(const Type* t) const {
 
 // Equality function for type interning
 bool TypeEqual::operator()(const Type* a, const Type* b) const {
-    if (a == b) return true;
-    if (!a || !b) return false;
-    if (a->kind != b->kind) return false;
+    if (a == b)
+        return true;
+    if (!a || !b)
+        return false;
+    if (a->kind != b->kind)
+        return false;
 
     switch (a->kind) {
         case TypeKind::List:
@@ -285,10 +313,13 @@ bool TypeEqual::operator()(const Type* a, const Type* b) const {
             return a->coro_info.yield_type == b->coro_info.yield_type;
 
         case TypeKind::Function: {
-            if (a->func_info.return_type != b->func_info.return_type) return false;
-            if (a->func_info.param_types.size() != b->func_info.param_types.size()) return false;
+            if (a->func_info.return_type != b->func_info.return_type)
+                return false;
+            if (a->func_info.param_types.size() != b->func_info.param_types.size())
+                return false;
             for (u32 i = 0; i < a->func_info.param_types.size(); i++) {
-                if (a->func_info.param_types[i] != b->func_info.param_types[i]) return false;
+                if (a->func_info.param_types[i] != b->func_info.param_types[i])
+                    return false;
             }
             return true;
         }
@@ -314,9 +345,7 @@ bool TypeEqual::operator()(const Type* a, const Type* b) const {
     }
 }
 
-TypeCache::TypeCache(BumpAllocator& allocator)
-    : m_allocator(allocator)
-{
+TypeCache::TypeCache(BumpAllocator& allocator) : m_allocator(allocator) {
     // Create primitive type singletons
     m_void = create_primitive(TypeKind::Void);
     m_bool = create_primitive(TypeKind::Bool);
@@ -395,7 +424,7 @@ Type* TypeCache::coroutine_type_for_func(Type* yield_type, StringView func_name)
     type->coro_info.generated_struct_type = nullptr;
     type->coro_info.methods = Span<MethodInfo>();
     type->coro_info.func_name = func_name;
-    return type;  // Not interned — unique per coroutine function
+    return type; // Not interned — unique per coroutine function
 }
 
 Type* TypeCache::function_type(Span<Type*> param_types, Type* return_type) {
@@ -436,7 +465,8 @@ Type* TypeCache::weak_type(Type* inner_type) {
 }
 
 Type* TypeCache::borrowed(Type* inner_type) {
-    if (!inner_type || inner_type->is_error()) return inner_type;
+    if (!inner_type || inner_type->is_error())
+        return inner_type;
     // The one demotion the prototype performs: an owning heap reference becomes a
     // borrow of its pointee. This is the case that matters for `List<uniq T>` /
     // `Map<K, uniq V>` indexing, where it turns a move-out into a plain ref→uniq
@@ -491,7 +521,8 @@ Type* TypeCache::enum_type(StringView name, Decl* decl, Type* underlying) {
 
 const EnumVariantInfo* EnumTypeInfo::find_variant(StringView variant_name) const {
     for (const auto& variant : variants) {
-        if (variant.name == variant_name) return &variant;
+        if (variant.name == variant_name)
+            return &variant;
     }
     return nullptr;
 }
@@ -516,22 +547,34 @@ Type* TypeCache::type_param(StringView name, u32 index) {
 }
 
 Type* TypeCache::primitive_by_name(StringView name) {
-    if (name == "void") return m_void;
-    if (name == "bool") return m_bool;
-    if (name == "i8") return m_i8;
-    if (name == "i16") return m_i16;
-    if (name == "i32") return m_i32;
-    if (name == "i64") return m_i64;
-    if (name == "u8") return m_u8;
-    if (name == "u16") return m_u16;
-    if (name == "u32") return m_u32;
-    if (name == "u64") return m_u64;
-    if (name == "f32") return m_f32;
-    if (name == "f64") return m_f64;
-    if (name == "string") return m_string;
+    if (name == "void")
+        return m_void;
+    if (name == "bool")
+        return m_bool;
+    if (name == "i8")
+        return m_i8;
+    if (name == "i16")
+        return m_i16;
+    if (name == "i32")
+        return m_i32;
+    if (name == "i64")
+        return m_i64;
+    if (name == "u8")
+        return m_u8;
+    if (name == "u16")
+        return m_u16;
+    if (name == "u32")
+        return m_u32;
+    if (name == "u64")
+        return m_u64;
+    if (name == "f32")
+        return m_f32;
+    if (name == "f64")
+        return m_f64;
+    if (name == "string")
+        return m_string;
     return nullptr;
 }
-
 
 const FieldInfo* StructTypeInfo::find_field(StringView field_name) const {
     for (const auto& field : fields) {
@@ -543,14 +586,16 @@ const FieldInfo* StructTypeInfo::find_field(StringView field_name) const {
 }
 
 const VariantFieldInfo* StructTypeInfo::find_variant_field(StringView field_name,
-                                                            const WhenClauseInfo** out_clause,
-                                                            const VariantInfo** out_variant) const {
+                                                           const WhenClauseInfo** out_clause,
+                                                           const VariantInfo** out_variant) const {
     for (const auto& clause : when_clauses) {
         for (const auto& variant : clause.variants) {
             for (const auto& field : variant.fields) {
                 if (field.name == field_name) {
-                    if (out_clause) *out_clause = &clause;
-                    if (out_variant) *out_variant = &variant;
+                    if (out_clause)
+                        *out_clause = &clause;
+                    if (out_variant)
+                        *out_variant = &variant;
                     return &field;
                 }
             }
@@ -569,9 +614,11 @@ void TypeCache::register_primitive_trait(TypeKind kind, Type* trait) {
 
 const MethodInfo* TypeCache::lookup_primitive_method(TypeKind kind, StringView name) const {
     auto it = m_primitive_methods.find(static_cast<u8>(kind));
-    if (it == m_primitive_methods.end()) return nullptr;
+    if (it == m_primitive_methods.end())
+        return nullptr;
     for (const auto& method : it->second) {
-        if (method.name == name) return &method;
+        if (method.name == name)
+            return &method;
     }
     return nullptr;
 }
@@ -603,21 +650,25 @@ void TypeCache::build_primitive_operator_tables() {
 
 const MethodInfo* TypeCache::lookup_primitive_binary_op(TypeKind kind, BinaryOp op) const {
     u32 k = static_cast<u8>(kind);
-    if (k >= PRIM_OP_KIND_COUNT) return nullptr;
+    if (k >= PRIM_OP_KIND_COUNT)
+        return nullptr;
     return m_primitive_binary_ops[k][static_cast<u8>(op)];
 }
 
 const MethodInfo* TypeCache::lookup_primitive_unary_op(TypeKind kind, UnaryOp op) const {
     u32 k = static_cast<u8>(kind);
-    if (k >= PRIM_OP_KIND_COUNT) return nullptr;
+    if (k >= PRIM_OP_KIND_COUNT)
+        return nullptr;
     return m_primitive_unary_ops[k][static_cast<u8>(op)];
 }
 
 bool TypeCache::primitive_implements_trait(TypeKind kind, Type* trait) const {
     auto it = m_primitive_traits.find(static_cast<u8>(kind));
-    if (it == m_primitive_traits.end()) return false;
+    if (it == m_primitive_traits.end())
+        return false;
     for (auto* t : it->second) {
-        if (t == trait) return true;
+        if (t == trait)
+            return true;
     }
     return false;
 }
@@ -640,7 +691,8 @@ const MethodInfo* TypeCache::lookup_method(Type* type, StringView name, Type** f
     }
     if (type->is_enum()) {
         for (const auto& method : type->enum_info.methods) {
-            if (method.name == name) return &method;
+            if (method.name == name)
+                return &method;
         }
     }
     return nullptr;
@@ -650,7 +702,8 @@ bool TypeCache::implements_trait(Type* type, Type* trait) const {
     if (type->is_struct()) {
         StructTypeInfo& struct_type_info = type->struct_info;
         for (const auto& impl : struct_type_info.implemented_traits) {
-            if (impl.trait == trait) return true;
+            if (impl.trait == trait)
+                return true;
         }
         return false;
     }
@@ -668,13 +721,13 @@ bool TypeCache::implements_trait(Type* type, Type* trait) const {
     // and generic bound checks are unaffected for other traits.
     if (trait && trait == m_printable_trait) {
         if (type->is_list()) {
-            return type->list_info.element_type
-                && implements_trait(type->list_info.element_type, trait);
+            return type->list_info.element_type &&
+                   implements_trait(type->list_info.element_type, trait);
         }
         if (type->is_map()) {
-            return type->map_info.key_type && type->map_info.value_type
-                && implements_trait(type->map_info.key_type, trait)
-                && implements_trait(type->map_info.value_type, trait);
+            return type->map_info.key_type && type->map_info.value_type &&
+                   implements_trait(type->map_info.key_type, trait) &&
+                   implements_trait(type->map_info.value_type, trait);
         }
     }
     return false;
@@ -689,9 +742,11 @@ bool TypeCache::implements_trait(Type* type, Type* trait, Span<Type*> type_args)
     if (type->is_struct()) {
         StructTypeInfo& struct_type_info = type->struct_info;
         for (const auto& impl : struct_type_info.implemented_traits) {
-            if (impl.trait != trait) continue;
+            if (impl.trait != trait)
+                continue;
             // Check type args match element-wise
-            if (impl.type_args.size() != type_args.size()) continue;
+            if (impl.type_args.size() != type_args.size())
+                continue;
             bool match = true;
             for (u32 i = 0; i < type_args.size(); i++) {
                 if (impl.type_args[i] != type_args[i]) {
@@ -699,7 +754,8 @@ bool TypeCache::implements_trait(Type* type, Type* trait, Span<Type*> type_args)
                     break;
                 }
             }
-            if (match) return true;
+            if (match)
+                return true;
         }
         return false;
     }
@@ -713,13 +769,15 @@ bool TypeCache::implements_trait(Type* type, Type* trait, Span<Type*> type_args)
     return false;
 }
 
-const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name, Type** found_in_type) {
+const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name,
+                                             Type** found_in_type) {
     Type* current = struct_type;
     while (current && current->is_struct()) {
         StructTypeInfo& struct_type_info = current->struct_info;
         for (auto& method : struct_type_info.methods) {
             if (method.name == name) {
-                if (found_in_type) *found_in_type = current;
+                if (found_in_type)
+                    *found_in_type = current;
                 return &method;
             }
         }
@@ -730,57 +788,69 @@ const MethodInfo* lookup_method_in_hierarchy(Type* struct_type, StringView name,
 
 const MethodInfo* lookup_list_method(const ListTypeInfo& info, StringView name) {
     for (const auto& method : info.methods) {
-        if (method.name == name) return &method;
+        if (method.name == name)
+            return &method;
     }
     return nullptr;
 }
 
 const MethodInfo* lookup_map_method(const MapTypeInfo& info, StringView name) {
     for (const auto& method : info.methods) {
-        if (method.name == name) return &method;
+        if (method.name == name)
+            return &method;
     }
     return nullptr;
 }
 
 const MethodInfo* lookup_coro_method(const CoroutineTypeInfo& info, StringView name) {
     for (const auto& method : info.methods) {
-        if (method.name == name) return &method;
+        if (method.name == name)
+            return &method;
     }
     return nullptr;
 }
 
 bool is_subtype_of(Type* child, Type* parent) {
-    if (child == parent) return true;
-    if (!child || !parent) return false;
-    if (!child->is_struct() || !parent->is_struct()) return false;
+    if (child == parent)
+        return true;
+    if (!child || !parent)
+        return false;
+    if (!child->is_struct() || !parent->is_struct())
+        return false;
 
     Type* current = child->struct_info.parent;
     while (current) {
-        if (current == parent) return true;
+        if (current == parent)
+            return true;
         current = current->struct_info.parent;
     }
     return false;
 }
 
 u32 get_type_slot_count(Type* type) {
-    if (!type) return 0;
+    if (!type)
+        return 0;
 
     switch (type->kind) {
         // 1 slot (4 bytes) - small types widened to 32-bit
         case TypeKind::Bool:
-        case TypeKind::I8:  case TypeKind::U8:
-        case TypeKind::I16: case TypeKind::U16:
-        case TypeKind::I32: case TypeKind::U32:
+        case TypeKind::I8:
+        case TypeKind::U8:
+        case TypeKind::I16:
+        case TypeKind::U16:
+        case TypeKind::I32:
+        case TypeKind::U32:
         case TypeKind::F32:
-        case TypeKind::Enum:        // Enums are stored as i32
-        case TypeKind::IntLiteral:  // Safety net: defaults to i32 (1 slot)
+        case TypeKind::Enum:       // Enums are stored as i32
+        case TypeKind::IntLiteral: // Safety net: defaults to i32 (1 slot)
             return 1;
 
         // 2 slots (8 bytes): 64-bit primitives and pointers
-        case TypeKind::I64: case TypeKind::U64:
+        case TypeKind::I64:
+        case TypeKind::U64:
         case TypeKind::F64:
-        case TypeKind::FloatLiteral:  // Safety net: defaults to f64 (2 slots)
-        case TypeKind::String:      // Heap-allocated string object (pointer)
+        case TypeKind::FloatLiteral: // Safety net: defaults to f64 (2 slots)
+        case TypeKind::String:       // Heap-allocated string object (pointer)
         case TypeKind::Uniq:
         case TypeKind::Ref:
         case TypeKind::List:
@@ -792,7 +862,7 @@ u32 get_type_slot_count(Type* type) {
             return 2;
 
         case TypeKind::Weak:
-            return 4;  // 64-bit pointer + 64-bit generation
+            return 4; // 64-bit pointer + 64-bit generation
 
         // Structs: use computed slot_count
         case TypeKind::Struct:
@@ -805,36 +875,66 @@ u32 get_type_slot_count(Type* type) {
 
 const char* type_kind_to_string(TypeKind kind) {
     switch (kind) {
-        case TypeKind::Void: return "void";
-        case TypeKind::Bool: return "bool";
-        case TypeKind::I8: return "i8";
-        case TypeKind::I16: return "i16";
-        case TypeKind::I32: return "i32";
-        case TypeKind::I64: return "i64";
-        case TypeKind::U8: return "u8";
-        case TypeKind::U16: return "u16";
-        case TypeKind::U32: return "u32";
-        case TypeKind::U64: return "u64";
-        case TypeKind::F32: return "f32";
-        case TypeKind::F64: return "f64";
-        case TypeKind::String: return "string";
-        case TypeKind::List: return "list";
-        case TypeKind::Map: return "map";
-        case TypeKind::Coroutine: return "coro";
-        case TypeKind::Function: return "function";
-        case TypeKind::Struct: return "struct";
-        case TypeKind::Enum: return "enum";
-        case TypeKind::Trait: return "trait";
-        case TypeKind::Uniq: return "uniq";
-        case TypeKind::Ref: return "ref";
-        case TypeKind::Weak: return "weak";
-        case TypeKind::TypeParam: return "<type_param>";
-        case TypeKind::Self: return "Self";
-        case TypeKind::ExceptionRef: return "ExceptionRef";
-        case TypeKind::IntLiteral: return "i32";
-        case TypeKind::FloatLiteral: return "f64";
-        case TypeKind::Nil: return "nil";
-        case TypeKind::Error: return "<error>";
+        case TypeKind::Void:
+            return "void";
+        case TypeKind::Bool:
+            return "bool";
+        case TypeKind::I8:
+            return "i8";
+        case TypeKind::I16:
+            return "i16";
+        case TypeKind::I32:
+            return "i32";
+        case TypeKind::I64:
+            return "i64";
+        case TypeKind::U8:
+            return "u8";
+        case TypeKind::U16:
+            return "u16";
+        case TypeKind::U32:
+            return "u32";
+        case TypeKind::U64:
+            return "u64";
+        case TypeKind::F32:
+            return "f32";
+        case TypeKind::F64:
+            return "f64";
+        case TypeKind::String:
+            return "string";
+        case TypeKind::List:
+            return "list";
+        case TypeKind::Map:
+            return "map";
+        case TypeKind::Coroutine:
+            return "coro";
+        case TypeKind::Function:
+            return "function";
+        case TypeKind::Struct:
+            return "struct";
+        case TypeKind::Enum:
+            return "enum";
+        case TypeKind::Trait:
+            return "trait";
+        case TypeKind::Uniq:
+            return "uniq";
+        case TypeKind::Ref:
+            return "ref";
+        case TypeKind::Weak:
+            return "weak";
+        case TypeKind::TypeParam:
+            return "<type_param>";
+        case TypeKind::Self:
+            return "Self";
+        case TypeKind::ExceptionRef:
+            return "ExceptionRef";
+        case TypeKind::IntLiteral:
+            return "i32";
+        case TypeKind::FloatLiteral:
+            return "f64";
+        case TypeKind::Nil:
+            return "nil";
+        case TypeKind::Error:
+            return "<error>";
     }
     return "<unknown>";
 }
@@ -903,7 +1003,8 @@ void type_to_string(const Type* type, String& out) {
         case TypeKind::Function: {
             append_string(out, "fun(");
             for (u32 i = 0; i < type->func_info.param_types.size(); i++) {
-                if (i > 0) append_string(out, ", ");
+                if (i > 0)
+                    append_string(out, ", ");
                 type_to_string(type->func_info.param_types[i], out);
             }
             append_string(out, ")");
@@ -962,13 +1063,12 @@ namespace {
 // build-then-freeze. On growth the old buffer becomes arena garbage, so total
 // arena waste is O(final size) — the previous rebuild-into-fresh-arena-memory
 // per append cost O(n^2) time and arena bytes to build an n-member table.
-template<typename T>
+template <typename T>
 void append_span(BumpAllocator& allocator, Span<T>& span, u32& capacity, T value) {
     u32 size = span.size();
     if (size >= capacity) {
         u32 new_capacity = size < 4 ? 4 : size * 2;
-        T* data = reinterpret_cast<T*>(
-            allocator.alloc_bytes(sizeof(T) * new_capacity, alignof(T)));
+        T* data = reinterpret_cast<T*>(allocator.alloc_bytes(sizeof(T) * new_capacity, alignof(T)));
         for (u32 i = 0; i < size; i++) {
             data[i] = span[i];
         }
@@ -978,7 +1078,7 @@ void append_span(BumpAllocator& allocator, Span<T>& span, u32& capacity, T value
     span.data()[size] = value;
     span = Span<T>(span.data(), size + 1);
 }
-}
+} // namespace
 
 void append_method(BumpAllocator& allocator, StructTypeInfo& info, MethodInfo method) {
     append_span(allocator, info.methods, info.methods_capacity, method);
@@ -994,12 +1094,14 @@ void append_destructor(BumpAllocator& allocator, StructTypeInfo& info, Destructo
 
 bool struct_needs_synthetic_dtor(const StructTypeInfo& info) {
     for (const auto& field : info.fields) {
-        if (member_needs_drop(field.type)) return true;
+        if (member_needs_drop(field.type))
+            return true;
     }
     for (const auto& clause : info.when_clauses) {
         for (const auto& variant : clause.variants) {
             for (const auto& variant_field : variant.fields) {
-                if (member_needs_drop(variant_field.type)) return true;
+                if (member_needs_drop(variant_field.type))
+                    return true;
             }
         }
     }
@@ -1012,7 +1114,8 @@ bool struct_needs_synthetic_dtor(const StructTypeInfo& info) {
     // for embedded value structs.
     for (Type* ancestor = info.parent; ancestor && ancestor->is_struct();
          ancestor = ancestor->struct_info.parent) {
-        if (struct_has_default_dtor(ancestor)) return true;
+        if (struct_has_default_dtor(ancestor))
+            return true;
     }
     return false;
 }
@@ -1023,7 +1126,8 @@ bool struct_needs_synthetic_dtor(const StructTypeInfo& info) {
 // absent on purpose — each is either trivially copyable or reference-counted
 // with a retain that exactly undoes its release.
 static bool member_is_move_only(Type* type) {
-    if (!type) return false;
+    if (!type)
+        return false;
     switch (type->kind) {
         case TypeKind::Uniq:
         case TypeKind::List:
@@ -1043,7 +1147,8 @@ static bool member_is_move_only(Type* type) {
 
 static bool has_user_written_default_dtor(const StructTypeInfo& info) {
     for (const auto& dtor : info.destructors) {
-        if (dtor.name.empty() && dtor.decl != nullptr) return true;
+        if (dtor.name.empty() && dtor.decl != nullptr)
+            return true;
     }
     return false;
 }
@@ -1057,20 +1162,28 @@ bool derive_struct_move_only(StructTypeInfo& info) {
     // `info.fields` is parent-prefixed and already contains them.
     for (Type* ancestor = info.parent; !move_only && ancestor && ancestor->is_struct();
          ancestor = ancestor->struct_info.parent) {
-        if (has_user_written_default_dtor(ancestor->struct_info)) move_only = true;
+        if (has_user_written_default_dtor(ancestor->struct_info))
+            move_only = true;
     }
 
     for (const auto& field : info.fields) {
-        if (move_only) break;
-        if (member_is_move_only(field.type)) move_only = true;
+        if (move_only)
+            break;
+        if (member_is_move_only(field.type))
+            move_only = true;
     }
     for (const auto& clause : info.when_clauses) {
-        if (move_only) break;
+        if (move_only)
+            break;
         for (const auto& variant : clause.variants) {
             for (const auto& variant_field : variant.fields) {
-                if (member_is_move_only(variant_field.type)) { move_only = true; break; }
+                if (member_is_move_only(variant_field.type)) {
+                    move_only = true;
+                    break;
+                }
             }
-            if (move_only) break;
+            if (move_only)
+                break;
         }
     }
 
@@ -1088,4 +1201,4 @@ void add_synthetic_default_dtor(BumpAllocator& allocator, StructTypeInfo& info) 
     append_destructor(allocator, info, synthetic_dtor);
 }
 
-}
+} // namespace rx

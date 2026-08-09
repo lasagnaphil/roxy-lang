@@ -1,7 +1,7 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
 #include "roxy/compiler/sema/lifetime_checker.hpp"
+#include "roxy/core/types.hpp"
 
 namespace rx {
 
@@ -42,9 +42,7 @@ struct FunctionContext {
 class FunctionContextScope {
 public:
     FunctionContextScope(FunctionContext& context, LifetimeChecker& lifetimes)
-        : m_context_slot(context)
-        , m_saved(context)
-        , m_lifetime_scope(lifetimes) {
+        : m_context_slot(context), m_saved(context), m_lifetime_scope(lifetimes) {
         context = FunctionContext{};
     }
     ~FunctionContextScope() { m_context_slot = m_saved; }
@@ -57,4 +55,4 @@ private:
     LifetimeChecker::FunctionScope m_lifetime_scope;
 };
 
-}
+} // namespace rx

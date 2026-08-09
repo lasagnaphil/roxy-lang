@@ -1,10 +1,10 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
+#include "roxy/compiler/types/generics.hpp"
+#include "roxy/compiler/types/types.hpp"
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/string_view.hpp"
-#include "roxy/compiler/types/types.hpp"
-#include "roxy/compiler/types/generics.hpp"
+#include "roxy/core/types.hpp"
 
 #include "roxy/core/tsl/robin_map.h"
 
@@ -60,4 +60,4 @@ private:
     Type* m_exception_type = nullptr;
 };
 
-}
+} // namespace rx

@@ -8,31 +8,50 @@ namespace rx {
 // --- Infix operator table (same as compiler parser) ---
 
 struct InfixRule {
-    u8 precedence;  // 0 means not an infix operator
+    u8 precedence; // 0 means not an infix operator
     bool right_assoc;
 };
 
 static InfixRule get_infix_rule(TokenKind kind) {
     switch (kind) {
-        case TokenKind::PipePipe:            return {1, false};
-        case TokenKind::AmpAmp:              return {2, false};
-        case TokenKind::Pipe:                return {3, false};
-        case TokenKind::Caret:               return {4, false};
-        case TokenKind::Amp:                 return {5, false};
-        case TokenKind::EqualEqual:          return {6, false};
-        case TokenKind::BangEqual:           return {6, false};
-        case TokenKind::Less:                return {7, false};
-        case TokenKind::LessEqual:           return {7, false};
-        case TokenKind::Greater:             return {7, false};
-        case TokenKind::GreaterEqual:        return {7, false};
-        case TokenKind::LessLess:            return {8, false};
-        case TokenKind::GreaterGreater:      return {8, false};
-        case TokenKind::Plus:                return {9, false};
-        case TokenKind::Minus:               return {9, false};
-        case TokenKind::Star:                return {10, false};
-        case TokenKind::Slash:               return {10, false};
-        case TokenKind::Percent:             return {10, false};
-        default:                             return {0, false};
+        case TokenKind::PipePipe:
+            return {1, false};
+        case TokenKind::AmpAmp:
+            return {2, false};
+        case TokenKind::Pipe:
+            return {3, false};
+        case TokenKind::Caret:
+            return {4, false};
+        case TokenKind::Amp:
+            return {5, false};
+        case TokenKind::EqualEqual:
+            return {6, false};
+        case TokenKind::BangEqual:
+            return {6, false};
+        case TokenKind::Less:
+            return {7, false};
+        case TokenKind::LessEqual:
+            return {7, false};
+        case TokenKind::Greater:
+            return {7, false};
+        case TokenKind::GreaterEqual:
+            return {7, false};
+        case TokenKind::LessLess:
+            return {8, false};
+        case TokenKind::GreaterGreater:
+            return {8, false};
+        case TokenKind::Plus:
+            return {9, false};
+        case TokenKind::Minus:
+            return {9, false};
+        case TokenKind::Star:
+            return {10, false};
+        case TokenKind::Slash:
+            return {10, false};
+        case TokenKind::Percent:
+            return {10, false};
+        default:
+            return {0, false};
     }
 }
 
@@ -58,11 +77,8 @@ static bool is_assignment_op(TokenKind kind) {
 // --- Constructor ---
 
 LspParser::LspParser(Lexer& lexer, BumpAllocator& allocator)
-    : m_lexer(lexer)
-    , m_allocator(allocator)
-    , m_source(lexer.source())
-    , m_source_length(lexer.length())
-{
+    : m_lexer(lexer), m_allocator(allocator), m_source(lexer.source()),
+      m_source_length(lexer.length()) {
     m_current = m_lexer.next_token();
     m_previous = m_current;
 }
@@ -75,28 +91,24 @@ void LspParser::advance() {
 
     // Lexer error tokens become diagnostics but don't stop parsing
     if (m_current.kind == TokenKind::Error) {
-        add_diagnostic(
-            TextRange{m_current.loc.offset, m_current.loc.offset + m_current.length},
-            m_current.start);
+        add_diagnostic(TextRange{m_current.loc.offset, m_current.loc.offset + m_current.length},
+                       m_current.start);
         // Advance past the error token
         m_previous = m_current;
         m_current = m_lexer.next_token();
     }
 }
 
-bool LspParser::check(TokenKind kind) const {
-    return m_current.kind == kind;
-}
+bool LspParser::check(TokenKind kind) const { return m_current.kind == kind; }
 
 bool LspParser::match(TokenKind kind) {
-    if (!check(kind)) return false;
+    if (!check(kind))
+        return false;
     advance();
     return true;
 }
 
-bool LspParser::is_at_end() const {
-    return m_current.kind == TokenKind::Eof;
-}
+bool LspParser::is_at_end() const { return m_current.kind == TokenKind::Eof; }
 
 Token LspParser::consume_or_synthetic(TokenKind expected, const char* message) {
     if (check(expected)) {
@@ -106,9 +118,8 @@ Token LspParser::consume_or_synthetic(TokenKind expected, const char* message) {
     }
 
     // Create a synthetic zero-width token at current position
-    add_diagnostic(
-        TextRange{m_current.loc.offset, m_current.loc.offset + m_current.length},
-        message);
+    add_diagnostic(TextRange{m_current.loc.offset, m_current.loc.offset + m_current.length},
+                   message);
 
     Token synthetic;
     synthetic.kind = expected;
@@ -124,13 +135,16 @@ Token LspParser::consume_or_synthetic(TokenKind expected, const char* message) {
 void LspParser::synchronize_to_statement_boundary() {
     while (!is_at_end()) {
         // Stop after semicolons
-        if (m_previous.kind == TokenKind::Semicolon) return;
+        if (m_previous.kind == TokenKind::Semicolon)
+            return;
 
         // Stop at statement/declaration-starting keywords
-        if (is_statement_start(m_current.kind)) return;
+        if (is_statement_start(m_current.kind))
+            return;
 
         // Stop at closing brace
-        if (check(TokenKind::RightBrace)) return;
+        if (check(TokenKind::RightBrace))
+            return;
 
         advance();
     }
@@ -139,9 +153,12 @@ void LspParser::synchronize_to_statement_boundary() {
 void LspParser::skip_to_closing_bracket(TokenKind open, TokenKind close) {
     i32 depth = 1;
     while (!is_at_end() && depth > 0) {
-        if (check(open)) depth++;
-        else if (check(close)) depth--;
-        if (depth > 0) advance();
+        if (check(open))
+            depth++;
+        else if (check(close))
+            depth--;
+        if (depth > 0)
+            advance();
     }
 }
 
@@ -207,9 +224,9 @@ SyntaxNode* LspParser::make_token_node(const Token& token) {
     return node;
 }
 
-template <typename T>
-Span<T> LspParser::alloc_span(const Vector<T>& vec) {
-    if (vec.empty()) return Span<T>(nullptr, 0);
+template <typename T> Span<T> LspParser::alloc_span(const Vector<T>& vec) {
+    if (vec.empty())
+        return Span<T>(nullptr, 0);
     T* data = reinterpret_cast<T*>(m_allocator.alloc_bytes(sizeof(T) * vec.size(), alignof(T)));
     for (u32 i = 0; i < vec.size(); i++) {
         new (data + i) T(vec[i]);
@@ -293,7 +310,8 @@ SyntaxNode* LspParser::parse_program() {
         // can start (`}`, `"`, `,`, `::`, `0x`, …) bottoms out at parse_primary
         // returning an error node *without consuming*, so without this the loop
         // spins forever. Skip one token to guarantee progress.
-        if (!is_at_end() && m_current.loc.offset == before) advance();
+        if (!is_at_end() && m_current.loc.offset == before)
+            advance();
     }
 
     return finish_node(builder);
@@ -340,9 +358,8 @@ SyntaxNode* LspParser::parse_declaration() {
     }
 
     if (mods.has_native) {
-        add_diagnostic(
-            TextRange{m_current.loc.offset, m_current.loc.offset + m_current.length},
-            "'native' can only precede 'fun'");
+        add_diagnostic(TextRange{m_current.loc.offset, m_current.loc.offset + m_current.length},
+                       "'native' can only precede 'fun'");
         synchronize_to_statement_boundary();
         return make_error_node("'native' can only precede 'fun'");
     }
@@ -360,9 +377,8 @@ SyntaxNode* LspParser::parse_declaration() {
     }
 
     if (mods.has_pub) {
-        add_diagnostic(
-            TextRange{m_current.loc.offset, m_current.loc.offset + m_current.length},
-            "'pub' can only precede declarations");
+        add_diagnostic(TextRange{m_current.loc.offset, m_current.loc.offset + m_current.length},
+                       "'pub' can only precede declarations");
         synchronize_to_statement_boundary();
         return make_error_node("'pub' can only precede declarations");
     }
@@ -412,7 +428,8 @@ SyntaxNode* LspParser::parse_var_decl(const DeclModifiers& mods) {
         builder.children.push_back(init_expr);
     }
 
-    Token semi = consume_or_synthetic(TokenKind::Semicolon, "expected ';' after variable declaration");
+    Token semi =
+        consume_or_synthetic(TokenKind::Semicolon, "expected ';' after variable declaration");
     builder.children.push_back(make_token_node(semi));
 
     return finish_node(builder);
@@ -458,7 +475,8 @@ SyntaxNode* LspParser::parse_fun_decl(const DeclModifiers& mods) {
 
     // Body or semicolon
     if (mods.has_native) {
-        Token semi = consume_or_synthetic(TokenKind::Semicolon, "expected ';' after native function declaration");
+        Token semi = consume_or_synthetic(TokenKind::Semicolon,
+                                          "expected ';' after native function declaration");
         builder.children.push_back(make_token_node(semi));
     } else {
         if (check(TokenKind::LeftBrace)) {
@@ -467,7 +485,8 @@ SyntaxNode* LspParser::parse_fun_decl(const DeclModifiers& mods) {
             SyntaxNode* body = parse_block_stmt();
             builder.children.push_back(body);
         } else {
-            Token lbrace = consume_or_synthetic(TokenKind::LeftBrace, "expected '{' before function body");
+            Token lbrace =
+                consume_or_synthetic(TokenKind::LeftBrace, "expected '{' before function body");
             builder.children.push_back(make_token_node(lbrace));
         }
     }
@@ -483,7 +502,8 @@ SyntaxNode* LspParser::parse_method_decl(NodeBuilder& builder, const DeclModifie
     if (match(TokenKind::KwNew) || match(TokenKind::KwDelete)) {
         builder.children.push_back(make_token_node(m_previous));
     } else {
-        Token method_name = consume_or_synthetic(TokenKind::Identifier, "expected method name after '.'");
+        Token method_name =
+            consume_or_synthetic(TokenKind::Identifier, "expected method name after '.'");
         builder.children.push_back(make_token_node(method_name));
     }
 
@@ -506,7 +526,8 @@ SyntaxNode* LspParser::parse_method_decl(NodeBuilder& builder, const DeclModifie
     // Check for "for Trait" or "for Trait<Args>" clause
     if (match(TokenKind::KwFor)) {
         builder.children.push_back(make_token_node(m_previous)); // 'for'
-        Token trait_name = consume_or_synthetic(TokenKind::Identifier, "expected trait name after 'for'");
+        Token trait_name =
+            consume_or_synthetic(TokenKind::Identifier, "expected trait name after 'for'");
         builder.children.push_back(make_token_node(trait_name));
 
         if (check(TokenKind::Less)) {
@@ -517,7 +538,8 @@ SyntaxNode* LspParser::parse_method_decl(NodeBuilder& builder, const DeclModifie
 
     // Body, semicolon, or nothing (required trait method)
     if (mods.has_native) {
-        Token semi = consume_or_synthetic(TokenKind::Semicolon, "expected ';' after native method declaration");
+        Token semi = consume_or_synthetic(TokenKind::Semicolon,
+                                          "expected ';' after native method declaration");
         builder.children.push_back(make_token_node(semi));
     } else if (match(TokenKind::Semicolon)) {
         builder.children.push_back(make_token_node(m_previous)); // ';'
@@ -527,7 +549,8 @@ SyntaxNode* LspParser::parse_method_decl(NodeBuilder& builder, const DeclModifie
         SyntaxNode* body = parse_block_stmt();
         builder.children.push_back(body);
     } else {
-        Token lbrace = consume_or_synthetic(TokenKind::LeftBrace, "expected '{' before method body");
+        Token lbrace =
+            consume_or_synthetic(TokenKind::LeftBrace, "expected '{' before method body");
         builder.children.push_back(make_token_node(lbrace));
     }
 
@@ -546,7 +569,8 @@ SyntaxNode* LspParser::parse_constructor_decl(const DeclModifiers& mods) {
     // Optional named variant: StructName.name
     if (match(TokenKind::Dot)) {
         builder.children.push_back(make_token_node(m_previous));
-        Token ctor_name = consume_or_synthetic(TokenKind::Identifier, "expected constructor name after '.'");
+        Token ctor_name =
+            consume_or_synthetic(TokenKind::Identifier, "expected constructor name after '.'");
         builder.children.push_back(make_token_node(ctor_name));
     }
 
@@ -584,7 +608,8 @@ SyntaxNode* LspParser::parse_destructor_decl(const DeclModifiers& mods) {
     // Optional named variant: StructName.name
     if (match(TokenKind::Dot)) {
         builder.children.push_back(make_token_node(m_previous));
-        Token dtor_name = consume_or_synthetic(TokenKind::Identifier, "expected destructor name after '.'");
+        Token dtor_name =
+            consume_or_synthetic(TokenKind::Identifier, "expected destructor name after '.'");
         builder.children.push_back(make_token_node(dtor_name));
     }
 
@@ -668,7 +693,8 @@ SyntaxNode* LspParser::parse_struct_decl(const DeclModifiers& mods) {
             builder.children.push_back(field);
         } else {
             // Unrecognized token in struct body — skip and report error
-            builder.children.push_back(make_error_node("expected field, method, or 'when' in struct body"));
+            builder.children.push_back(
+                make_error_node("expected field, method, or 'when' in struct body"));
             advance();
         }
     }
@@ -710,7 +736,8 @@ SyntaxNode* LspParser::parse_when_field_decl() {
     auto builder = begin_node(SyntaxKind::NodeWhenFieldDecl);
 
     // Discriminant: name: EnumType
-    Token discrim_name = consume_or_synthetic(TokenKind::Identifier, "expected discriminant name after 'when'");
+    Token discrim_name =
+        consume_or_synthetic(TokenKind::Identifier, "expected discriminant name after 'when'");
     builder.children.push_back(make_token_node(discrim_name));
 
     Token colon = consume_or_synthetic(TokenKind::Colon, "expected ':' after discriminant name");
@@ -719,21 +746,22 @@ SyntaxNode* LspParser::parse_when_field_decl() {
     SyntaxNode* discrim_type = parse_type_expr();
     builder.children.push_back(discrim_type);
 
-    Token lbrace = consume_or_synthetic(TokenKind::LeftBrace, "expected '{' after discriminant type");
+    Token lbrace =
+        consume_or_synthetic(TokenKind::LeftBrace, "expected '{' after discriminant type");
     builder.children.push_back(make_token_node(lbrace));
 
     // Parse cases
     while (!check(TokenKind::RightBrace) && !is_at_end()) {
         if (!match(TokenKind::KwCase)) {
-            add_diagnostic(
-                TextRange{m_current.loc.offset, m_current.loc.offset + m_current.length},
-                "expected 'case' in when clause");
+            add_diagnostic(TextRange{m_current.loc.offset, m_current.loc.offset + m_current.length},
+                           "expected 'case' in when clause");
             // Guarantee forward progress (see parse_when_stmt):
             // synchronize_to_statement_boundary() may stop without consuming,
             // which would otherwise spin this loop.
             u32 before = m_current.loc.offset;
             synchronize_to_statement_boundary();
-            if (!is_at_end() && m_current.loc.offset == before) advance();
+            if (!is_at_end() && m_current.loc.offset == before)
+                advance();
             continue;
         }
 
@@ -746,7 +774,8 @@ SyntaxNode* LspParser::parse_when_field_decl() {
             case_builder.children.push_back(make_token_node(case_name));
         } while (match(TokenKind::Comma));
 
-        Token case_colon = consume_or_synthetic(TokenKind::Colon, "expected ':' after case name(s)");
+        Token case_colon =
+            consume_or_synthetic(TokenKind::Colon, "expected ':' after case name(s)");
         case_builder.children.push_back(make_token_node(case_colon));
 
         // Parse fields until next case or end
@@ -787,7 +816,8 @@ SyntaxNode* LspParser::parse_enum_decl(const DeclModifiers& mods) {
         do {
             auto variant_builder = begin_node(SyntaxKind::NodeEnumVariant);
 
-            Token variant_name = consume_or_synthetic(TokenKind::Identifier, "expected enum variant name");
+            Token variant_name =
+                consume_or_synthetic(TokenKind::Identifier, "expected enum variant name");
             variant_builder.children.push_back(make_token_node(variant_name));
 
             if (match(TokenKind::Equal)) {
@@ -845,7 +875,8 @@ SyntaxNode* LspParser::parse_import_decl() {
         // from pkg.subpkg import name1, name2;
         parse_module_path(builder);
 
-        Token import_kw = consume_or_synthetic(TokenKind::KwImport, "expected 'import' after module path");
+        Token import_kw =
+            consume_or_synthetic(TokenKind::KwImport, "expected 'import' after module path");
         builder.children.push_back(make_token_node(import_kw));
 
         // Parse import names
@@ -859,7 +890,8 @@ SyntaxNode* LspParser::parse_import_decl() {
                 m_current.start[0] == 'a' && m_current.start[1] == 's') {
                 advance(); // consume "as"
                 name_builder.children.push_back(make_token_node(m_previous));
-                Token alias_token = consume_or_synthetic(TokenKind::Identifier, "expected alias name after 'as'");
+                Token alias_token =
+                    consume_or_synthetic(TokenKind::Identifier, "expected alias name after 'as'");
                 name_builder.children.push_back(make_token_node(alias_token));
             }
 
@@ -896,16 +928,26 @@ SyntaxNode* LspParser::parse_statement() {
         return parse_block_stmt();
     }
 
-    if (match(TokenKind::KwIf)) return parse_if_stmt();
-    if (match(TokenKind::KwWhile)) return parse_while_stmt();
-    if (match(TokenKind::KwFor)) return parse_for_stmt();
-    if (match(TokenKind::KwReturn)) return parse_return_stmt();
-    if (match(TokenKind::KwBreak)) return parse_break_stmt();
-    if (match(TokenKind::KwContinue)) return parse_continue_stmt();
-    if (match(TokenKind::KwDelete)) return parse_delete_stmt();
-    if (match(TokenKind::KwWhen)) return parse_when_stmt();
-    if (match(TokenKind::KwThrow)) return parse_throw_stmt();
-    if (match(TokenKind::KwTry)) return parse_try_stmt();
+    if (match(TokenKind::KwIf))
+        return parse_if_stmt();
+    if (match(TokenKind::KwWhile))
+        return parse_while_stmt();
+    if (match(TokenKind::KwFor))
+        return parse_for_stmt();
+    if (match(TokenKind::KwReturn))
+        return parse_return_stmt();
+    if (match(TokenKind::KwBreak))
+        return parse_break_stmt();
+    if (match(TokenKind::KwContinue))
+        return parse_continue_stmt();
+    if (match(TokenKind::KwDelete))
+        return parse_delete_stmt();
+    if (match(TokenKind::KwWhen))
+        return parse_when_stmt();
+    if (match(TokenKind::KwThrow))
+        return parse_throw_stmt();
+    if (match(TokenKind::KwTry))
+        return parse_try_stmt();
 
     return parse_expr_stmt();
 }
@@ -921,7 +963,8 @@ SyntaxNode* LspParser::parse_block_stmt() {
             builder.children.push_back(decl);
         }
         // Forward-progress backstop (see parse_program).
-        if (!is_at_end() && m_current.loc.offset == before) advance();
+        if (!is_at_end() && m_current.loc.offset == before)
+            advance();
     }
 
     Token rbrace = consume_or_synthetic(TokenKind::RightBrace, "expected '}' after block");
@@ -967,7 +1010,8 @@ SyntaxNode* LspParser::parse_while_stmt() {
     SyntaxNode* condition = parse_expression();
     builder.children.push_back(condition);
 
-    Token rparen = consume_or_synthetic(TokenKind::RightParen, "expected ')' after while condition");
+    Token rparen =
+        consume_or_synthetic(TokenKind::RightParen, "expected ')' after while condition");
     builder.children.push_back(make_token_node(rparen));
 
     SyntaxNode* body = parse_statement();
@@ -1084,7 +1128,8 @@ SyntaxNode* LspParser::parse_when_stmt() {
     m_suppress_struct_literal = false;
     builder.children.push_back(discriminant);
 
-    Token lbrace = consume_or_synthetic(TokenKind::LeftBrace, "expected '{' after 'when' discriminant");
+    Token lbrace =
+        consume_or_synthetic(TokenKind::LeftBrace, "expected '{' after 'when' discriminant");
     builder.children.push_back(make_token_node(lbrace));
 
     // Parse cases
@@ -1099,14 +1144,16 @@ SyntaxNode* LspParser::parse_when_stmt() {
                 case_builder.children.push_back(make_token_node(case_name));
             } while (match(TokenKind::Comma));
 
-            Token case_colon = consume_or_synthetic(TokenKind::Colon, "expected ':' after case name(s)");
+            Token case_colon =
+                consume_or_synthetic(TokenKind::Colon, "expected ':' after case name(s)");
             case_builder.children.push_back(make_token_node(case_colon));
 
             // Case body: declarations until next case/else/}
             while (!check(TokenKind::KwCase) && !check(TokenKind::KwElse) &&
                    !check(TokenKind::RightBrace) && !is_at_end()) {
                 SyntaxNode* decl = parse_declaration();
-                if (decl) case_builder.children.push_back(decl);
+                if (decl)
+                    case_builder.children.push_back(decl);
             }
 
             builder.children.push_back(finish_node(case_builder));
@@ -1120,20 +1167,23 @@ SyntaxNode* LspParser::parse_when_stmt() {
             // Else body: declarations until }
             while (!check(TokenKind::RightBrace) && !is_at_end()) {
                 SyntaxNode* decl = parse_declaration();
-                if (decl) else_builder.children.push_back(decl);
+                if (decl)
+                    else_builder.children.push_back(decl);
             }
 
             builder.children.push_back(finish_node(else_builder));
             break;
         } else {
-            builder.children.push_back(make_error_node("expected 'case' or 'else' in when statement"));
+            builder.children.push_back(
+                make_error_node("expected 'case' or 'else' in when statement"));
             // Guarantee forward progress: synchronize_to_statement_boundary()
             // stops *at* a statement-start keyword (e.g. `return`) without
             // consuming it, so without this guard the loop spins forever on
             // such a token.
             u32 before = m_current.loc.offset;
             synchronize_to_statement_boundary();
-            if (!is_at_end() && m_current.loc.offset == before) advance();
+            if (!is_at_end() && m_current.loc.offset == before)
+                advance();
         }
     }
 
@@ -1173,10 +1223,12 @@ SyntaxNode* LspParser::parse_try_stmt() {
         auto catch_builder = begin_node(SyntaxKind::NodeCatchClause);
         catch_builder.children.push_back(make_token_node(m_previous)); // 'catch'
 
-        Token catch_lparen = consume_or_synthetic(TokenKind::LeftParen, "expected '(' after 'catch'");
+        Token catch_lparen =
+            consume_or_synthetic(TokenKind::LeftParen, "expected '(' after 'catch'");
         catch_builder.children.push_back(make_token_node(catch_lparen));
 
-        Token var_name = consume_or_synthetic(TokenKind::Identifier, "expected variable name in catch clause");
+        Token var_name =
+            consume_or_synthetic(TokenKind::Identifier, "expected variable name in catch clause");
         catch_builder.children.push_back(make_token_node(var_name));
 
         // Optional type annotation
@@ -1186,10 +1238,12 @@ SyntaxNode* LspParser::parse_try_stmt() {
             catch_builder.children.push_back(exception_type);
         }
 
-        Token catch_rparen = consume_or_synthetic(TokenKind::RightParen, "expected ')' after catch variable");
+        Token catch_rparen =
+            consume_or_synthetic(TokenKind::RightParen, "expected ')' after catch variable");
         catch_builder.children.push_back(make_token_node(catch_rparen));
 
-        Token catch_lbrace = consume_or_synthetic(TokenKind::LeftBrace, "expected '{' after catch clause");
+        Token catch_lbrace =
+            consume_or_synthetic(TokenKind::LeftBrace, "expected '{' after catch clause");
         catch_builder.children.push_back(make_token_node(catch_lbrace));
 
         SyntaxNode* catch_body = parse_block_stmt();
@@ -1202,7 +1256,8 @@ SyntaxNode* LspParser::parse_try_stmt() {
     if (match(TokenKind::KwFinally)) {
         builder.children.push_back(make_token_node(m_previous)); // 'finally'
 
-        Token finally_lbrace = consume_or_synthetic(TokenKind::LeftBrace, "expected '{' after 'finally'");
+        Token finally_lbrace =
+            consume_or_synthetic(TokenKind::LeftBrace, "expected '{' after 'finally'");
         builder.children.push_back(make_token_node(finally_lbrace));
 
         SyntaxNode* finally_body = parse_block_stmt();
@@ -1271,7 +1326,8 @@ SyntaxNode* LspParser::parse_precedence(u8 min_prec) {
 
     while (true) {
         InfixRule rule = get_infix_rule(m_current.kind);
-        if (rule.precedence == 0 || rule.precedence < min_prec) break;
+        if (rule.precedence == 0 || rule.precedence < min_prec)
+            break;
 
         auto builder = begin_node(SyntaxKind::NodeBinaryExpr);
         builder.start_offset = left->range.start;
@@ -1317,7 +1373,8 @@ SyntaxNode* LspParser::parse_postfix(SyntaxNode* expr) {
 
             parse_call_args(builder);
 
-            Token rparen = consume_or_synthetic(TokenKind::RightParen, "expected ')' after arguments");
+            Token rparen =
+                consume_or_synthetic(TokenKind::RightParen, "expected ')' after arguments");
             builder.children.push_back(make_token_node(rparen));
 
             expr = finish_node(builder);
@@ -1328,7 +1385,8 @@ SyntaxNode* LspParser::parse_postfix(SyntaxNode* expr) {
             builder.children.push_back(expr);
             builder.children.push_back(make_token_node(m_previous)); // '.'
 
-            Token name_token = consume_or_synthetic(TokenKind::Identifier, "expected property name after '.'");
+            Token name_token =
+                consume_or_synthetic(TokenKind::Identifier, "expected property name after '.'");
             builder.children.push_back(make_token_node(name_token));
 
             expr = finish_node(builder);
@@ -1342,7 +1400,8 @@ SyntaxNode* LspParser::parse_postfix(SyntaxNode* expr) {
             SyntaxNode* index_expr = parse_expression();
             builder.children.push_back(index_expr);
 
-            Token rbracket = consume_or_synthetic(TokenKind::RightBracket, "expected ']' after index");
+            Token rbracket =
+                consume_or_synthetic(TokenKind::RightBracket, "expected ']' after index");
             builder.children.push_back(make_token_node(rbracket));
 
             expr = finish_node(builder);
@@ -1405,7 +1464,8 @@ SyntaxNode* LspParser::parse_primary() {
         auto builder = begin_node(SyntaxKind::NodeUniqExpr);
         builder.children.push_back(make_token_node(m_previous)); // 'uniq'
 
-        Token type_token = consume_or_synthetic(TokenKind::Identifier, "expected type name after 'uniq'");
+        Token type_token =
+            consume_or_synthetic(TokenKind::Identifier, "expected type name after 'uniq'");
         builder.children.push_back(make_token_node(type_token));
 
         if (match(TokenKind::LeftBrace)) {
@@ -1416,10 +1476,12 @@ SyntaxNode* LspParser::parse_primary() {
             if (!check(TokenKind::RightBrace)) {
                 do {
                     auto field_builder = begin_node(SyntaxKind::NodeFieldInit);
-                    Token field_name = consume_or_synthetic(TokenKind::Identifier, "expected field name");
+                    Token field_name =
+                        consume_or_synthetic(TokenKind::Identifier, "expected field name");
                     field_builder.children.push_back(make_token_node(field_name));
 
-                    Token eq = consume_or_synthetic(TokenKind::Equal, "expected '=' after field name");
+                    Token eq =
+                        consume_or_synthetic(TokenKind::Equal, "expected '=' after field name");
                     field_builder.children.push_back(make_token_node(eq));
 
                     SyntaxNode* value_expr = parse_expression();
@@ -1429,7 +1491,8 @@ SyntaxNode* LspParser::parse_primary() {
                 } while (match(TokenKind::Comma));
             }
 
-            Token rbrace = consume_or_synthetic(TokenKind::RightBrace, "expected '}' after struct literal fields");
+            Token rbrace = consume_or_synthetic(TokenKind::RightBrace,
+                                                "expected '}' after struct literal fields");
             builder.children.push_back(make_token_node(rbrace));
 
             return finish_node(builder);
@@ -1438,7 +1501,8 @@ SyntaxNode* LspParser::parse_primary() {
         // Constructor call: uniq Type.ctor_name() or uniq Type()
         if (match(TokenKind::Dot)) {
             builder.children.push_back(make_token_node(m_previous)); // '.'
-            Token ctor_name = consume_or_synthetic(TokenKind::Identifier, "expected constructor name after '.'");
+            Token ctor_name =
+                consume_or_synthetic(TokenKind::Identifier, "expected constructor name after '.'");
             builder.children.push_back(make_token_node(ctor_name));
         }
 
@@ -1464,7 +1528,8 @@ SyntaxNode* LspParser::parse_primary() {
             builder.start_offset = name_token.loc.offset;
             builder.children.push_back(make_token_node(name_token));
             builder.children.push_back(make_token_node(m_previous)); // '::'
-            Token member = consume_or_synthetic(TokenKind::Identifier, "expected member name after '::'");
+            Token member =
+                consume_or_synthetic(TokenKind::Identifier, "expected member name after '::'");
             builder.children.push_back(make_token_node(member));
             return finish_node(builder);
         }
@@ -1485,10 +1550,12 @@ SyntaxNode* LspParser::parse_primary() {
                     if (!check(TokenKind::RightBrace)) {
                         do {
                             auto field_builder = begin_node(SyntaxKind::NodeFieldInit);
-                            Token field_name = consume_or_synthetic(TokenKind::Identifier, "expected field name");
+                            Token field_name =
+                                consume_or_synthetic(TokenKind::Identifier, "expected field name");
                             field_builder.children.push_back(make_token_node(field_name));
 
-                            Token eq = consume_or_synthetic(TokenKind::Equal, "expected '=' after field name");
+                            Token eq = consume_or_synthetic(TokenKind::Equal,
+                                                            "expected '=' after field name");
                             field_builder.children.push_back(make_token_node(eq));
 
                             SyntaxNode* value_expr = parse_expression();
@@ -1498,7 +1565,8 @@ SyntaxNode* LspParser::parse_primary() {
                         } while (match(TokenKind::Comma));
                     }
 
-                    Token rbrace = consume_or_synthetic(TokenKind::RightBrace, "expected '}' after struct literal fields");
+                    Token rbrace = consume_or_synthetic(TokenKind::RightBrace,
+                                                        "expected '}' after struct literal fields");
                     builder.children.push_back(make_token_node(rbrace));
                     return finish_node(builder);
                 }
@@ -1508,7 +1576,8 @@ SyntaxNode* LspParser::parse_primary() {
                     builder.kind = SyntaxKind::NodeCallExpr;
                     builder.children.push_back(make_token_node(m_previous)); // '('
                     parse_call_args(builder);
-                    Token rparen = consume_or_synthetic(TokenKind::RightParen, "expected ')' after arguments");
+                    Token rparen =
+                        consume_or_synthetic(TokenKind::RightParen, "expected ')' after arguments");
                     builder.children.push_back(make_token_node(rparen));
                     return finish_node(builder);
                 }
@@ -1531,10 +1600,12 @@ SyntaxNode* LspParser::parse_primary() {
             if (!check(TokenKind::RightBrace)) {
                 do {
                     auto field_builder = begin_node(SyntaxKind::NodeFieldInit);
-                    Token field_name = consume_or_synthetic(TokenKind::Identifier, "expected field name");
+                    Token field_name =
+                        consume_or_synthetic(TokenKind::Identifier, "expected field name");
                     field_builder.children.push_back(make_token_node(field_name));
 
-                    Token eq = consume_or_synthetic(TokenKind::Equal, "expected '=' after field name");
+                    Token eq =
+                        consume_or_synthetic(TokenKind::Equal, "expected '=' after field name");
                     field_builder.children.push_back(make_token_node(eq));
 
                     SyntaxNode* value_expr = parse_expression();
@@ -1544,7 +1615,8 @@ SyntaxNode* LspParser::parse_primary() {
                 } while (match(TokenKind::Comma));
             }
 
-            Token rbrace = consume_or_synthetic(TokenKind::RightBrace, "expected '}' after struct literal fields");
+            Token rbrace = consume_or_synthetic(TokenKind::RightBrace,
+                                                "expected '}' after struct literal fields");
             builder.children.push_back(make_token_node(rbrace));
             return finish_node(builder);
         }
@@ -1573,7 +1645,8 @@ SyntaxNode* LspParser::parse_primary() {
         if (!check(TokenKind::LeftParen)) {
             Token dot = consume_or_synthetic(TokenKind::Dot, "expected '.' or '(' after 'super'");
             builder.children.push_back(make_token_node(dot));
-            Token method_name = consume_or_synthetic(TokenKind::Identifier, "expected method name after 'super.'");
+            Token method_name =
+                consume_or_synthetic(TokenKind::Identifier, "expected method name after 'super.'");
             builder.children.push_back(make_token_node(method_name));
         }
 
@@ -1615,9 +1688,8 @@ SyntaxNode* LspParser::parse_fstring() {
             builder.children.push_back(make_token_node(m_previous));
             break;
         } else {
-            add_diagnostic(
-                TextRange{m_current.loc.offset, m_current.loc.offset + m_current.length},
-                "expected '}' in f-string interpolation");
+            add_diagnostic(TextRange{m_current.loc.offset, m_current.loc.offset + m_current.length},
+                           "expected '}' in f-string interpolation");
             break;
         }
     }
@@ -1655,7 +1727,8 @@ SyntaxNode* LspParser::parse_type_params() {
 
     do {
         auto param_builder = begin_node(SyntaxKind::NodeTypeParam);
-        Token name_token = consume_or_synthetic(TokenKind::Identifier, "expected type parameter name");
+        Token name_token =
+            consume_or_synthetic(TokenKind::Identifier, "expected type parameter name");
         param_builder.children.push_back(make_token_node(name_token));
 
         // Optional trait bounds: <T: Trait1 + Trait2>
@@ -1804,7 +1877,8 @@ bool LspParser::consume_closing_angle(NodeBuilder& builder) {
         return true;
     }
 
-    Token synthetic = consume_or_synthetic(TokenKind::Greater, "expected '>' after type parameters");
+    Token synthetic =
+        consume_or_synthetic(TokenKind::Greater, "expected '>' after type parameters");
     builder.children.push_back(make_token_node(synthetic));
     return false;
 }

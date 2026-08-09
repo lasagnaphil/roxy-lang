@@ -15,12 +15,12 @@ using ObjectHeader = roxy_object_header;
 // However, for clarity and simplicity, we use an explicit tagged union here.
 struct Value {
     enum Type : u8 {
-        Null,       // null value
-        Bool,       // boolean value
-        Int,        // 64-bit signed integer
-        Float,      // 64-bit floating point
-        Ptr,        // pointer to object (uniq or ref)
-        Weak,       // weak pointer with generation check
+        Null,  // null value
+        Bool,  // boolean value
+        Int,   // 64-bit signed integer
+        Float, // 64-bit floating point
+        Ptr,   // pointer to object (uniq or ref)
+        Weak,  // weak pointer with generation check
     };
 
     Type type;
@@ -31,7 +31,7 @@ struct Value {
         void* as_ptr;
         struct {
             void* ptr;
-            u64 generation;  // 64-bit random generation for weak reference validation
+            u64 generation; // 64-bit random generation for weak reference validation
         } as_weak;
     };
 
@@ -94,13 +94,20 @@ struct Value {
     // Truthiness (for conditionals)
     bool is_truthy() const {
         switch (type) {
-            case Null: return false;
-            case Bool: return as_bool;
-            case Int: return as_int != 0;
-            case Float: return as_float != 0.0;
-            case Ptr: return as_ptr != nullptr;
-            case Weak: return as_weak.ptr != nullptr;
-            default: return false;
+            case Null:
+                return false;
+            case Bool:
+                return as_bool;
+            case Int:
+                return as_int != 0;
+            case Float:
+                return as_float != 0.0;
+            case Ptr:
+                return as_ptr != nullptr;
+            case Weak:
+                return as_weak.ptr != nullptr;
+            default:
+                return false;
         }
     }
 
@@ -112,16 +119,24 @@ struct Value {
 
     // Equality comparison
     bool equals(const Value& other) const {
-        if (type != other.type) return false;
+        if (type != other.type)
+            return false;
         switch (type) {
-            case Null: return true;
-            case Bool: return as_bool == other.as_bool;
-            case Int: return as_int == other.as_int;
-            case Float: return as_float == other.as_float;
-            case Ptr: return as_ptr == other.as_ptr;
-            case Weak: return as_weak.ptr == other.as_weak.ptr &&
-                              as_weak.generation == other.as_weak.generation;
-            default: return false;
+            case Null:
+                return true;
+            case Bool:
+                return as_bool == other.as_bool;
+            case Int:
+                return as_int == other.as_int;
+            case Float:
+                return as_float == other.as_float;
+            case Ptr:
+                return as_ptr == other.as_ptr;
+            case Weak:
+                return as_weak.ptr == other.as_weak.ptr &&
+                       as_weak.generation == other.as_weak.generation;
+            default:
+                return false;
         }
     }
 
@@ -133,24 +148,27 @@ struct Value {
     // For Float, uses type punning to store the bits
     u64 as_u64() const {
         switch (type) {
-            case Bool: return as_bool ? 1 : 0;
-            case Int: return static_cast<u64>(as_int);
+            case Bool:
+                return as_bool ? 1 : 0;
+            case Int:
+                return static_cast<u64>(as_int);
             case Float: {
                 u64 bits;
                 __builtin_memcpy(&bits, &as_float, sizeof(bits));
                 return bits;
             }
-            case Ptr: return reinterpret_cast<u64>(as_ptr);
-            case Weak: return reinterpret_cast<u64>(as_weak.ptr);
-            default: return 0;
+            case Ptr:
+                return reinterpret_cast<u64>(as_ptr);
+            case Weak:
+                return reinterpret_cast<u64>(as_weak.ptr);
+            default:
+                return 0;
         }
     }
 
     // Create Value from raw u64 register value
     // Assumes the value is an integer (default interpretation)
-    static Value from_u64(u64 bits) {
-        return make_int(static_cast<i64>(bits));
-    }
+    static Value from_u64(u64 bits) { return make_int(static_cast<i64>(bits)); }
 
     // Create float Value from raw u64 bits
     static Value float_from_u64(u64 bits) {
@@ -160,9 +178,7 @@ struct Value {
     }
 
     // Create pointer Value from raw u64 bits
-    static Value ptr_from_u64(u64 bits) {
-        return make_ptr(reinterpret_cast<void*>(bits));
-    }
+    static Value ptr_from_u64(u64 bits) { return make_ptr(reinterpret_cast<void*>(bits)); }
 };
 
 // Type name for debugging
@@ -171,4 +187,4 @@ const char* value_type_to_string(Value::Type type);
 // String representation of a value (for debugging)
 void value_to_string(const Value& value, char* buf, u32 buf_size);
 
-}
+} // namespace rx

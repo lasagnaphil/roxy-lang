@@ -1,8 +1,8 @@
 #include "roxy/core/doctest/doctest.h"
 
 #include <cstdio>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 #ifdef _WIN32
@@ -32,18 +32,21 @@ namespace {
 struct CliRun {
     std::string stdout_output;
     int exit_code = -1;
-    bool clean_exit = false;  // false when the process died on a signal
+    bool clean_exit = false; // false when the process died on a signal
 };
 
 const char* cli_tmpdir() {
 #ifdef _WIN32
     const char* t = getenv("TEMP");
-    if (!t) t = getenv("TMP");
-    if (!t) t = ".";
+    if (!t)
+        t = getenv("TMP");
+    if (!t)
+        t = ".";
     return t;
 #else
     const char* t = getenv("TMPDIR");
-    if (!t) t = "/tmp";
+    if (!t)
+        t = "/tmp";
     return t;
 #endif
 }
@@ -56,7 +59,8 @@ CliRun run_cli(const char* source, const char* extra_args) {
     char src_path[512];
     snprintf(src_path, sizeof(src_path), "%s/roxy_cli_test.roxy", cli_tmpdir());
     FILE* f = fopen(src_path, "w");
-    if (!f) return result;
+    if (!f)
+        return result;
     fputs(source, f);
     fclose(f);
 
@@ -65,10 +69,8 @@ CliRun run_cli(const char* source, const char* extra_args) {
     // exit code — which is exactly the signal we need to see here. (Same
     // reasoning as the C-backend runner in test_helpers.cpp.)
     char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\"%s%s",
-             ROXY_CLI_PATH, src_path,
-             extra_args && *extra_args ? " " : "",
-             extra_args ? extra_args : "");
+    snprintf(cmd, sizeof(cmd), "\"%s\" \"%s\"%s%s", ROXY_CLI_PATH, src_path,
+             extra_args && *extra_args ? " " : "", extra_args ? extra_args : "");
 
     FILE* pipe = popen(cmd, "r");
     if (!pipe) {
@@ -97,13 +99,13 @@ CliRun run_cli(const char* source, const char* extra_args) {
         result.exit_code = WEXITSTATUS(status);
         result.clean_exit = true;
     } else {
-        result.clean_exit = false;  // WIFSIGNALED: SIGABRT from the failed assert
+        result.clean_exit = false; // WIFSIGNALED: SIGABRT from the failed assert
     }
 #endif
     return result;
 }
 
-}  // namespace
+} // namespace
 
 TEST_SUITE("E2E CLI") {
 
@@ -115,16 +117,15 @@ TEST_SUITE("E2E CLI") {
         // back to the malloc allocator, and the slab aborts on a pointer it
         // never produced ("SlabAllocator::free called with unknown pointer").
         // The abort lands *after* main's output, hence the clean_exit check.
-        const char* source =
-            "fun main(args: List<string>): i32 {\n"
-            "    print(f\"argc={args.len()}\");\n"
-            "    return 0;\n"
-            "}\n";
+        const char* source = "fun main(args: List<string>): i32 {\n"
+                             "    print(f\"argc={args.len()}\");\n"
+                             "    return 0;\n"
+                             "}\n";
 
         CliRun result = run_cli(source, "");
-        CHECK(result.clean_exit);  // false => died on a signal (the abort)
+        CHECK(result.clean_exit); // false => died on a signal (the abort)
         CHECK(result.exit_code == 0);
-        CHECK(result.stdout_output == "argc=1\n");  // argv[0] is the source path
+        CHECK(result.stdout_output == "argc=1\n"); // argv[0] is the source path
     }
 
     TEST_CASE("main(args) exits cleanly with an empty body") {
@@ -138,13 +139,12 @@ TEST_SUITE("E2E CLI") {
     }
 
     TEST_CASE("main(args) receives the CLI arguments") {
-        const char* source =
-            "fun main(args: List<string>): i32 {\n"
-            "    for (var i: i32 = 1; i < args.len(); i = i + 1) {\n"
-            "        print(args[i]);\n"
-            "    }\n"
-            "    return 0;\n"
-            "}\n";
+        const char* source = "fun main(args: List<string>): i32 {\n"
+                             "    for (var i: i32 = 1; i < args.len(); i = i + 1) {\n"
+                             "        print(args[i]);\n"
+                             "    }\n"
+                             "    return 0;\n"
+                             "}\n";
 
         CliRun result = run_cli(source, "alpha beta");
         CHECK(result.clean_exit);
@@ -155,11 +155,10 @@ TEST_SUITE("E2E CLI") {
     TEST_CASE("main() without args still exits cleanly") {
         // The no-args path never built a list and was never affected; this pins
         // that the context guard didn't disturb it.
-        const char* source =
-            "fun main(): i32 {\n"
-            "    print(\"ok\");\n"
-            "    return 0;\n"
-            "}\n";
+        const char* source = "fun main(): i32 {\n"
+                             "    print(\"ok\");\n"
+                             "    return 0;\n"
+                             "}\n";
 
         CliRun result = run_cli(source, "");
         CHECK(result.clean_exit);
@@ -192,15 +191,14 @@ TEST_SUITE("E2E CLI") {
     TEST_CASE("a coroutine compiles through the optimizing pipeline") {
         // Never called — this is about compiling the lowered IR at all, not
         // about running it.
-        const char* source =
-            "fun gen(): Coro<i32> { yield 1; }\n"
-            "fun main(): i32 {\n"
-            "    print(\"ok\");\n"
-            "    return 0;\n"
-            "}\n";
+        const char* source = "fun gen(): Coro<i32> { yield 1; }\n"
+                             "fun main(): i32 {\n"
+                             "    print(\"ok\");\n"
+                             "    return 0;\n"
+                             "}\n";
 
         CliRun result = run_cli(source, "");
-        CHECK(result.clean_exit);  // false => the compiler died (SIGSEGV in DCE)
+        CHECK(result.clean_exit); // false => the compiler died (SIGSEGV in DCE)
         CHECK(result.exit_code == 0);
         CHECK(result.stdout_output == "ok\n");
     }
@@ -209,18 +207,17 @@ TEST_SUITE("E2E CLI") {
         // Not just "doesn't crash": DCE/copy-prop/CSE now actually see the
         // coroutine's instructions, so this pins that they don't mangle the
         // resume state machine. countdown(3) yields 3, 2, 1.
-        const char* source =
-            "fun countdown(n: i32): Coro<i32> {\n"
-            "    var i: i32 = n;\n"
-            "    while (i > 0) { yield i; i = i - 1; }\n"
-            "}\n"
-            "fun main(): i32 {\n"
-            "    var c = countdown(3);\n"
-            "    var sum: i32 = 0;\n"
-            "    while (!c.done()) { sum = sum + c.resume(); }\n"
-            "    print(f\"sum={sum}\");\n"
-            "    return 0;\n"
-            "}\n";
+        const char* source = "fun countdown(n: i32): Coro<i32> {\n"
+                             "    var i: i32 = n;\n"
+                             "    while (i > 0) { yield i; i = i - 1; }\n"
+                             "}\n"
+                             "fun main(): i32 {\n"
+                             "    var c = countdown(3);\n"
+                             "    var sum: i32 = 0;\n"
+                             "    while (!c.done()) { sum = sum + c.resume(); }\n"
+                             "    print(f\"sum={sum}\");\n"
+                             "    return 0;\n"
+                             "}\n";
 
         CliRun result = run_cli(source, "");
         CHECK(result.clean_exit);
@@ -228,6 +225,6 @@ TEST_SUITE("E2E CLI") {
         CHECK(result.stdout_output == "sum=6\n");
     }
 
-}  // TEST_SUITE("E2E CLI")
+} // TEST_SUITE("E2E CLI")
 
-#endif  // ROXY_CLI_PATH
+#endif // ROXY_CLI_PATH

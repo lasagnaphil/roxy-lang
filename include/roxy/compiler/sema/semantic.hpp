@@ -1,24 +1,24 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
-#include "roxy/core/vector.hpp"
-#include "roxy/core/bump_allocator.hpp"
-#include "roxy/core/unique_ptr.hpp"
-#include "roxy/core/format.hpp"
-#include "roxy/shared/token.hpp"
 #include "roxy/compiler/parse/ast.hpp"
-#include "roxy/compiler/types/types.hpp"
-#include "roxy/compiler/types/type_env.hpp"
-#include "roxy/compiler/types/symbol_table.hpp"
-#include "roxy/compiler/support/error_reporter.hpp"
-#include "roxy/compiler/sema/type_checker.hpp"
-#include "roxy/compiler/sema/sema_context.hpp"
 #include "roxy/compiler/sema/function_context.hpp"
-#include "roxy/compiler/sema/lifetime_checker.hpp"
-#include "roxy/compiler/sema/trait_system.hpp"
 #include "roxy/compiler/sema/generic_call_resolver.hpp"
 #include "roxy/compiler/sema/lambda_lifter.hpp"
+#include "roxy/compiler/sema/lifetime_checker.hpp"
+#include "roxy/compiler/sema/sema_context.hpp"
+#include "roxy/compiler/sema/trait_system.hpp"
+#include "roxy/compiler/sema/type_checker.hpp"
+#include "roxy/compiler/support/error_reporter.hpp"
+#include "roxy/compiler/types/symbol_table.hpp"
+#include "roxy/compiler/types/type_env.hpp"
+#include "roxy/compiler/types/types.hpp"
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/format.hpp"
 #include "roxy/core/tsl/robin_set.h"
+#include "roxy/core/types.hpp"
+#include "roxy/core/unique_ptr.hpp"
+#include "roxy/core/vector.hpp"
+#include "roxy/shared/token.hpp"
 
 namespace rx {
 
@@ -92,7 +92,7 @@ private:
     // Error reporting — thin forwarders to m_reporter so the many internal call
     // sites stay unchanged while the machinery lives in ErrorReporter.
     void error(SourceLocation loc, const char* message) { m_reporter.error(loc, message); }
-    template<typename... Args>
+    template <typename... Args>
     void error_fmt(SourceLocation loc, fmt_string<sizeof...(Args)> fmt, const Args&... args) {
         m_reporter.error_fmt(loc, runtime_format_string{fmt.str}, args...);
     }
@@ -123,10 +123,8 @@ private:
     // anything asks `noncopyable()` about a struct — see resolve_type_members.
     void derive_move_only_flags(Program* program);
     void generate_synthetic_destructors(Program* program);
-    void resolve_when_clauses(Span<WhenFieldDecl> when_decls,
-                              Vector<FieldInfo>& fields,
-                              Vector<WhenClauseInfo>& when_clauses,
-                              u32& current_slot);
+    void resolve_when_clauses(Span<WhenFieldDecl> when_decls, Vector<FieldInfo>& fields,
+                              Vector<WhenClauseInfo>& when_clauses, u32& current_slot);
     void analyze_function_bodies(Program* program);
 
     // Type resolution from AST TypeExpr. Never returns null: a null TypeExpr
@@ -180,7 +178,7 @@ private:
     //     ctors/dtors (empty name → "default") and methods (always named).
     Span<Type*> resolve_param_types(Span<Param> params);
     Type* resolve_member_struct(SourceLocation loc, StringView struct_name, const char* noun);
-    template<typename InfoT>
+    template <typename InfoT>
     bool report_duplicate_member(SourceLocation loc, Span<InfoT> existing, StringView name,
                                  StringView struct_name, const char* noun);
 
@@ -196,9 +194,8 @@ private:
     void analyze_fun_body(Decl* decl);
     // Shared body analysis for constructors/destructors/methods; sets up the
     // per-function context (is_delete_destructor forbids throw in the body).
-    void analyze_member_body(Decl* decl, Type* struct_type,
-                             Span<Param> params, Stmt* body, Type* return_type,
-                             bool is_delete_destructor = false);
+    void analyze_member_body(Decl* decl, Type* struct_type, Span<Param> params, Stmt* body,
+                             Type* return_type, bool is_delete_destructor = false);
     void analyze_constructor_body(Decl* decl, Type* struct_type);
     void analyze_destructor_body(Decl* decl, Type* struct_type);
     void analyze_method_body(Decl* decl, Type* struct_type);
@@ -232,7 +229,8 @@ private:
     Type* analyze_ternary_expr(Expr* expr);
     Type* analyze_call_expr(Expr* expr);
     Type* analyze_primitive_cast(Expr* expr, Type* target_type);
-    Type* analyze_constructor_call(Expr* expr, Type* struct_type, StringView ctor_name, bool is_heap);
+    Type* analyze_constructor_call(Expr* expr, Type* struct_type, StringView ctor_name,
+                                   bool is_heap);
 
     // Call expression sub-helpers (extracted from analyze_call_expr).
     // Generic function calls (explicit and inferred type args) live on
@@ -241,7 +239,8 @@ private:
     Type* analyze_map_constructor_call(Expr* expr, CallExpr& ce);
     Type* analyze_generic_struct_constructor_call(Expr* expr, CallExpr& ce, StringView func_name);
     Type* analyze_super_call(Expr* expr, CallExpr& ce);
-    Type* analyze_builtin_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type, const MethodInfo* mi);
+    Type* analyze_builtin_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type,
+                                      const MethodInfo* mi);
     // `.copy()` on a List/Map deep-copies the backing buffer, so it needs
     // copyable elements (List) or copyable key AND value (Map) — a noncopyable
     // element owns a resource a shallow copy would double-free. No-op for any
@@ -249,7 +248,8 @@ private:
     // copy is rejected. On the builtin-method-call path so both container
     // dispatch arms share it.
     bool check_container_copy_method(Expr* expr, Type* base_type, StringView method_name);
-    Type* analyze_struct_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type, Type* base_type);
+    Type* analyze_struct_method_call(Expr* expr, CallExpr& ce, GetExpr& ge, Type* obj_type,
+                                     Type* base_type);
     Type* analyze_regular_fun_call(Expr* expr, CallExpr& ce);
 
     // Overload resolution for calls to a name with 2+ function definitions
@@ -268,8 +268,8 @@ private:
     bool coerce_overloaded_fun_ref(Expr* expr, Type* expected);
 
     // Shared argument checking for method/function calls
-    void check_call_args(Span<CallArg> args, Span<Type*> param_types,
-                         Span<Param> params, SourceLocation loc);
+    void check_call_args(Span<CallArg> args, Span<Type*> param_types, Span<Param> params,
+                         SourceLocation loc);
 
     // An `out`/`inout` container subscript is an lvalue on the element *slot*,
     // not a read: re-type it to the raw element/value type (the `index` method
@@ -290,8 +290,8 @@ private:
     // the pieces themselves (inference has no expected type, and their
     // overloaded-ref coercion deliberately runs without one to report
     // ambiguity — see analyze_var_initializer).
-    Type* coerce_and_check_value(Expr* value, Type* expected, Type* value_type,
-                                 SourceLocation loc, bool skip_type_check = false);
+    Type* coerce_and_check_value(Expr* value, Type* expected, Type* value_type, SourceLocation loc,
+                                 bool skip_type_check = false);
 
     // The per-argument type check shared by analyze_super_call's three arms
     // (default ctor / named ctor / method): analyze each arg, check
@@ -345,10 +345,10 @@ private:
 
     BumpAllocator& m_allocator;
     TypeEnv& m_type_env;
-    TypeCache& m_types;  // Cached ref to m_type_env.types() to minimize churn
+    TypeCache& m_types; // Cached ref to m_type_env.types() to minimize churn
     ModuleRegistry& m_modules;
     NativeRegistry* m_registry;
-    UniquePtr<SymbolTable> m_owned_symbols;  // null when using external symbols
+    UniquePtr<SymbolTable> m_owned_symbols; // null when using external symbols
     SymbolTable& m_symbols;
     ErrorReporter m_reporter;
     TypeChecker m_checker;
@@ -361,7 +361,7 @@ private:
     // scope-exit destructor checks) — driven by the statement walkers here,
     // state and rules owned by the checker (see lifetime_checker.hpp).
     LifetimeChecker m_lifetimes;
-    Vector<Decl*> m_synthetic_decls;  // Injected default method declarations and lifted lambdas
+    Vector<Decl*> m_synthetic_decls; // Injected default method declarations and lifted lambdas
     // Trait machinery: builtin trait registration, trait declarations, impl
     // grouping/validation, default-method injection (see trait_system.hpp).
     TraitSystem m_traits;
@@ -380,7 +380,7 @@ private:
     // capture rewrites on identifier/self references inside lambda bodies
     // (see lambda_lifter.hpp).
     LambdaLifter m_lambdas;
-    Program* m_program;                   // Current program being analyzed
+    Program* m_program; // Current program being analyzed
 
     // Cycle detection for direct value-type recursion in struct fields
     tsl::robin_set<Type*> m_resolving_structs;
@@ -408,8 +408,7 @@ private:
     // registry, then append the synthesized per-instantiation to_string,
     // writing into the caller's *_info fields (idempotent).
     void populate_container_methods(const char* registry_name, Span<Type*> type_args,
-                                    Type* container_type,
-                                    Span<MethodInfo>& out_methods,
+                                    Type* container_type, Span<MethodInfo>& out_methods,
                                     StringView& out_alloc_name, StringView& out_copy_name);
     bool is_hashable_key_type(Type* type);
     NativeRegistry* get_builtin_registry();
@@ -421,4 +420,4 @@ public:
     GenericInstantiator& generics() { return m_type_env.generics(); }
 };
 
-}
+} // namespace rx

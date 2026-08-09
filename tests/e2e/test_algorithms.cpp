@@ -1,9 +1,9 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
-#include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
+#include "roxy/vm/vm.hpp"
 
 using namespace rx;
 
@@ -50,7 +50,7 @@ TEST_SUITE("E2E Algorithms") {
     )";
 
         auto result = Backend::run(source);
-        CHECK(result.value == 3);  // both branches matched
+        CHECK(result.value == 3); // both branches matched
     }
 
     // ============================================================================
@@ -84,7 +84,7 @@ TEST_SUITE("E2E Algorithms") {
 
         RoxyVM vm;
         VMConfig config;
-        config.register_file_size = 65536;  // Need more registers for deep recursion
+        config.register_file_size = 65536; // Need more registers for deep recursion
         config.max_call_depth = 4096;
         vm_init(&vm, config);
         vm_load_module(&vm, module);
@@ -192,4 +192,4 @@ TEST_SUITE("E2E Algorithms") {
         CHECK(result.stdout_output == "42\n123\n0\n");
     }
 
-}  // TEST_SUITE("E2E Algorithms")
+} // TEST_SUITE("E2E Algorithms")

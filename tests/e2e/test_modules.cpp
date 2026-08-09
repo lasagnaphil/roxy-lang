@@ -1,12 +1,12 @@
-#include "roxy/core/doctest/doctest.h"
-#include "roxy/core/bump_allocator.hpp"
-#include "roxy/core/string_view.hpp"
 #include "roxy/compiler/driver/compiler.hpp"
 #include "roxy/compiler/types/type_env.hpp"
-#include "roxy/vm/vm.hpp"
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/doctest/doctest.h"
+#include "roxy/core/string_view.hpp"
+#include "roxy/vm/binding/registry.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/natives.hpp"
-#include "roxy/vm/binding/registry.hpp"
+#include "roxy/vm/vm.hpp"
 
 #include <cstring>
 
@@ -25,10 +25,7 @@ struct ModuleTestContext {
     NativeRegistry math_natives;
 
     ModuleTestContext()
-        : allocator(16384)
-        , type_env(allocator)
-        , math_natives(allocator, type_env.types())
-    {
+        : allocator(16384), type_env(allocator), math_natives(allocator, type_env.types()) {
         // Register math module natives
         math_natives.bind<math_add>("add");
         math_natives.bind<math_mul>("mul");
@@ -81,7 +78,7 @@ struct ModuleTestContext {
         BCModule* module = compiler.compile();
         if (module) {
             delete module;
-            return false;  // No error
+            return false; // No error
         }
 
         if (expected_error_substr) {
@@ -90,10 +87,10 @@ struct ModuleTestContext {
                     return true;
                 }
             }
-            return false;  // Error but not the expected one
+            return false; // Error but not the expected one
         }
 
-        return true;  // Has error
+        return true; // Has error
     }
 };
 
@@ -128,7 +125,7 @@ TEST_SUITE("E2E Modules") {
     )";
 
         i64 result = ctx.compile_and_run(source);
-        CHECK(result == 20);  // (2+3) * 4 = 20
+        CHECK(result == 20); // (2+3) * 4 = 20
     }
 
     TEST_CASE("imported native used as function reference") {
@@ -194,7 +191,7 @@ TEST_SUITE("E2E Modules") {
     )";
 
         i64 result = ctx.compile_and_run(source);
-        CHECK(result == 81);  // ((1+2)*3)^2 = 9^2 = 81
+        CHECK(result == 81); // ((1+2)*3)^2 = 9^2 = 81
     }
 
     TEST_CASE("mix from import and qualified access") {
@@ -332,7 +329,7 @@ TEST_SUITE("E2E Modules") {
         REQUIRE(success);
 
         Value result = vm_get_result(&vm);
-        CHECK(result.as_int == 19);  // double(5)=10 + triple(3)=9 = 19
+        CHECK(result.as_int == 19); // double(5)=10 + triple(3)=9 = 19
 
         vm_destroy(&vm);
         delete module;
@@ -473,7 +470,7 @@ TEST_SUITE("E2E Modules") {
         REQUIRE(success);
 
         Value result = vm_get_result(&vm);
-        CHECK(result.as_int == 121);  // left(10+1=11) + right(10+100=110) = 121
+        CHECK(result.as_int == 121); // left(10+1=11) + right(10+100=110) = 121
 
         vm_destroy(&vm);
         delete module;
@@ -525,7 +522,7 @@ TEST_SUITE("E2E Modules") {
         REQUIRE(success);
 
         Value result = vm_get_result(&vm);
-        CHECK(result.as_int == 1111);  // 1 + 10 + 100 + 1000
+        CHECK(result.as_int == 1111); // 1 + 10 + 100 + 1000
 
         vm_destroy(&vm);
         delete module;
@@ -568,7 +565,7 @@ TEST_SUITE("E2E Modules") {
         REQUIRE(success);
 
         Value result = vm_get_result(&vm);
-        CHECK(result.as_int == 17);  // square(3)=9 + cube(2)=8 = 17
+        CHECK(result.as_int == 17); // square(3)=9 + cube(2)=8 = 17
 
         vm_destroy(&vm);
         delete module;
@@ -690,7 +687,7 @@ TEST_SUITE("E2E Modules") {
         REQUIRE(success);
 
         Value result = vm_get_result(&vm);
-        CHECK(result.as_int == 19);  // double(5)=10 + triple(3)=9 = 19
+        CHECK(result.as_int == 19); // double(5)=10 + triple(3)=9 = 19
 
         vm_destroy(&vm);
         delete module;
@@ -733,7 +730,7 @@ TEST_SUITE("E2E Modules") {
         REQUIRE(success);
 
         Value result = vm_get_result(&vm);
-        CHECK(result.as_int == 13);  // double(2)=4 + triple(3)=9 = 13
+        CHECK(result.as_int == 13); // double(2)=4 + triple(3)=9 = 13
 
         vm_destroy(&vm);
         delete module;
@@ -761,7 +758,8 @@ TEST_SUITE("E2E Modules") {
     )";
 
         Compiler compiler(allocator);
-        compiler.add_source("game.physics.collision", collision_source, static_cast<u32>(strlen(collision_source)));
+        compiler.add_source("game.physics.collision", collision_source,
+                            static_cast<u32>(strlen(collision_source)));
         compiler.add_source("main", main_source, static_cast<u32>(strlen(main_source)));
 
         BCModule* module = compiler.compile();
@@ -775,7 +773,7 @@ TEST_SUITE("E2E Modules") {
         REQUIRE(success);
 
         Value result = vm_get_result(&vm);
-        CHECK(result.as_int == 16);  // check(5)=10 + verify(2)=6 = 16
+        CHECK(result.as_int == 16); // check(5)=10 + verify(2)=6 = 16
 
         vm_destroy(&vm);
         delete module;
@@ -817,7 +815,7 @@ TEST_SUITE("E2E Modules") {
         REQUIRE(success);
 
         Value result = vm_get_result(&vm);
-        CHECK(result.as_int == 19);  // double(5)=10 + triple(3)=9 = 19
+        CHECK(result.as_int == 19); // double(5)=10 + triple(3)=9 = 19
 
         vm_destroy(&vm);
         delete module;
@@ -860,7 +858,7 @@ TEST_SUITE("E2E Modules") {
         REQUIRE(success);
 
         Value result = vm_get_result(&vm);
-        CHECK(result.as_int == 19);  // double(5)=10 + triple(3)=9 = 19
+        CHECK(result.as_int == 19); // double(5)=10 + triple(3)=9 = 19
 
         vm_destroy(&vm);
         delete module;
@@ -904,7 +902,7 @@ TEST_SUITE("E2E Modules") {
         REQUIRE(success);
 
         Value result = vm_get_result(&vm);
-        CHECK(result.as_int == 12);  // triple(double(2)) = triple(4) = 12
+        CHECK(result.as_int == 12); // triple(double(2)) = triple(4) = 12
 
         vm_destroy(&vm);
         delete module;
@@ -1243,7 +1241,7 @@ TEST_SUITE("E2E Modules") {
         REQUIRE(success);
 
         Value result = vm_get_result(&vm);
-        CHECK(result.as_int == 12);  // run()=1 * 10 + run_b()=2 = 12
+        CHECK(result.as_int == 12); // run()=1 * 10 + run_b()=2 = 12
 
         vm_destroy(&vm);
         delete module;
@@ -1301,7 +1299,7 @@ TEST_SUITE("E2E Modules") {
         REQUIRE(success);
 
         Value result = vm_get_result(&vm);
-        CHECK(result.as_int == 49);  // answer()=42 + sum(3,4)=7 = 49
+        CHECK(result.as_int == 49); // answer()=42 + sum(3,4)=7 = 49
 
         vm_destroy(&vm);
         delete module;
@@ -1352,6 +1350,6 @@ TEST_SUITE("E2E Modules") {
         delete module;
     }
 
-    } // namespace rx
+} // namespace rx
 
-}  // TEST_SUITE("E2E Modules")
+} // namespace rx

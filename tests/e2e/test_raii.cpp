@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 #include <string>
 
@@ -81,7 +81,7 @@ TEST_SUITE("E2E RAII") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "30\n");  // 0 + 10 + 20
+        CHECK(result.stdout_output == "30\n"); // 0 + 10 + 20
     }
 
     TEST_CASE_TEMPLATE("explicit delete + scope exit (no double-free)", Backend, RX_E2E_BACKENDS) {
@@ -319,7 +319,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE("use-after-delete compile error") {
@@ -340,7 +340,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE("conditional move is still checked when a lambda body ends in return") {
@@ -371,7 +371,7 @@ TEST_SUITE("E2E RAII") {
     )";
 
         BumpAllocator a1(65536);
-        CHECK(compile(a1, control) == nullptr);  // sanity: rejected without a lambda
+        CHECK(compile(a1, control) == nullptr); // sanity: rejected without a lambda
 
         const char* with_lambda = R"(
         struct Point {
@@ -395,7 +395,7 @@ TEST_SUITE("E2E RAII") {
     )";
 
         BumpAllocator a2(65536);
-        CHECK(compile(a2, with_lambda) == nullptr);  // must be rejected identically
+        CHECK(compile(a2, with_lambda) == nullptr); // must be rejected identically
     }
 
     TEST_CASE("self-assignment of noncopyable compile error") {
@@ -418,7 +418,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE_TEMPLATE("cross-variable move still compiles", Backend, RX_E2E_BACKENDS) {
@@ -470,7 +470,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     // ============================================================================
@@ -557,7 +557,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE_TEMPLATE("named-only destructor with explicit delete OK", Backend, RX_E2E_BACKENDS) {
@@ -586,7 +586,8 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("default + named destructor uses implicit delete", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("default + named destructor uses implicit delete", Backend,
+                       RX_E2E_BACKENDS) {
         // Struct with both default and named destructors → RAII uses default, no error
         const char* source = R"(
         struct Resource {
@@ -641,7 +642,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     // ============================================================================
@@ -816,7 +817,8 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.stdout_output == "~Item(3)\n~Item(2)\n~Item(1)\n");
     }
 
-    TEST_CASE_TEMPLATE("uniq field without destructor (no struct inner type)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("uniq field without destructor (no struct inner type)", Backend,
+                       RX_E2E_BACKENDS) {
         // A struct with a uniq field pointing to a struct without any destructor
         // should still free the memory (no crash, no leak)
         const char* source = R"(
@@ -883,7 +885,8 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.stdout_output == "~Leaf(77)\n");
     }
 
-    TEST_CASE_TEMPLATE("deeply nested value-type fields with destructors", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("deeply nested value-type fields with destructors", Backend,
+                       RX_E2E_BACKENDS) {
         // Three levels of nesting: C embeds B embeds A, where A has a uniq field.
         // All three should get synthetic destructors via the fixpoint loop.
         const char* source = R"CODE(
@@ -982,7 +985,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE_TEMPLATE("value struct move on return", Backend, RX_E2E_BACKENDS) {
@@ -1083,7 +1086,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE_TEMPLATE("plain struct remains copyable", Backend, RX_E2E_BACKENDS) {
@@ -1111,7 +1114,7 @@ TEST_SUITE("E2E RAII") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 4);  // p.x (1) + sum (3) = 4
+        CHECK(result.value == 4); // p.x (1) + sum (3) = 4
     }
 
     TEST_CASE("user-defined destructor makes struct non-copyable") {
@@ -1140,7 +1143,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     // ============================================================================
@@ -1171,7 +1174,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Cannot move out of field
+        CHECK(module == nullptr); // Cannot move out of field
     }
 
     TEST_CASE("cannot assign uniq field to uniq variable") {
@@ -1194,7 +1197,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Cannot move out of field
+        CHECK(module == nullptr); // Cannot move out of field
     }
 
     TEST_CASE("cannot assign uniq field to inferred uniq variable") {
@@ -1217,7 +1220,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Cannot move out of field
+        CHECK(module == nullptr); // Cannot move out of field
     }
 
     TEST_CASE("cannot delete uniq field directly") {
@@ -1240,7 +1243,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Cannot delete a field
+        CHECK(module == nullptr); // Cannot delete a field
     }
 
     TEST_CASE("cannot return uniq field") {
@@ -1266,7 +1269,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Cannot return a field with move semantics
+        CHECK(module == nullptr); // Cannot return a field with move semantics
     }
 
     TEST_CASE("cannot reassign uniq variable from uniq field") {
@@ -1290,7 +1293,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Cannot move out of field
+        CHECK(module == nullptr); // Cannot move out of field
     }
 
     // ============================================================================
@@ -1493,10 +1496,11 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // item is moved after field assignment
+        CHECK(module == nullptr); // item is moved after field assignment
     }
 
-    TEST_CASE_TEMPLATE("field assignment from uniq variable works correctly", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("field assignment from uniq variable works correctly", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"CODE(
         struct Item {
             value: i32;
@@ -1678,7 +1682,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile — use after move
+        CHECK(module == nullptr); // Should fail to compile — use after move
     }
 
     TEST_CASE("use-after-move on List<uniq T>") {
@@ -1704,10 +1708,11 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile — use after move
+        CHECK(module == nullptr); // Should fail to compile — use after move
     }
 
-    TEST_CASE_TEMPLATE("List<i32> is move-only; .copy() to keep using it", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("List<i32> is move-only; .copy() to keep using it", Backend,
+                       RX_E2E_BACKENDS) {
         // Containers are move-only (lifetimes.md §8). Passing by value moves, so
         // to keep using the list the caller hands over an explicit `.copy()`.
         const char* source = R"CODE(
@@ -1727,7 +1732,7 @@ TEST_SUITE("E2E RAII") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 4);  // 2 + 2
+        CHECK(result.value == 4); // 2 + 2
     }
 
     TEST_CASE_TEMPLATE("method calls on noncopyable list work", Backend, RX_E2E_BACKENDS) {
@@ -1764,7 +1769,8 @@ TEST_SUITE("E2E RAII") {
     // Variable-to-variable move semantics
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("variable-to-variable move marks source as moved", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("variable-to-variable move marks source as moved", Backend,
+                       RX_E2E_BACKENDS) {
         // After `b = a`, using `a` should be a compile error (use-after-move)
         const char* source = R"CODE(
         struct Node {
@@ -1781,7 +1787,7 @@ TEST_SUITE("E2E RAII") {
     )CODE";
 
         auto result = Backend::run(source);
-        CHECK(!result.success);  // Should fail: use-after-move on `a`
+        CHECK(!result.success); // Should fail: use-after-move on `a`
     }
 
     TEST_CASE_TEMPLATE("variable-to-variable move works correctly", Backend, RX_E2E_BACKENDS) {
@@ -1893,7 +1899,7 @@ TEST_SUITE("E2E RAII") {
     )CODE";
 
         auto result = Backend::run(source);
-        CHECK(!result.success);  // Should fail: use-after-move on next iteration
+        CHECK(!result.success); // Should fail: use-after-move on next iteration
     }
 
     TEST_CASE_TEMPLATE("conditional move in loop is error", Backend, RX_E2E_BACKENDS) {
@@ -1924,7 +1930,7 @@ TEST_SUITE("E2E RAII") {
     )CODE";
 
         auto result = Backend::run(source);
-        CHECK(!result.success);  // Should fail: MaybeValid cross-iteration
+        CHECK(!result.success); // Should fail: MaybeValid cross-iteration
     }
 
     // ============================================================================
@@ -1971,10 +1977,11 @@ TEST_SUITE("E2E RAII") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 200);  // 50 + 150
+        CHECK(result.value == 200); // 50 + 150
     }
 
-    TEST_CASE_TEMPLATE("variable shadowing does not corrupt outer move state", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("variable shadowing does not corrupt outer move state", Backend,
+                       RX_E2E_BACKENDS) {
         // After moving outer x, an inner scope declaring a new x should not
         // make the outer x appear live again after the inner scope exits.
         const char* source = R"CODE(
@@ -1997,7 +2004,7 @@ TEST_SUITE("E2E RAII") {
     )CODE";
 
         auto result = Backend::run(source);
-        CHECK(!result.success);  // Should fail: use of moved value 'x' (outer)
+        CHECK(!result.success); // Should fail: use of moved value 'x' (outer)
     }
 
     TEST_CASE_TEMPLATE("struct literal field marks source as moved", Backend, RX_E2E_BACKENDS) {
@@ -2021,7 +2028,7 @@ TEST_SUITE("E2E RAII") {
         )CODE";
 
             auto result = Backend::run(source);
-            CHECK(!result.success);  // Should fail: use of moved value 'w'
+            CHECK(!result.success); // Should fail: use of moved value 'w'
         }
 
         SUBCASE("Move into struct literal without later use succeeds") {
@@ -2154,7 +2161,8 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 7);
     }
 
-    TEST_CASE_TEMPLATE("when with one terminating case preserves live path", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("when with one terminating case preserves live path", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Kind { A, B }
 
@@ -2219,7 +2227,8 @@ TEST_SUITE("E2E RAII") {
         CHECK(module == nullptr);
     }
 
-    TEST_CASE_TEMPLATE("reassignment in nested scope adopts RHS temporary", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("reassignment in nested scope adopts RHS temporary", Backend,
+                       RX_E2E_BACKENDS) {
         // Regression for an IR-gen fix: gen_assign_expr must consume the RHS
         // temporary when the target is a noncopyable identifier, otherwise the
         // temp's cleanup record at the inner scope depth triggers a double-free
@@ -2427,7 +2436,9 @@ TEST_SUITE("E2E RAII") {
     // paths) doesn't see the consumed-and-nullified locals from the dead branch.
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("terminating then-branch struct-literal move keeps local live for after-if struct literal", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE(
+        "terminating then-branch struct-literal move keeps local live for after-if struct literal",
+        Backend, RX_E2E_BACKENDS) {
         // Pre-fix: the then-branch struct literal nullify-replaced `cond` to nil;
         // the after-if path then embedded nil into its own struct literal and
         // segfaulted on the field dereference at main.
@@ -2464,7 +2475,9 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 1);
     }
 
-    TEST_CASE_TEMPLATE("terminating else-branch struct-literal move keeps local live for after-if struct literal", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE(
+        "terminating else-branch struct-literal move keeps local live for after-if struct literal",
+        Backend, RX_E2E_BACKENDS) {
         // Symmetric to the above: when the else-branch terminates, the merge block
         // is reachable only via the then-branch (which here also moves the local).
         // The IR builder must restore the post-then snapshot rather than carrying
@@ -2504,7 +2517,8 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 2);
     }
 
-    TEST_CASE_TEMPLATE("terminating then-branch with else preserves else's post-state at merge", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("terminating then-branch with else preserves else's post-state at merge",
+                       Backend, RX_E2E_BACKENDS) {
         // then-branch terminates; the merge block is reachable only via the
         // else-branch. The IR builder should keep the else's post-state at merge
         // (not roll back to pre-if), so the after-if code sees the right values.
@@ -2543,7 +2557,9 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 3);
     }
 
-    TEST_CASE_TEMPLATE("terminating when-case struct-literal move keeps local live for after-when struct literal", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE(
+        "terminating when-case struct-literal move keeps local live for after-when struct literal",
+        Backend, RX_E2E_BACKENDS) {
         // Same shape as the if-stmt termination tests, but for when. Pre-fix the
         // last case body's nullify-replace of `cond` to nil leaked into the
         // merge block, segfaulting on dereference of the after-when struct
@@ -2585,7 +2601,9 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 7);
     }
 
-    TEST_CASE_TEMPLATE("terminating else-if-chain branch struct-literal move keeps local live after chain", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE(
+        "terminating else-if-chain branch struct-literal move keeps local live after chain",
+        Backend, RX_E2E_BACKENDS) {
         // Same shape but for an else-if cascade (gen_if_else_chain). The last
         // chain branch's nullify-replace of `cond` would otherwise leak into the
         // merge block.
@@ -2631,7 +2649,8 @@ TEST_SUITE("E2E RAII") {
     // slot from a previous call, double-freeing the previous Holder's list).
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("Constructor: reassigning a List<uniq T> field survives sequential calls", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Constructor: reassigning a List<uniq T> field survives sequential calls",
+                       Backend, RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         struct Stmt { val: i32; }
 
@@ -2664,7 +2683,8 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 84);
     }
 
-    TEST_CASE_TEMPLATE("Constructor: uniq field initialisation survives sequential calls", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Constructor: uniq field initialisation survives sequential calls", Backend,
+                       RX_E2E_BACKENDS) {
         // Same pattern for a plain uniq-typed field (no container wrapping).
         const char* source = R"ROXY(
         struct Payload { val: i32; }
@@ -2700,7 +2720,9 @@ TEST_SUITE("E2E RAII") {
     // scope exit).
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("Constructor call consumes noncopyable identifier argument stored in variant field", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE(
+        "Constructor call consumes noncopyable identifier argument stored in variant field",
+        Backend, RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         enum K { A, B }
         struct Node {
@@ -2733,7 +2755,9 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("Constructor call consumes inline uniq rvalue argument stored in variant field", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE(
+        "Constructor call consumes inline uniq rvalue argument stored in variant field", Backend,
+        RX_E2E_BACKENDS) {
         // Exercises the rvalue/temp path (not just identifiers): the inner
         // `uniq Node.b(...)` is an rvalue temporary passed to Node.a. It must be
         // consumed via the temp-nullify path, not the identifier path.
@@ -2775,7 +2799,9 @@ TEST_SUITE("E2E RAII") {
     // destroy that stale pointer and crash.
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("Synthesized default ctor null-inits variant uniq fields for stack-reuse safety", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE(
+        "Synthesized default ctor null-inits variant uniq fields for stack-reuse safety", Backend,
+        RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         enum K { A, B }
         struct Node {
@@ -2816,7 +2842,8 @@ TEST_SUITE("E2E RAII") {
     // the pointer into the target without clearing the source.
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("Field move from by-value struct param nulls the source field", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Field move from by-value struct param nulls the source field", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         struct Thing { pub items: List<uniq Thing>; }
         fun new Thing() { self.items = List<uniq Thing>(); }
@@ -2838,7 +2865,8 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 2);
     }
 
-    TEST_CASE_TEMPLATE("Field move from by-value struct param preserves unrelated fields", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Field move from by-value struct param preserves unrelated fields", Backend,
+                       RX_E2E_BACKENDS) {
         // The source struct may have other fields that were NOT moved; they still
         // belong to `src` and should be cleaned up by its destructor normally.
         const char* source = R"ROXY(
@@ -2989,7 +3017,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE_TEMPLATE("reassign-before-move in loop body is legal", Backend, RX_E2E_BACKENDS) {
@@ -3057,7 +3085,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile (cross-iteration use-after-move)
+        CHECK(module == nullptr); // Should fail to compile (cross-iteration use-after-move)
     }
 
     TEST_CASE("move out of conditional over owned variables is rejected") {
@@ -3088,7 +3116,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE("move out of conditional over fresh temporaries is also rejected") {
@@ -3116,7 +3144,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE("move out of noncopyable list element is rejected") {
@@ -3141,7 +3169,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE("move out of noncopyable map value is rejected") {
@@ -3162,7 +3190,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE("move out of noncopyable Map.get() result is rejected") {
@@ -3186,7 +3214,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     // ---- `borrowed` views of a *container* element -------------------------
@@ -3217,7 +3245,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE("move a container element out of an index is rejected") {
@@ -3237,7 +3265,7 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE_TEMPLATE("a borrowed container view is usable in place", Backend, RX_E2E_BACKENDS) {
@@ -3300,10 +3328,11 @@ TEST_SUITE("E2E RAII") {
     )";
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 19);   // 1 + 5 + 1 + 2 + 9 + 1
+        CHECK(result.value == 19); // 1 + 5 + 1 + 2 + 9 + 1
     }
 
-    TEST_CASE_TEMPLATE("borrowing and reading a noncopyable list element is allowed", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("borrowing and reading a noncopyable list element is allowed", Backend,
+                       RX_E2E_BACKENDS) {
         // Soundness guard against over-rejection: the index rejection fires only
         // when the noncopyable element is *moved* out. Borrowing it as `ref` and
         // reading a field through it transfer no ownership and must keep working.
@@ -3326,7 +3355,8 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 50);
     }
 
-    TEST_CASE_TEMPLATE("move out of a user-defined index result is allowed", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("move out of a user-defined index result is allowed", Backend,
+                       RX_E2E_BACKENDS) {
         // The rejection keys off the `index` method being *native*. A user `index`
         // (here via the builtin `Index<Idx, Output>` trait) has a move-checked
         // body, so its noncopyable return is a genuine ownership transfer (a fresh
@@ -3373,10 +3403,11 @@ TEST_SUITE("E2E RAII") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
-    TEST_CASE_TEMPLATE("'borrowed' is an ordinary identifier in user source", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("'borrowed' is an ordinary identifier in user source", Backend,
+                       RX_E2E_BACKENDS) {
         // Including in *type* position: while the modifier was recognized here,
         // a leading `borrowed` was swallowed and the parser then demanded a
         // second type name, so a type could not be named `borrowed` at all.
@@ -3394,7 +3425,8 @@ TEST_SUITE("E2E RAII") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("moving a pointer field out destroys it exactly once", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("moving a pointer field out destroys it exactly once", Backend,
+                       RX_E2E_BACKENDS) {
         // Moving a noncopyable pointer field (`o.a`) out of a value struct nulls
         // that field in the root, so the root's destructor no-ops it (frees only
         // the *sibling* `o.b`) instead of re-destroying the moved-out value. Each
@@ -3481,7 +3513,7 @@ TEST_SUITE("E2E RAII") {
     )";
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
-}  // TEST_SUITE("E2E RAII")
+} // TEST_SUITE("E2E RAII")

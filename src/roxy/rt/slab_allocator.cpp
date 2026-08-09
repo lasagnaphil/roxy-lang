@@ -1,10 +1,10 @@
 #include "roxy/rt/slab_allocator.hpp"
-#include "roxy/vm/object.hpp"
 #include "roxy/rt/vmem.hpp"
+#include "roxy/vm/object.hpp"
 
 #include <algorithm>
-#include <cstring>
 #include <cassert>
+#include <cstring>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -64,18 +64,12 @@ static inline u32* slot_next_link(void* slot) {
 
 // SlabAllocator implementation
 
-SlabAllocator::SlabAllocator()
-    : m_page_size(0)
-    , total_allocated(0)
-    , total_tombstoned(0)
-{
+SlabAllocator::SlabAllocator() : m_page_size(0), total_allocated(0), total_tombstoned(0) {
     rng.state[0] = 0;
     rng.state[1] = 0;
 }
 
-SlabAllocator::~SlabAllocator() {
-    shutdown();
-}
+SlabAllocator::~SlabAllocator() { shutdown(); }
 
 bool SlabAllocator::init() {
     m_page_size = VirtualMemoryOps::page_size();
@@ -113,7 +107,7 @@ void SlabAllocator::shutdown() {
         for (auto& slab : size_classes[i]) {
             if (slab->base_addr) {
                 VirtualMemoryOps::release(slab->base_addr,
-                    static_cast<u64>(slab->page_count) * m_page_size);
+                                          static_cast<u64>(slab->page_count) * m_page_size);
             }
             // UniquePtr automatically deletes the Slab
         }
@@ -141,7 +135,7 @@ u32 SlabAllocator::size_to_class(u32 size) const {
             return i;
         }
     }
-    return NUM_SIZE_CLASSES;  // Large object
+    return NUM_SIZE_CLASSES; // Large object
 }
 
 Slab* SlabAllocator::find_or_create_slab(u32 class_idx) {
@@ -160,7 +154,8 @@ Slab* SlabAllocator::find_or_create_slab(u32 class_idx) {
     // Determine slab size: at least 1 page, enough for ~64 slots minimum
     u64 min_slab_size = static_cast<u64>(slot_size) * 64;
     u32 page_count = static_cast<u32>((min_slab_size + m_page_size - 1) / m_page_size);
-    if (page_count < 1) page_count = 1;
+    if (page_count < 1)
+        page_count = 1;
 
     u64 slab_size = static_cast<u64>(page_count) * m_page_size;
 
@@ -191,8 +186,7 @@ Slab* SlabAllocator::find_or_create_slab(u32 class_idx) {
     slab->states.resize(slab->slot_count);
     for (u32 i = 0; i < slab->slot_count; i++) {
         slab->states[i] = SlotState::FREE;
-        *slot_next_link(slab->slot_ptr(i)) =
-            (i + 1 < slab->slot_count) ? (i + 1) : 0xFFFFFFFF;
+        *slot_next_link(slab->slot_ptr(i)) = (i + 1 < slab->slot_count) ? (i + 1) : 0xFFFFFFFF;
     }
 
     Slab* result = slab.get();
@@ -206,9 +200,8 @@ Slab* SlabAllocator::find_or_create_slab(u32 class_idx) {
     range.base = result->base_addr;
     range.end = reinterpret_cast<u8*>(result->base_addr) + slab_size;
     range.slab = result;
-    auto* insert_pos = std::upper_bound(
-        sorted_slabs.begin(), sorted_slabs.end(), range.base,
-        [](void* p, const SlabRange& r) { return p < r.base; });
+    auto* insert_pos = std::upper_bound(sorted_slabs.begin(), sorted_slabs.end(), range.base,
+                                        [](void* p, const SlabRange& r) { return p < r.base; });
     sorted_slabs.insert(insert_pos, range);
 
     return result;
@@ -230,7 +223,8 @@ void* SlabAllocator::alloc_from_slab(Slab* slab, u64* out_generation) {
 
     // Generate random generation (must be non-zero; 0 means dead)
     *out_generation = rng.next();
-    if (*out_generation == 0) *out_generation = rng.next();
+    if (*out_generation == 0)
+        *out_generation = rng.next();
 
     // Zero the slot, including the recycled next-link past the header,
     // so the freshly returned object starts from a clean state.
@@ -267,16 +261,16 @@ void* SlabAllocator::alloc_large(u32 size, u64* out_generation) {
     LargeRange range;
     range.base = mem;
     range.end = reinterpret_cast<u8*>(mem) + alloc_size;
-    auto* insert_pos = std::upper_bound(
-        sorted_large.begin(), sorted_large.end(), range.base,
-        [](void* p, const LargeRange& r) { return p < r.base; });
+    auto* insert_pos = std::upper_bound(sorted_large.begin(), sorted_large.end(), range.base,
+                                        [](void* p, const LargeRange& r) { return p < r.base; });
     sorted_large.insert(insert_pos, range);
 
     total_allocated++;
 
     // Generate random generation (must be non-zero; 0 means dead)
     *out_generation = rng.next();
-    if (*out_generation == 0) *out_generation = rng.next();
+    if (*out_generation == 0)
+        *out_generation = rng.next();
 
     // Zero the full page-aligned allocation, not just the caller-requested
     // size. Matches the slab path which zeros slot_size (not request size),
@@ -307,23 +301,25 @@ void* SlabAllocator::alloc(u32 size, u64* out_generation) {
 // or points past the unique candidate range, which is the entry just
 // before. A final half-open bound check confirms membership.
 Slab* SlabAllocator::find_slab_containing(void* ptr) {
-    if (sorted_slabs.empty()) return nullptr;
+    if (sorted_slabs.empty())
+        return nullptr;
 
-    auto* it = std::upper_bound(
-        sorted_slabs.begin(), sorted_slabs.end(), ptr,
-        [](void* p, const SlabRange& r) { return p < r.base; });
-    if (it == sorted_slabs.begin()) return nullptr;
+    auto* it = std::upper_bound(sorted_slabs.begin(), sorted_slabs.end(), ptr,
+                                [](void* p, const SlabRange& r) { return p < r.base; });
+    if (it == sorted_slabs.begin())
+        return nullptr;
     --it;
     return (ptr < it->end) ? it->slab : nullptr;
 }
 
 const Slab* SlabAllocator::find_slab_containing(void* ptr) const {
-    if (sorted_slabs.empty()) return nullptr;
+    if (sorted_slabs.empty())
+        return nullptr;
 
-    auto* it = std::upper_bound(
-        sorted_slabs.begin(), sorted_slabs.end(), ptr,
-        [](void* p, const SlabRange& r) { return p < r.base; });
-    if (it == sorted_slabs.begin()) return nullptr;
+    auto* it = std::upper_bound(sorted_slabs.begin(), sorted_slabs.end(), ptr,
+                                [](void* p, const SlabRange& r) { return p < r.base; });
+    if (it == sorted_slabs.begin())
+        return nullptr;
     --it;
     return (ptr < it->end) ? it->slab : nullptr;
 }
@@ -360,11 +356,11 @@ void SlabAllocator::free_in_slab(Slab* slab, u32 slot_idx) {
 void SlabAllocator::free_large(void* ptr) {
     auto it = large_objects.find(ptr);
     if (it == large_objects.end()) {
-        return;  // Not a large object
+        return; // Not a large object
     }
 
     if (it->second.tombstoned) {
-        return;  // Already freed (idempotent double-free)
+        return; // Already freed (idempotent double-free)
     }
 
     u64 size = static_cast<u64>(it->second.page_count) * m_page_size;
@@ -424,9 +420,8 @@ roxy_object_header* SlabAllocator::resolve_header(void* interior_ptr) {
     // sorted range index (same half-open containment logic as
     // find_slab_containing) to map the interior pointer back to its base.
     if (!sorted_large.empty()) {
-        auto* it = std::upper_bound(
-            sorted_large.begin(), sorted_large.end(), interior_ptr,
-            [](void* p, const LargeRange& r) { return p < r.base; });
+        auto* it = std::upper_bound(sorted_large.begin(), sorted_large.end(), interior_ptr,
+                                    [](void* p, const LargeRange& r) { return p < r.base; });
         if (it != sorted_large.begin()) {
             --it;
             if (interior_ptr < it->end) {
@@ -460,8 +455,7 @@ SlabAllocator::LiveObjectStats SlabAllocator::live_object_stats() const {
     // leaves behind, so classify it out instead of reporting it as a leak.
     auto classify = [&stats](const roxy_object_header* header) {
         stats.live++;
-        if (header->type_id == ROXY_TYPEID_STRING &&
-            header->ref_count == ROXY_STR_IMMORTAL) {
+        if (header->type_id == ROXY_TYPEID_STRING && header->ref_count == ROXY_STR_IMMORTAL) {
             stats.immortal++;
             return;
         }
@@ -470,16 +464,19 @@ SlabAllocator::LiveObjectStats SlabAllocator::live_object_stats() const {
 
     for (u32 size_class = 0; size_class < NUM_SIZE_CLASSES; size_class++) {
         for (const auto& slab : size_classes[size_class]) {
-            if (!slab || slab->remapped) continue;
+            if (!slab || slab->remapped)
+                continue;
             for (u32 slot = 0; slot < slab->slot_count; slot++) {
-                if (slab->states[slot] != SlotState::ALIVE) continue;
+                if (slab->states[slot] != SlotState::ALIVE)
+                    continue;
                 classify(static_cast<const roxy_object_header*>(slab->slot_ptr(slot)));
             }
         }
     }
 
     for (const auto& entry : large_objects) {
-        if (entry.second.tombstoned) continue;
+        if (entry.second.tombstoned)
+            continue;
         classify(static_cast<const roxy_object_header*>(entry.first));
     }
 
@@ -530,18 +527,19 @@ u32 SlabAllocator::reclaim_tombstoned() {
 // (e.g. `roxy_alloc`) writes the `roxy_object_header` itself, matching the
 // existing slab + ObjectHeader contract.
 
-static void* slab_alloc_fn(void* userdata, uint32_t total_size,
-                           uint64_t* out_generation) {
+static void* slab_alloc_fn(void* userdata, uint32_t total_size, uint64_t* out_generation) {
     auto* slab = static_cast<SlabAllocator*>(userdata);
     u64 gen = 0;
     void* mem = slab->alloc(total_size, &gen);
-    if (out_generation) *out_generation = gen;
+    if (out_generation)
+        *out_generation = gen;
     return mem;
 }
 
 static void slab_free_fn(void* userdata, void* header_ptr) {
     auto* slab = static_cast<SlabAllocator*>(userdata);
-    if (!header_ptr) return;
+    if (!header_ptr)
+        return;
     // The slab zeroes the slot on free, which already tombstones
     // `weak_generation`. No additional bookkeeping needed here.
     slab->free(header_ptr);
@@ -561,4 +559,4 @@ roxy_allocator make_slab_allocator_vtable(SlabAllocator* slab) {
     return vtable;
 }
 
-}
+} // namespace rx

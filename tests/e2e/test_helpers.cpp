@@ -1,35 +1,35 @@
 #include "test_helpers.hpp"
 #include "roxy/core/doctest/doctest.h"
 
-#include "roxy/shared/lexer.hpp"
+#include "roxy/compiler/codegen/c_emitter.hpp"
+#include "roxy/compiler/codegen/lowering.hpp"
+#include "roxy/compiler/driver/module_registry.hpp"
+#include "roxy/compiler/ir/coroutine_lowering.hpp"
+#include "roxy/compiler/ir/ir_builder.hpp"
+#include "roxy/compiler/ir/ir_optimize.hpp"
+#include "roxy/compiler/ir/ir_validator.hpp"
+#include "roxy/compiler/ir/ssa_ir.hpp"
 #include "roxy/compiler/parse/parser.hpp"
 #include "roxy/compiler/sema/semantic.hpp"
 #include "roxy/compiler/types/type_env.hpp"
-#include "roxy/compiler/ir/ssa_ir.hpp"
-#include "roxy/compiler/ir/ir_builder.hpp"
-#include "roxy/compiler/ir/ir_validator.hpp"
-#include "roxy/compiler/ir/ir_optimize.hpp"
-#include "roxy/compiler/ir/coroutine_lowering.hpp"
-#include "roxy/compiler/codegen/lowering.hpp"
-#include "roxy/compiler/driver/module_registry.hpp"
-#include "roxy/compiler/codegen/c_emitter.hpp"
-#include "roxy/vm/vm.hpp"
+#include "roxy/shared/lexer.hpp"
+#include "roxy/vm/binding/registry.hpp"
 #include "roxy/vm/interpreter.hpp"
 #include "roxy/vm/natives.hpp"
-#include "roxy/vm/binding/registry.hpp"
+#include "roxy/vm/vm.hpp"
 
 #include <cstdio>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 
 #ifdef _WIN32
 #define _CRT_SECURE_NO_WARNINGS
-#include <io.h>
-#include <fcntl.h>
+#include <cstdint>
 #include <direct.h>
+#include <fcntl.h>
+#include <io.h>
 #include <sys/stat.h>
 #include <windows.h>
-#include <cstdint>
 #define dup _dup
 #define dup2 _dup2
 #define fileno _fileno
@@ -50,36 +50,37 @@ static int rx_win_mkdir(const char* path, int /*mode*/) { return _mkdir(path); }
 // doesn't understand a suffix after the template.
 static int rx_win_mkstemps(char* tmpl, int suffixlen) {
     size_t len = strlen(tmpl);
-    if ((int)len < 6 + suffixlen) return -1;
+    if ((int)len < 6 + suffixlen)
+        return -1;
     char* x = tmpl + len - 6 - suffixlen;
-    for (int i = 0; i < 6; i++) if (x[i] != 'X') return -1;
-    static const char charset[] =
-        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    for (int i = 0; i < 6; i++)
+        if (x[i] != 'X')
+            return -1;
+    static const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     static uint64_t counter = 0;
-    uint64_t seed = ((uint64_t)GetCurrentProcessId() << 32) ^
-                    (uint64_t)GetTickCount64();
+    uint64_t seed = ((uint64_t)GetCurrentProcessId() << 32) ^ (uint64_t)GetTickCount64();
     for (int attempt = 0; attempt < 256; attempt++) {
         uint64_t s = seed + (counter++) * 2654435761ull + (uint64_t)attempt;
         for (int i = 0; i < 6; i++) {
             s = s * 6364136223846793005ull + 1442695040888963407ull;
             x[i] = charset[(s >> 33) % (sizeof(charset) - 1)];
         }
-        int fd = _open(tmpl, _O_RDWR | _O_CREAT | _O_EXCL | _O_BINARY,
-                       _S_IREAD | _S_IWRITE);
-        if (fd >= 0) return fd;
+        int fd = _open(tmpl, _O_RDWR | _O_CREAT | _O_EXCL | _O_BINARY, _S_IREAD | _S_IWRITE);
+        if (fd >= 0)
+            return fd;
     }
     return -1;
 }
 #define mkstemp(tmpl) rx_win_mkstemps((tmpl), 0)
 #define mkstemps(tmpl, suffixlen) rx_win_mkstemps((tmpl), (suffixlen))
 #else
-#include <unistd.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 // Suppress MSVC deprecation warnings for freopen
 #ifdef _MSC_VER
-#pragma warning(disable: 4996)
+#pragma warning(disable : 4996)
 #endif
 
 namespace {
@@ -88,12 +89,15 @@ namespace {
 const char* rx_tmpdir() {
 #ifdef _WIN32
     const char* t = getenv("TEMP");
-    if (!t) t = getenv("TMP");
-    if (!t) t = ".";
+    if (!t)
+        t = getenv("TMP");
+    if (!t)
+        t = ".";
     return t;
 #else
     const char* t = getenv("TMPDIR");
-    if (!t) t = "/tmp";
+    if (!t)
+        t = "/tmp";
     return t;
 #endif
 }
@@ -103,7 +107,8 @@ const char* rx_tmpdir() {
 // elsewhere. clang++ accepts the GCC-style flags the harness passes.
 const char* rx_cxx() {
     const char* c = getenv("ROXY_CXX");
-    if (c) return c;
+    if (c)
+        return c;
 #ifdef _WIN32
     return "clang++";
 #else
@@ -120,7 +125,7 @@ const char* rx_exe_suffix() {
     return "";
 #endif
 }
-}  // namespace
+} // namespace
 
 namespace rx {
 
@@ -141,10 +146,11 @@ void dump_ir(IRModule* ir_module, const char* stage) {
 //
 // `registry` must already have its builtin natives registered; the caller owns
 // it (and `type_env`) because `compile()` still needs both after IR building.
-IRModule* build_ir(BumpAllocator& allocator, const char* source,
-                   NativeRegistry& registry, TypeEnv& type_env, bool debug) {
+IRModule* build_ir(BumpAllocator& allocator, const char* source, NativeRegistry& registry,
+                   TypeEnv& type_env, bool debug) {
     u32 len = 0;
-    while (source[len]) len++;
+    while (source[len])
+        len++;
 
     // Register the builtin module for prelude auto-import
     ModuleRegistry modules(allocator);
@@ -153,7 +159,8 @@ IRModule* build_ir(BumpAllocator& allocator, const char* source,
     Lexer lexer(source, len);
     Parser parser(lexer, allocator);
     Program* program = parser.parse();
-    if (!program || parser.has_error()) return nullptr;
+    if (!program || parser.has_error())
+        return nullptr;
 
     SemanticAnalyzer analyzer(allocator, type_env, modules);
     if (!analyzer.analyze(program)) {
@@ -170,8 +177,8 @@ IRModule* build_ir(BumpAllocator& allocator, const char* source,
     const auto& syn_vec = analyzer.synthetic_decls();
     Span<Decl*> synthetic_decls;
     if (!syn_vec.empty()) {
-        Decl** data = reinterpret_cast<Decl**>(allocator.alloc_bytes(
-            sizeof(Decl*) * syn_vec.size(), alignof(Decl*)));
+        Decl** data = reinterpret_cast<Decl**>(
+            allocator.alloc_bytes(sizeof(Decl*) * syn_vec.size(), alignof(Decl*)));
         for (u32 j = 0; j < syn_vec.size(); j++) {
             data[j] = syn_vec[j];
         }
@@ -180,27 +187,32 @@ IRModule* build_ir(BumpAllocator& allocator, const char* source,
 
     IRBuilder ir_builder(allocator, type_env, registry, analyzer.symbols(), modules);
     IRModule* ir_module = ir_builder.build(program, synthetic_decls);
-    if (!ir_module) return nullptr;
+    if (!ir_module)
+        return nullptr;
 
-    if (debug) dump_ir(ir_module, "before coroutine lowering");
+    if (debug)
+        dump_ir(ir_module, "before coroutine lowering");
 
     // Coroutine lowering pass: transform coroutine functions into init/resume/done
     coroutine_lower(ir_module, allocator, type_env);
-    if (debug) dump_ir(ir_module, "after coroutine lowering");
+    if (debug)
+        dump_ir(ir_module, "after coroutine lowering");
 
     optimize_module(ir_module, allocator);
-    if (debug) dump_ir(ir_module, "after optimization");
+    if (debug)
+        dump_ir(ir_module, "after optimization");
 
     IRValidator validator;
     if (!validator.validate(ir_module)) {
-        if (debug) fprintf(stderr, "IR validation failed: %s\n", validator.error());
+        if (debug)
+            fprintf(stderr, "IR validation failed: %s\n", validator.error());
         return nullptr;
     }
 
     return ir_module;
 }
 
-}  // namespace
+} // namespace
 
 BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
     TypeEnv type_env(allocator);
@@ -208,7 +220,8 @@ BCModule* compile(BumpAllocator& allocator, const char* source, bool debug) {
     register_builtin_natives(registry);
 
     IRModule* ir_module = build_ir(allocator, source, registry, type_env, debug);
-    if (!ir_module) return nullptr;
+    if (!ir_module)
+        return nullptr;
 
     BytecodeBuilder bc_builder;
     bc_builder.set_registry(&registry);
@@ -238,7 +251,8 @@ String compile_to_cpp(const char* source, bool debug, const char* source_path) {
 
     CEmitterConfig config;
     config.emit_main_entry = true;
-    if (source_path) config.source_path = String(source_path);
+    if (source_path)
+        config.source_path = String(source_path);
     CEmitter emitter(allocator, config);
 
     String output;
@@ -259,7 +273,7 @@ String compile_to_hpp(const char* source, bool debug) {
     }
 
     CEmitterConfig config;
-    config.emit_main_entry = false;  // header is for embedder use
+    config.emit_main_entry = false; // header is for embedder use
     CEmitter emitter(allocator, config);
 
     String output;
@@ -281,11 +295,13 @@ static const char* get_project_root() {
     // Fallback: derive from __FILE__
     // __FILE__ = ".../roxy-v2/tests/e2e/test_helpers.cpp"
     static char root[512] = {0};
-    if (root[0] != '\0') return root;
+    if (root[0] != '\0')
+        return root;
 
     const char* file = __FILE__;
     size_t file_len = strlen(file);
-    if (file_len >= sizeof(root)) return nullptr;
+    if (file_len >= sizeof(root))
+        return nullptr;
     strncpy(root, file, sizeof(root) - 1);
 
     for (size_t i = file_len; i > 0; i--) {
@@ -318,22 +334,26 @@ static const char* get_project_root() {
 // ROXY_CBACKEND_NO_CACHE to bypass.
 
 // FNV-1a 64-bit. Chainable: pass the previous result as `seed` to continue.
-static uint64_t fnv1a64(const void* data, size_t len,
-                        uint64_t seed = 1469598103934665603ULL) {
+static uint64_t fnv1a64(const void* data, size_t len, uint64_t seed = 1469598103934665603ULL) {
     const unsigned char* p = static_cast<const unsigned char*>(data);
     uint64_t h = seed;
-    for (size_t i = 0; i < len; i++) { h ^= p[i]; h *= 1099511628211ULL; }
+    for (size_t i = 0; i < len; i++) {
+        h ^= p[i];
+        h *= 1099511628211ULL;
+    }
     return h;
 }
 
 // Hash a file's contents (streaming). Returns 0 on failure.
 static uint64_t hash_file(const char* path) {
     FILE* f = fopen(path, "rb");
-    if (!f) return 0;
+    if (!f)
+        return 0;
     uint64_t h = 1469598103934665603ULL;
     unsigned char buf[8192];
     size_t n;
-    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) h = fnv1a64(buf, n, h);
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+        h = fnv1a64(buf, n, h);
     fclose(f);
     return h;
 }
@@ -353,17 +373,19 @@ struct RuntimeObjects {
     static constexpr int kCount = 4;
     char obj_paths[kCount][256];
     bool ok = false;
-    String link_args;  // " <obj0> <obj1> ..." appended to the link command
+    String link_args; // " <obj0> <obj1> ..." appended to the link command
     // Hash of the compiled runtime objects' contents — a stable fingerprint of
     // the runtime + compiler that's folded into each binary's cache key, so a
     // runtime change invalidates the cache. 0 means "unknown" → caching off.
     uint64_t version_hash = 0;
 
     RuntimeObjects() {
-        for (int i = 0; i < kCount; i++) obj_paths[i][0] = '\0';
+        for (int i = 0; i < kCount; i++)
+            obj_paths[i][0] = '\0';
 
         const char* project_root = get_project_root();
-        if (!project_root) return;
+        if (!project_root)
+            return;
         const char* tmpdir = rx_tmpdir();
 
         char rt_include_dir[512], rt_include_dir_root[512];
@@ -382,22 +404,26 @@ struct RuntimeObjects {
 
         for (int i = 0; i < kCount; i++) {
             snprintf(obj_paths[i], sizeof(obj_paths[i]), "%s/roxy_rt_obj_XXXXXX.o", tmpdir);
-            int fd = mkstemps(obj_paths[i], 2);  // .o suffix
-            if (fd < 0) { obj_paths[i][0] = '\0'; return; }
+            int fd = mkstemps(obj_paths[i], 2); // .o suffix
+            if (fd < 0) {
+                obj_paths[i][0] = '\0';
+                return;
+            }
             close(fd);
 
             char cmd[2048];
-            snprintf(cmd, sizeof(cmd),
-                     "%s -std=c++17 -I%s -I%s -c -o %s %s 2>&1",
-                     rx_cxx(), rt_include_dir, rt_include_dir_root, obj_paths[i], srcs[i]);
+            snprintf(cmd, sizeof(cmd), "%s -std=c++17 -I%s -I%s -c -o %s %s 2>&1", rx_cxx(),
+                     rt_include_dir, rt_include_dir_root, obj_paths[i], srcs[i]);
             FILE* pipe = popen(cmd, "r");
-            if (!pipe) return;
+            if (!pipe)
+                return;
             String errs;
             char buf[1024];
-            while (fgets(buf, sizeof(buf), pipe)) errs.append(buf, static_cast<u32>(strlen(buf)));
+            while (fgets(buf, sizeof(buf), pipe))
+                errs.append(buf, static_cast<u32>(strlen(buf)));
             if (pclose(pipe) != 0) {
-                fprintf(stderr, "[C Backend] runtime precompile failed (%s):\n%s\n",
-                        srcs[i], errs.c_str());
+                fprintf(stderr, "[C Backend] runtime precompile failed (%s):\n%s\n", srcs[i],
+                        errs.c_str());
                 return;
             }
             link_args.append(" ", 1);
@@ -410,7 +436,10 @@ struct RuntimeObjects {
         uint64_t vh = 1469598103934665603ULL;
         for (int i = 0; i < kCount; i++) {
             uint64_t fh = hash_file(obj_paths[i]);
-            if (fh == 0) { vh = 0; break; }  // read failed → disable caching
+            if (fh == 0) {
+                vh = 0;
+                break;
+            } // read failed → disable caching
             vh = fnv1a64(&fh, sizeof(fh), vh);
         }
         version_hash = vh;
@@ -419,7 +448,8 @@ struct RuntimeObjects {
 
     ~RuntimeObjects() {
         for (int i = 0; i < kCount; i++)
-            if (obj_paths[i][0] != '\0') remove(obj_paths[i]);
+            if (obj_paths[i][0] != '\0')
+                remove(obj_paths[i]);
     }
 };
 
@@ -450,8 +480,8 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
     }
 
     // Runtime include paths (generated code does #include "roxy_rt.h").
-    char rt_include_dir[512];       // For generated code: #include "roxy_rt.h"
-    char rt_include_dir_root[512];  // For roxy_rt.h: #include "roxy/rt/..."
+    char rt_include_dir[512];      // For generated code: #include "roxy_rt.h"
+    char rt_include_dir_root[512]; // For roxy_rt.h: #include "roxy/rt/..."
     snprintf(rt_include_dir, sizeof(rt_include_dir), "%s/include/roxy/rt", project_root);
     snprintf(rt_include_dir_root, sizeof(rt_include_dir_root), "%s/include", project_root);
 
@@ -470,16 +500,15 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
     // and already-(security-)assessed binary on the next run (warm ~5ms vs the
     // ~350ms first-launch assessment a fresh binary pays). doctest runs cases
     // sequentially within a process, so no locking is needed.
-    bool cache_enabled = rt.version_hash != 0 &&
-                         getenv("ROXY_CBACKEND_NO_CACHE") == nullptr;
+    bool cache_enabled = rt.version_hash != 0 && getenv("ROXY_CBACKEND_NO_CACHE") == nullptr;
     char cache_path[512] = {0};
     if (cache_enabled) {
         uint64_t key = fnv1a64(cpp_source.data(), cpp_source.size(), rt.version_hash);
         char cache_dir[400];
         snprintf(cache_dir, sizeof(cache_dir), "%s/roxy_ccache", tmpdir);
-        mkdir(cache_dir, 0777);  // ignore EEXIST
-        snprintf(cache_path, sizeof(cache_path), "%s/c_%016llx%s",
-                 cache_dir, (unsigned long long)key, rx_exe_suffix());
+        mkdir(cache_dir, 0777); // ignore EEXIST
+        snprintf(cache_path, sizeof(cache_path), "%s/c_%016llx%s", cache_dir,
+                 (unsigned long long)key, rx_exe_suffix());
     }
 
     char bin_path[512];
@@ -494,8 +523,9 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
         // Cache miss (or caching disabled): write the source, compile, link.
         char src_path[256];
         snprintf(src_path, sizeof(src_path), "%s/roxy_cbackend_XXXXXX.cpp", tmpdir);
-        int src_fd = mkstemps(src_path, 4);  // .cpp suffix
-        if (src_fd < 0) return result;
+        int src_fd = mkstemps(src_path, 4); // .cpp suffix
+        if (src_fd < 0)
+            return result;
         write(src_fd, cpp_source.data(), cpp_source.size());
         close(src_fd);
 
@@ -505,7 +535,10 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
         char build_path[256];
         snprintf(build_path, sizeof(build_path), "%s/roxy_cbackend_bin_XXXXXX", tmpdir);
         int bin_fd = mkstemp(build_path);
-        if (bin_fd < 0) { remove(src_path); return result; }
+        if (bin_fd < 0) {
+            remove(src_path);
+            return result;
+        }
         close(bin_fd);
 
         // The actual compiler output needs the platform executable suffix
@@ -514,14 +547,19 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
         snprintf(out_path, sizeof(out_path), "%s%s", build_path, rx_exe_suffix());
 
         char compile_cmd[2048];
-        snprintf(compile_cmd, sizeof(compile_cmd),
-                 "%s -std=c++17 -I%s -I%s -o %s %s%s 2>&1",
+        snprintf(compile_cmd, sizeof(compile_cmd), "%s -std=c++17 -I%s -I%s -o %s %s%s 2>&1",
                  rx_cxx(), rt_include_dir, rt_include_dir_root, out_path, src_path,
                  rt.link_args.c_str());
-        if (debug) printf("Compile command: %s\n", compile_cmd);
+        if (debug)
+            printf("Compile command: %s\n", compile_cmd);
 
         FILE* compile_pipe = popen(compile_cmd, "r");
-        if (!compile_pipe) { remove(src_path); remove(build_path); remove(out_path); return result; }
+        if (!compile_pipe) {
+            remove(src_path);
+            remove(build_path);
+            remove(out_path);
+            return result;
+        }
         char compile_output[1024];
         String compile_errors;
         while (fgets(compile_output, sizeof(compile_output), compile_pipe)) {
@@ -532,20 +570,22 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
 
         if (compile_status != 0) {
             fprintf(stderr, "[C Backend] C++ compilation failed:\n%s\n", compile_errors.c_str());
-            if (debug) fprintf(stderr, "=== Generated C++ ===\n%s\n", cpp_source.c_str());
+            if (debug)
+                fprintf(stderr, "=== Generated C++ ===\n%s\n", cpp_source.c_str());
             remove(build_path);
             remove(out_path);
             return result;
         }
 
         // The placeholder reserved the base name; the real artifact is out_path.
-        if (strcmp(out_path, build_path) != 0) remove(build_path);
+        if (strcmp(out_path, build_path) != 0)
+            remove(build_path);
 
         if (cache_enabled && rename(out_path, cache_path) == 0) {
             snprintf(bin_path, sizeof(bin_path), "%s", cache_path);
             bin_is_cached = true;
         } else {
-            snprintf(bin_path, sizeof(bin_path), "%s", out_path);  // uncached path
+            snprintf(bin_path, sizeof(bin_path), "%s", out_path); // uncached path
         }
         result.compile_success = true;
     }
@@ -560,7 +600,8 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
 
     FILE* run_pipe = popen(run_cmd, "r");
     if (!run_pipe) {
-        if (!bin_is_cached) remove(bin_path);
+        if (!bin_is_cached)
+            remove(bin_path);
         return result;
     }
 
@@ -602,22 +643,22 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug) {
 
     // Cleanup: keep the cached binary (it's the cache); only remove an uncached
     // build artifact. The source was already removed after compilation.
-    if (!bin_is_cached) remove(bin_path);
+    if (!bin_is_cached)
+        remove(bin_path);
 
     return result;
 }
 
-CBackendResult compile_and_run_cpp_with_registry(const char* source,
-                                                 NativeRegistry* registry,
+CBackendResult compile_and_run_cpp_with_registry(const char* source, NativeRegistry* registry,
                                                  const char* native_header_text,
-                                                 const char* extra_cpp_text,
-                                                 bool debug) {
+                                                 const char* extra_cpp_text, bool debug) {
     CBackendResult result;
     result.exit_code = -1;
     result.compile_success = false;
     result.run_success = false;
 
-    if (!registry) return result;
+    if (!registry)
+        return result;
 
     // Build the IR with the caller-supplied registry, then emit C++ with the
     // registry plumbed into CEmitterConfig so user-bound names dispatch to
@@ -638,8 +679,9 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
     header_path[0] = '\0';
     if (native_header_text) {
         snprintf(header_path, sizeof(header_path), "%s/roxy_native_XXXXXX.h", tmpdir);
-        int fd = mkstemps(header_path, 2);  // .h
-        if (fd < 0) return result;
+        int fd = mkstemps(header_path, 2); // .h
+        if (fd < 0)
+            return result;
         size_t hlen = strlen(native_header_text);
         write(fd, native_header_text, hlen);
         close(fd);
@@ -653,9 +695,10 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
     extra_cpp_path[0] = '\0';
     if (extra_cpp_text) {
         snprintf(extra_cpp_path, sizeof(extra_cpp_path), "%s/roxy_native_extra_XXXXXX.cpp", tmpdir);
-        int fd = mkstemps(extra_cpp_path, 4);  // .cpp
+        int fd = mkstemps(extra_cpp_path, 4); // .cpp
         if (fd < 0) {
-            if (header_path[0] != '\0') remove(header_path);
+            if (header_path[0] != '\0')
+                remove(header_path);
             return result;
         }
         size_t clen = strlen(extra_cpp_text);
@@ -681,7 +724,8 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
 
     const char* project_root = get_project_root();
     if (!project_root) {
-        if (header_path[0] != '\0') remove(header_path);
+        if (header_path[0] != '\0')
+            remove(header_path);
         return result;
     }
 
@@ -693,8 +737,10 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
     const RuntimeObjects& rt = runtime_objects();
     if (!rt.ok) {
         fprintf(stderr, "[C Backend+Registry] runtime objects unavailable\n");
-        if (header_path[0] != '\0') remove(header_path);
-        if (extra_cpp_path[0] != '\0') remove(extra_cpp_path);
+        if (header_path[0] != '\0')
+            remove(header_path);
+        if (extra_cpp_path[0] != '\0')
+            remove(extra_cpp_path);
         return result;
     }
 
@@ -705,7 +751,8 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
 
     int src_fd = mkstemps(src_path, 4);
     if (src_fd < 0) {
-        if (header_path[0] != '\0') remove(header_path);
+        if (header_path[0] != '\0')
+            remove(header_path);
         return result;
     }
     write(src_fd, cpp_source.data(), cpp_source.size());
@@ -714,7 +761,8 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
     int bin_fd = mkstemp(bin_path);
     if (bin_fd < 0) {
         remove(src_path);
-        if (header_path[0] != '\0') remove(header_path);
+        if (header_path[0] != '\0')
+            remove(header_path);
         return result;
     }
     close(bin_fd);
@@ -724,13 +772,12 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
     snprintf(out_path, sizeof(out_path), "%s%s", bin_path, rx_exe_suffix());
 
     char compile_cmd[2560];
-    snprintf(compile_cmd, sizeof(compile_cmd),
-             "%s -std=c++17 -I%s -I%s -o %s %s%s %s 2>&1",
+    snprintf(compile_cmd, sizeof(compile_cmd), "%s -std=c++17 -I%s -I%s -o %s %s%s %s 2>&1",
              rx_cxx(), rt_include_dir, rt_include_dir_root, out_path, src_path,
-             rt.link_args.c_str(),
-             extra_cpp_path[0] != '\0' ? extra_cpp_path : "");
+             rt.link_args.c_str(), extra_cpp_path[0] != '\0' ? extra_cpp_path : "");
 
-    if (debug) printf("Compile command: %s\n", compile_cmd);
+    if (debug)
+        printf("Compile command: %s\n", compile_cmd);
 
     bool compile_ok = false;
     {
@@ -766,10 +813,12 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
             }
             int run_status = pclose(run_pipe);
 #ifdef _WIN32
-            result.exit_code = run_status & 0xFF;  // low byte, matching POSIX
+            result.exit_code = run_status & 0xFF; // low byte, matching POSIX
 #else
-            if (WIFEXITED(run_status)) result.exit_code = WEXITSTATUS(run_status);
-            else result.exit_code = -1;
+            if (WIFEXITED(run_status))
+                result.exit_code = WEXITSTATUS(run_status);
+            else
+                result.exit_code = -1;
 #endif
             result.run_success = true;
         }
@@ -777,16 +826,20 @@ CBackendResult compile_and_run_cpp_with_registry(const char* source,
 
     remove(src_path);
     remove(bin_path);
-    if (strcmp(out_path, bin_path) != 0) remove(out_path);
-    if (header_path[0] != '\0') remove(header_path);
-    if (extra_cpp_path[0] != '\0') remove(extra_cpp_path);
+    if (strcmp(out_path, bin_path) != 0)
+        remove(out_path);
+    if (header_path[0] != '\0')
+        remove(header_path);
+    if (extra_cpp_path[0] != '\0')
+        remove(extra_cpp_path);
     return result;
 }
 
 bool header_compiles(const char* source, bool debug) {
     String hpp_source = compile_to_hpp(source, debug);
     if (hpp_source.empty()) {
-        if (debug) fprintf(stderr, "[Header] compile_to_hpp returned empty\n");
+        if (debug)
+            fprintf(stderr, "[Header] compile_to_hpp returned empty\n");
         return false;
     }
 
@@ -810,23 +863,24 @@ bool header_compiles(const char* source, bool debug) {
     snprintf(drv_path, sizeof(drv_path), "%s/roxy_driver_XXXXXX.cpp", tmpdir);
     snprintf(obj_path, sizeof(obj_path), "%s/roxy_header_XXXXXX.o", tmpdir);
 
-    int hpp_fd = mkstemps(hpp_path, 4);  // .hpp
-    if (hpp_fd < 0) return false;
+    int hpp_fd = mkstemps(hpp_path, 4); // .hpp
+    if (hpp_fd < 0)
+        return false;
     write(hpp_fd, hpp_source.data(), hpp_source.size());
     close(hpp_fd);
 
-    int drv_fd = mkstemps(drv_path, 4);  // .cpp
+    int drv_fd = mkstemps(drv_path, 4); // .cpp
     if (drv_fd < 0) {
         remove(hpp_path);
         return false;
     }
     char driver[768];
-    int dn = snprintf(driver, sizeof(driver),
-                      "#include \"%s\"\nint main() { return 0; }\n", hpp_path);
+    int dn =
+        snprintf(driver, sizeof(driver), "#include \"%s\"\nint main() { return 0; }\n", hpp_path);
     write(drv_fd, driver, static_cast<size_t>(dn));
     close(drv_fd);
 
-    int obj_fd = mkstemps(obj_path, 2);  // .o
+    int obj_fd = mkstemps(obj_path, 2); // .o
     if (obj_fd < 0) {
         remove(hpp_path);
         remove(drv_path);
@@ -835,11 +889,11 @@ bool header_compiles(const char* source, bool debug) {
     close(obj_fd);
 
     char compile_cmd[1536];
-    snprintf(compile_cmd, sizeof(compile_cmd),
-             "%s -std=c++17 -I%s -I%s -c -o %s %s 2>&1",
-             rx_cxx(), rt_include_dir, rt_include_dir_root, obj_path, drv_path);
+    snprintf(compile_cmd, sizeof(compile_cmd), "%s -std=c++17 -I%s -I%s -c -o %s %s 2>&1", rx_cxx(),
+             rt_include_dir, rt_include_dir_root, obj_path, drv_path);
 
-    if (debug) printf("[Header] Compile command: %s\n", compile_cmd);
+    if (debug)
+        printf("[Header] Compile command: %s\n", compile_cmd);
 
     FILE* pipe = popen(compile_cmd, "r");
     if (!pipe) {
@@ -859,7 +913,8 @@ bool header_compiles(const char* source, bool debug) {
     bool ok = (status == 0);
     if (!ok) {
         fprintf(stderr, "[Header] Compilation failed:\n%s\n", errors.c_str());
-        if (debug) fprintf(stderr, "=== Generated .hpp ===\n%s\n", hpp_source.c_str());
+        if (debug)
+            fprintf(stderr, "=== Generated .hpp ===\n%s\n", hpp_source.c_str());
     }
 
     remove(hpp_path);
@@ -904,10 +959,12 @@ public:
         GetTempFileNameA(temp_path, "roxy", 0, m_temp_path);
 #else
         const char* tmpdir = getenv("TMPDIR");
-        if (!tmpdir) tmpdir = "/tmp";
+        if (!tmpdir)
+            tmpdir = "/tmp";
         snprintf(m_temp_path, sizeof(m_temp_path), "%s/roxy_test_XXXXXX", tmpdir);
         int fd = mkstemp(m_temp_path);
-        if (fd >= 0) close(fd);
+        if (fd >= 0)
+            close(fd);
 #endif
 
         // Flush stdout before redirecting
@@ -1031,8 +1088,7 @@ TestResult run_and_capture(const char* source, StringView func_name, Span<Value>
     // every test that runs a program checks it, rather than only the tests
     // written to look for it.
     if (!g_expected_leak) {
-        CHECK_MESSAGE(result.leaked == 0,
-                      "teardown leak: ", result.leaked,
+        CHECK_MESSAGE(result.leaked == 0, "teardown leak: ", result.leaked,
                       " object(s) still alive after main() returned");
     }
 

@@ -1,8 +1,8 @@
 #pragma once
 
-#include "roxy/core/bump_allocator.hpp"
 #include "roxy/compiler/ir/ssa_ir.hpp"
 #include "roxy/compiler/types/type_env.hpp"
+#include "roxy/core/bump_allocator.hpp"
 
 namespace rx {
 
@@ -14,4 +14,4 @@ namespace rx {
 // After this pass, no IROp::Yield instructions should remain.
 void coroutine_lower(IRModule* module, BumpAllocator& allocator, TypeEnv& type_env);
 
-}
+} // namespace rx

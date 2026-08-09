@@ -53,7 +53,8 @@ RunOutcome compile_and_run_generated(const rx::gen::GeneratedProgram& program) {
     rx::vm_init(&vm);
     rx::vm_load_module(&vm, bc_module);
     outcome.ran = rx::vm_call(&vm, "main", {});
-    if (outcome.ran) outcome.result = rx::vm_get_result(&vm).as_int;
+    if (outcome.ran)
+        outcome.result = rx::vm_get_result(&vm).as_int;
     rx::vm_destroy(&vm);
     delete bc_module;
     return outcome;

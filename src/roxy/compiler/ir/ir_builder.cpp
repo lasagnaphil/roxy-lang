@@ -21,18 +21,9 @@ using namespace ir_builder_detail;
 
 IRBuilder::IRBuilder(BumpAllocator& allocator, TypeEnv& type_env, NativeRegistry& registry,
                      SymbolTable& symbols, ModuleRegistry& module_registry)
-    : m_allocator(allocator)
-    , m_type_env(type_env)
-    , m_types(type_env.types())
-    , m_registry(registry)
-    , m_symbols(symbols)
-    , m_module_registry(module_registry)
-    , m_current_func(nullptr)
-    , m_current_block(nullptr)
-    , m_has_error(false)
-    , m_error(nullptr)
-{
-}
+    : m_allocator(allocator), m_type_env(type_env), m_types(type_env.types()), m_registry(registry),
+      m_symbols(symbols), m_module_registry(module_registry), m_current_func(nullptr),
+      m_current_block(nullptr), m_has_error(false), m_error(nullptr) {}
 
 void IRBuilder::report_error(const char* message) {
     if (!m_has_error) {
@@ -60,69 +51,84 @@ IRModule* IRBuilder::build(Program* program, Span<Decl*> synthetic_decls) {
     // Each phase appends to m_module and records failures via m_has_error; bail out
     // between phases so a later phase never runs on a half-built module.
     build_user_decls(program, has_default_ctor);
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     build_synthetic_decls(synthetic_decls);
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     build_generic_fun_instances();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     build_generic_struct_ctors_dtors(has_default_ctor);
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     build_synthesized_default_ctors(program, has_default_ctor);
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     build_generic_struct_methods();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     build_synthesized_default_dtors(program);
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     build_coroutine_cleanup_wrappers();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     // Synthesize the module init/teardown functions for globals. Built after
     // user decls so the constructors/destructors they invoke already exist.
     if (IRFunction* init_fn = build_module_init(program)) {
         m_module->functions.push_back(init_fn);
     }
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
     if (IRFunction* shutdown_fn = build_module_shutdown()) {
         m_module->functions.push_back(shutdown_fn);
     }
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     // Drain synthesized container to_string requests LAST — every phase above
     // can seed the worklist (call sites only need the callee's name; both
     // backends resolve call-by-name order-independently).
     build_container_to_strings();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     // Drain synthesized exception message() bodies (same rationale as above).
     build_exception_messages();
-    if (m_has_error) return nullptr;
+    if (m_has_error)
+        return nullptr;
 
     collect_backend_types(program);
     return m_module;
 }
 
-void IRBuilder::build_user_decls(Program* program, tsl::robin_map<StringView, bool>& has_default_ctor) {
+void IRBuilder::build_user_decls(Program* program,
+                                 tsl::robin_map<StringView, bool>& has_default_ctor) {
     for (auto* decl : program->declarations) {
-        if (!decl) continue;
+        if (!decl)
+            continue;
 
         if (decl->kind == AstKind::DeclFun) {
             // Skip generic function templates (they are instantiated separately)
-            if (decl->fun_decl.type_params.size() > 0) continue;
+            if (decl->fun_decl.type_params.size() > 0)
+                continue;
             if (!decl->fun_decl.is_native && decl->fun_decl.body) {
                 IRFunction* func = build_function(&decl->fun_decl);
                 m_module->functions.push_back(func);
             }
-        }
-        else if (decl->kind == AstKind::DeclStruct) {
+        } else if (decl->kind == AstKind::DeclStruct) {
             // Skip generic struct templates
-            if (decl->struct_decl.type_params.size() > 0) continue;
+            if (decl->struct_decl.type_params.size() > 0)
+                continue;
             // Build methods
             StructDecl& struct_decl = decl->struct_decl;
             for (auto* method : struct_decl.methods) {
@@ -131,10 +137,10 @@ void IRBuilder::build_user_decls(Program* program, tsl::robin_map<StringView, bo
                     m_module->functions.push_back(func);
                 }
             }
-        }
-        else if (decl->kind == AstKind::DeclConstructor) {
+        } else if (decl->kind == AstKind::DeclConstructor) {
             // Skip generic struct constructor templates (handled below with instances)
-            if (decl->constructor_decl.type_params.size() > 0) continue;
+            if (decl->constructor_decl.type_params.size() > 0)
+                continue;
             // Build constructor
             ConstructorDecl& constructor_decl = decl->constructor_decl;
             Type* struct_type = m_type_env.named_type_by_name(constructor_decl.struct_name);
@@ -146,10 +152,10 @@ void IRBuilder::build_user_decls(Program* program, tsl::robin_map<StringView, bo
                     has_default_ctor[constructor_decl.struct_name] = true;
                 }
             }
-        }
-        else if (decl->kind == AstKind::DeclDestructor) {
+        } else if (decl->kind == AstKind::DeclDestructor) {
             // Skip generic struct destructor templates (handled below with instances)
-            if (decl->destructor_decl.type_params.size() > 0) continue;
+            if (decl->destructor_decl.type_params.size() > 0)
+                continue;
             // Build destructor
             DestructorDecl& destructor_decl = decl->destructor_decl;
             Type* struct_type = m_type_env.named_type_by_name(destructor_decl.struct_name);
@@ -157,12 +163,12 @@ void IRBuilder::build_user_decls(Program* program, tsl::robin_map<StringView, bo
                 IRFunction* func = build_destructor(&destructor_decl, struct_type);
                 m_module->functions.push_back(func);
             }
-        }
-        else if (decl->kind == AstKind::DeclMethod) {
+        } else if (decl->kind == AstKind::DeclMethod) {
             // Build method - skip trait method declarations (struct_name is a trait, not a struct)
             MethodDecl& method_decl = decl->method_decl;
             // Skip generic struct method templates (handled below with instances)
-            if (method_decl.type_params.size() > 0) continue;
+            if (method_decl.type_params.size() > 0)
+                continue;
             Type* struct_type = m_type_env.named_type_by_name(method_decl.struct_name);
             if (struct_type && struct_type->is_struct() && method_decl.body) {
                 IRFunction* func = build_method(&method_decl, struct_type);
@@ -175,7 +181,8 @@ void IRBuilder::build_user_decls(Program* program, tsl::robin_map<StringView, bo
 void IRBuilder::build_synthetic_decls(Span<Decl*> synthetic_decls) {
     // Process synthetic (injected default method, lifted lambda) declarations
     for (auto* decl : synthetic_decls) {
-        if (!decl) continue;
+        if (!decl)
+            continue;
         if (decl->kind == AstKind::DeclMethod) {
             MethodDecl& method_decl = decl->method_decl;
             Type* struct_type = m_type_env.named_type_by_name(method_decl.struct_name);
@@ -200,19 +207,21 @@ void IRBuilder::build_generic_fun_instances() {
     // template_module is empty (e.g. before the cross-module pipeline ran,
     // or in single-module compilations) fall through to the current module.
     for (auto* instance : m_type_env.generics().all_fun_instances()) {
-        if (!instance->is_analyzed || !instance->instantiated_decl) continue;
-        if (instance->is_abstract) continue;  // Phase-B artifact, never codegen'd
-        bool owns =
-            instance->template_module.empty() ||
-            m_module_name.empty() ||
-            instance->template_module == m_module_name;
-        if (!owns) continue;
+        if (!instance->is_analyzed || !instance->instantiated_decl)
+            continue;
+        if (instance->is_abstract)
+            continue; // Phase-B artifact, never codegen'd
+        bool owns = instance->template_module.empty() || m_module_name.empty() ||
+                    instance->template_module == m_module_name;
+        if (!owns)
+            continue;
         IRFunction* func = build_function(&instance->instantiated_decl->fun_decl);
         m_module->functions.push_back(func);
     }
 }
 
-void IRBuilder::build_generic_struct_ctors_dtors(tsl::robin_map<StringView, bool>& has_default_ctor) {
+void IRBuilder::build_generic_struct_ctors_dtors(
+    tsl::robin_map<StringView, bool>& has_default_ctor) {
     // Generate constructors/destructors for generic struct instances
     for_each_concrete_struct_instance([&](auto* instance) {
         for (Decl* ctor_decl : instance->instantiated_constructors) {
@@ -236,15 +245,17 @@ void IRBuilder::build_generic_struct_ctors_dtors(tsl::robin_map<StringView, bool
     });
 }
 
-void IRBuilder::build_synthesized_default_ctors(Program* program,
-                                                const tsl::robin_map<StringView, bool>& has_default_ctor) {
+void IRBuilder::build_synthesized_default_ctors(
+    Program* program, const tsl::robin_map<StringView, bool>& has_default_ctor) {
     // Generate synthesized default constructors for structs without user-defined ones
     for (auto* decl : program->declarations) {
-        if (!decl) continue;
+        if (!decl)
+            continue;
 
         if (decl->kind == AstKind::DeclStruct) {
             // Skip generic struct templates
-            if (decl->struct_decl.type_params.size() > 0) continue;
+            if (decl->struct_decl.type_params.size() > 0)
+                continue;
             StructDecl& struct_decl = decl->struct_decl;
             // Check if this struct already has a user-defined default constructor
             if (has_default_ctor.find(struct_decl.name) == has_default_ctor.end()) {
@@ -257,7 +268,8 @@ void IRBuilder::build_synthesized_default_ctors(Program* program,
         }
     }
 
-    if (m_has_error) return;
+    if (m_has_error)
+        return;
 
     // Generate synthesized default constructors for generic struct instances
     for_each_concrete_struct_instance([&](auto* instance) {
@@ -285,13 +297,16 @@ void IRBuilder::build_generic_struct_methods() {
 void IRBuilder::build_synthesized_default_dtors(Program* program) {
     // Generate synthesized default destructors for structs with uniq fields
     for (auto* decl : program->declarations) {
-        if (!decl) continue;
+        if (!decl)
+            continue;
 
         if (decl->kind == AstKind::DeclStruct) {
             // Skip generic struct templates
-            if (decl->struct_decl.type_params.size() > 0) continue;
+            if (decl->struct_decl.type_params.size() > 0)
+                continue;
             Type* struct_type = m_type_env.named_type_by_name(decl->struct_decl.name);
-            if (!struct_type || !struct_type->is_struct()) continue;
+            if (!struct_type || !struct_type->is_struct())
+                continue;
 
             // Check for synthetic default destructor (decl == nullptr)
             for (const auto& dtor : struct_type->struct_info.destructors) {
@@ -304,12 +319,14 @@ void IRBuilder::build_synthesized_default_dtors(Program* program) {
         }
     }
 
-    if (m_has_error) return;
+    if (m_has_error)
+        return;
 
     // Generate synthesized default destructors for generic struct instances with uniq fields
     for_each_concrete_struct_instance([&](auto* instance) {
         Type* concrete_type = instance->concrete_type;
-        if (!concrete_type->is_struct()) return;
+        if (!concrete_type->is_struct())
+            return;
 
         // Check for synthetic default destructor (decl == nullptr)
         for (const auto& dtor : concrete_type->struct_info.destructors) {
@@ -326,7 +343,8 @@ void IRBuilder::build_synthesized_default_dtors(Program* program) {
     // captures (a noncopyable/ref capture made backfill_lambda_env attach a
     // synthetic default destructor). The closure delete dispatches it by type_id.
     for (Type* env_type : m_env_struct_types) {
-        if (!env_type || !env_type->is_struct()) continue;
+        if (!env_type || !env_type->is_struct())
+            continue;
         // Make the synthesized env struct visible to the C backend (typedef +
         // dependency sort + TYPEID). collect_backend_types ran before lambdas
         // were processed, so these aren't in struct_types yet; the VM ignores
@@ -349,13 +367,14 @@ void IRBuilder::build_coroutine_cleanup_wrappers() {
     u32 wrapper_index = 0;
 
     for (auto* func : m_module->functions) {
-        if (!func->is_coroutine) continue;
+        if (!func->is_coroutine)
+            continue;
 
         // Scan cleanup_info for noncopyable List/Map types
         for (const auto& cleanup : func->cleanup_info) {
-            if (!cleanup.type) continue;
-            if (cleanup.type->is_container() &&
-                cleanup.type->noncopyable() &&
+            if (!cleanup.type)
+                continue;
+            if (cleanup.type->is_container() && cleanup.type->noncopyable() &&
                 seen_types.find(cleanup.type) == seen_types.end()) {
                 seen_types[cleanup.type] = true;
                 IRFunction* wrapper = build_cleanup_wrapper(cleanup.type, wrapper_index++);
@@ -366,9 +385,9 @@ void IRBuilder::build_coroutine_cleanup_wrappers() {
 
         // Scan parameters for noncopyable List/Map types
         for (const auto& param : func->params) {
-            if (!param.type) continue;
-            if (param.type->is_container() &&
-                param.type->noncopyable() &&
+            if (!param.type)
+                continue;
+            if (param.type->is_container() && param.type->noncopyable() &&
                 seen_types.find(param.type) == seen_types.end()) {
                 seen_types[param.type] = true;
                 IRFunction* wrapper = build_cleanup_wrapper(param.type, wrapper_index++);
@@ -387,10 +406,12 @@ void IRBuilder::build_coroutine_cleanup_wrappers() {
 void IRBuilder::collect_globals(Program* program) {
     u32 offset = 0;
     for (auto* decl : program->declarations) {
-        if (!decl || decl->kind != AstKind::DeclVar) continue;
+        if (!decl || decl->kind != AstKind::DeclVar)
+            continue;
         VarDecl& var_decl = decl->var_decl;
         Type* type = var_decl.resolved_type;
-        if (!type) continue;
+        if (!type)
+            continue;
         u32 slot_count = slot_count_or_1(type);
         IRGlobal g;
         g.name = var_decl.name;
@@ -407,7 +428,8 @@ void IRBuilder::collect_globals(Program* program) {
 
 ValueId IRBuilder::emit_global_addr(u32 slot_offset, Type* type) {
     IRInst* inst = emit_inst(IROp::GlobalAddr, type);
-    if (!inst) return ValueId::invalid();
+    if (!inst)
+        return ValueId::invalid();
     inst->global_data.slot_offset = slot_offset;
     return inst->result;
 }
@@ -419,7 +441,8 @@ ValueId IRBuilder::gen_global_read(u32 global_index, Type* /*result_type*/) {
     ValueId addr = emit_global_addr(g.slot_offset, type);
     // For struct globals the address IS the value (field ops want a pointer);
     // for everything else, load the stored value out of the slot.
-    if (type && type->is_struct()) return addr;
+    if (type && type->is_struct())
+        return addr;
     return emit_load_ptr(addr, slot_count, type);
 }
 
@@ -428,9 +451,13 @@ ValueId IRBuilder::gen_global_read(u32 global_index, Type* /*result_type*/) {
 IRFunction* IRBuilder::build_module_init(Program* /*program*/) {
     bool any_init = false;
     for (const IRGlobal& g : m_module->globals) {
-        if (g.initializer) { any_init = true; break; }
+        if (g.initializer) {
+            any_init = true;
+            break;
+        }
     }
-    if (!any_init) return nullptr;
+    if (!any_init)
+        return nullptr;
 
     begin_ir_function("__module_init"_sv, /*is_pub=*/false, 0);
     m_current_func->return_type = m_types.void_type();
@@ -443,7 +470,8 @@ IRFunction* IRBuilder::build_module_init(Program* /*program*/) {
         u32 slot_offset = m_module->globals[i].slot_offset;
         u32 slot_count = m_module->globals[i].slot_count;
         Expr* initializer = m_module->globals[i].initializer;
-        if (!initializer) continue;
+        if (!initializer)
+            continue;
 
         ValueId addr = emit_global_addr(slot_offset, type);
         ValueId val = gen_expr(initializer);
@@ -489,7 +517,8 @@ IRFunction* IRBuilder::build_module_shutdown() {
             break;
         }
     }
-    if (!any) return nullptr;
+    if (!any)
+        return nullptr;
 
     begin_ir_function("__module_shutdown"_sv, /*is_pub=*/false, 0);
     m_current_func->return_type = m_types.void_type();
@@ -500,7 +529,8 @@ IRFunction* IRBuilder::build_module_shutdown() {
         Type* type = m_module->globals[i].type;
         u32 slot_offset = m_module->globals[i].slot_offset;
         u32 slot_count = m_module->globals[i].slot_count;
-        if (!type) continue;
+        if (!type)
+            continue;
 
         // A `ref` global: release the borrow acquired in __module_init (finding
         // 8a). Reverse-declaration order runs this before the borrowed owner's
@@ -514,7 +544,8 @@ IRFunction* IRBuilder::build_module_shutdown() {
             emit_ref_dec(val);
             continue;
         }
-        if (type->is_copy()) continue;
+        if (type->is_copy())
+            continue;
 
         ValueId addr = emit_global_addr(slot_offset, type);
         if (type->is_struct()) {
@@ -534,16 +565,17 @@ IRFunction* IRBuilder::build_module_shutdown() {
 void IRBuilder::collect_backend_types(Program* program) {
     // Collect struct and enum types for C backend code generation
     for (auto* decl : program->declarations) {
-        if (!decl) continue;
+        if (!decl)
+            continue;
         if (decl->kind == AstKind::DeclStruct) {
             // Skip generic struct templates (they are instantiated separately)
-            if (decl->struct_decl.type_params.size() > 0) continue;
+            if (decl->struct_decl.type_params.size() > 0)
+                continue;
             Type* struct_type = m_type_env.named_type_by_name(decl->struct_decl.name);
             if (struct_type) {
                 m_module->struct_types.push_back(struct_type);
             }
-        }
-        else if (decl->kind == AstKind::DeclEnum) {
+        } else if (decl->kind == AstKind::DeclEnum) {
             Type* enum_type = m_type_env.named_type_by_name(decl->enum_decl.name);
             if (enum_type) {
                 m_module->enum_types.push_back(enum_type);
@@ -552,9 +584,8 @@ void IRBuilder::collect_backend_types(Program* program) {
     }
 
     // Collect monomorphized generic struct instances
-    for_each_concrete_struct_instance([&](auto* instance) {
-        m_module->struct_types.push_back(instance->concrete_type);
-    });
+    for_each_concrete_struct_instance(
+        [&](auto* instance) { m_module->struct_types.push_back(instance->concrete_type); });
 }
 
 void IRBuilder::begin_ir_function(StringView name, bool is_pub, u32 source_line) {
@@ -576,24 +607,27 @@ IRFunction* IRBuilder::finish_ir_function() {
 }
 
 void IRBuilder::gen_body(Stmt* body) {
-    if (!body || body->kind != AstKind::StmtBlock) return;
+    if (!body || body->kind != AstKind::StmtBlock)
+        return;
     for (auto* decl : body->block.declarations) {
         gen_decl(decl);
     }
 }
 
 void IRBuilder::add_hidden_return_param() {
-    if (!m_current_func->returns_large_struct()) return;
+    if (!m_current_func->returns_large_struct())
+        return;
     BlockParam hidden_param;
     hidden_param.value = m_current_func->new_value();
-    hidden_param.type = m_current_func->return_type;  // Pointer to struct
+    hidden_param.type = m_current_func->return_type; // Pointer to struct
     hidden_param.name = "__ret_ptr";
     m_current_func->params.push_back(hidden_param);
     m_current_func->param_is_ptr.push_back(true);
 }
 
 Type* IRBuilder::resolve_return_type(TypeExpr* return_type_expr, StringView symbol_name) {
-    if (!return_type_expr) return m_types.void_type();
+    if (!return_type_expr)
+        return m_types.void_type();
     // Prefer the symbol table's resolved function type (semantic analysis
     // already resolved it) for declarations that are function symbols.
     if (!symbol_name.empty()) {
@@ -603,21 +637,21 @@ Type* IRBuilder::resolve_return_type(TypeExpr* return_type_expr, StringView symb
         }
     }
     Type* type = m_type_env.type_by_name(return_type_expr->name);
-    if (!type) type = m_types.void_type();
+    if (!type)
+        type = m_types.void_type();
     return apply_ref_kind(type, return_type_expr->ref_kind);
 }
 
 IRFunction* IRBuilder::build_function(FunDecl* decl) {
     // Members of an overload set emit under their signature-suffixed flat name
     // ("$ol$f$i32"); single definitions keep the plain name.
-    StringView base_name = decl->overload_mangled_name.empty()
-        ? decl->name : decl->overload_mangled_name;
+    StringView base_name =
+        decl->overload_mangled_name.empty() ? decl->name : decl->overload_mangled_name;
     // Non-pub functions are scoped to their module so they don't collide at link time.
     // "main" is the program entry point convention — leave it un-mangled so the host
     // can still invoke it via vm_call(&vm, "main", {}).
-    StringView name = (!decl->is_pub && decl->name != "main"_sv)
-        ? mangle_module_local(base_name)
-        : base_name;
+    StringView name =
+        (!decl->is_pub && decl->name != "main"_sv) ? mangle_module_local(base_name) : base_name;
     // Source line for AOT `#line` directives. Use the body's first line —
     // typically the same as the function header or the next line after.
     begin_ir_function(name, decl->is_pub, decl->body ? decl->body->loc.line : 0);
@@ -631,8 +665,8 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
     Type* return_type = nullptr;
     if (!decl->overload_mangled_name.empty()) {
         for (Symbol* sym = m_symbols.lookup(decl->name); sym; sym = sym->next_overload) {
-            if (sym->decl && &sym->decl->fun_decl == decl &&
-                sym->type && sym->type->is_function()) {
+            if (sym->decl && &sym->decl->fun_decl == decl && sym->type &&
+                sym->type->is_function()) {
                 return_type = sym->type->func_info.return_type;
                 break;
             }
@@ -647,11 +681,13 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
     // classified once in semantic analysis (FunDecl::is_coroutine). A function
     // that merely returns/forwards a Coro<T> value is ordinary, even though its
     // return type is_coroutine().
-    if (decl->is_coroutine && m_current_func->return_type && m_current_func->return_type->is_coroutine()) {
+    if (decl->is_coroutine && m_current_func->return_type &&
+        m_current_func->return_type->is_coroutine()) {
         m_current_func->is_coroutine = true;
         m_current_func->coro_type = m_current_func->return_type;
         m_current_func->coro_yield_type = m_current_func->return_type->coro_info.yield_type;
-        m_current_func->coro_struct_type = m_current_func->return_type->coro_info.generated_struct_type;
+        m_current_func->coro_struct_type =
+            m_current_func->return_type->coro_info.generated_struct_type;
         // A coroutine's `ref` params are NOT counted via the normal per-frame
         // resume-flow inc/dec: the coroutine split scatters the entry-inc and
         // exit-dec across resume states, so the dec is missed when the coro is
@@ -666,7 +702,7 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
     // Check for large struct return - add hidden output pointer as last parameter
     add_hidden_return_param();
 
-    begin_function_body(true);  // skip hidden return pointer
+    begin_function_body(true); // skip hidden return pointer
     gen_body(decl->body);
     end_function_body();
     return finish_ir_function();
@@ -731,8 +767,7 @@ IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_typ
         u32 inherited_slot_count = parent_type ? parent_type->struct_info.slot_count : 0;
         u32 total_slots = struct_type->struct_info.slot_count;
         if (total_slots > inherited_slot_count) {
-            emit_zero_slots(m_current_func->params[0].value,
-                            inherited_slot_count,
+            emit_zero_slots(m_current_func->params[0].value, inherited_slot_count,
                             total_slots - inherited_slot_count);
         }
     }
@@ -756,7 +791,8 @@ IRFunction* IRBuilder::build_constructor(ConstructorDecl* decl, Type* struct_typ
 static Type* nearest_default_destructor(Type* parent) {
     for (Type* current = parent; current && current->is_struct();
          current = current->struct_info.parent) {
-        if (struct_has_default_dtor(current)) return current;
+        if (struct_has_default_dtor(current))
+            return current;
     }
     return nullptr;
 }
@@ -830,11 +866,13 @@ IRFunction* IRBuilder::build_method(MethodDecl* decl, Type* struct_type) {
     // A method is a coroutine (state machine to lower) iff its body yields —
     // classified in register_method_signature (MethodDecl::is_coroutine). Mirrors
     // build_function's coroutine block; `self` is captured like any `ref` param.
-    if (decl->is_coroutine && m_current_func->return_type && m_current_func->return_type->is_coroutine()) {
+    if (decl->is_coroutine && m_current_func->return_type &&
+        m_current_func->return_type->is_coroutine()) {
         m_current_func->is_coroutine = true;
         m_current_func->coro_type = m_current_func->return_type;
         m_current_func->coro_yield_type = m_current_func->return_type->coro_info.yield_type;
-        m_current_func->coro_struct_type = m_current_func->return_type->coro_info.generated_struct_type;
+        m_current_func->coro_struct_type =
+            m_current_func->return_type->coro_info.generated_struct_type;
         // Suppress per-frame ref-param inc/dec for the coroutine (the split
         // scatters them incorrectly); the borrow is counted for the state
         // struct's lifetime instead. `self` isn't in m_ref_params, but other
@@ -845,7 +883,7 @@ IRFunction* IRBuilder::build_method(MethodDecl* decl, Type* struct_type) {
     // Check for large struct return - add hidden output pointer as last parameter
     add_hidden_return_param();
 
-    begin_function_body(true);  // skip hidden return pointer
+    begin_function_body(true); // skip hidden return pointer
     gen_body(decl->body);
     end_function_body();
     return finish_ir_function();
@@ -854,8 +892,7 @@ IRFunction* IRBuilder::build_method(MethodDecl* decl, Type* struct_type) {
 IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) {
     StructTypeInfo& struct_type_info = struct_type->struct_info;
     begin_ir_function(mangle_constructor(struct_type_info.name),
-                      struct_type_info.decl && struct_type_info.decl->struct_decl.is_pub,
-                      0);
+                      struct_type_info.decl && struct_type_info.decl->struct_decl.is_pub, 0);
 
     // Set up parameters - only 'self'
     setup_parameters({}, struct_type);
@@ -887,23 +924,29 @@ IRFunction* IRBuilder::build_synthesized_default_constructor(Type* struct_type) 
 }
 
 ValueId IRBuilder::emit_zero_value(Type* type) {
-    if (type->is_bool()) return emit_const_bool(false);
-    if (type->is_integer() || type->is_enum()) return emit_const_int(0, type);
-    if (type->is_float()) return emit_const_float(0.0, type);
-    if (type->kind == TypeKind::String) return emit_const_string("");
+    if (type->is_bool())
+        return emit_const_bool(false);
+    if (type->is_integer() || type->is_enum())
+        return emit_const_int(0, type);
+    if (type->is_float())
+        return emit_const_float(0.0, type);
+    if (type->kind == TypeKind::String)
+        return emit_const_string("");
     return emit_const_null();
 }
 
 void IRBuilder::emit_own_field_default_init(ValueId self_ptr, Type* struct_type) {
     StructTypeInfo& struct_type_info = struct_type->struct_info;
     // No declaration (synthesized struct types) — nothing declares a default.
-    if (!struct_type_info.decl) return;
+    if (!struct_type_info.decl)
+        return;
     StructDecl& struct_decl = struct_type_info.decl->struct_decl;
 
     // Initialize regular fields from struct_decl.fields
     for (const auto& field : struct_decl.fields) {
         const FieldInfo* field_info = struct_type_info.find_field(field.name);
-        if (!field_info) continue;
+        if (!field_info)
+            continue;
 
         if (field.default_value) {
             ValueId value = gen_expr(field.default_value);
@@ -911,8 +954,8 @@ void IRBuilder::emit_own_field_default_init(ValueId self_ptr, Type* struct_type)
             if (field_info->type && field_info->type->is_struct()) {
                 ValueId field_addr = emit_get_field_addr(self_ptr, field_info->name,
                                                          field_info->slot_offset, field_info->type);
-                emit_struct_copy(field_addr, value, field_info->slot_count,
-                                 field_info->type, struct_copy_kind_for(field.default_value));
+                emit_struct_copy(field_addr, value, field_info->slot_count, field_info->type,
+                                 struct_copy_kind_for(field.default_value));
             } else {
                 emit_set_field(self_ptr, field_info->name, field_info->slot_offset,
                                field_info->slot_count, value, field_info->type);
@@ -932,10 +975,11 @@ void IRBuilder::emit_own_field_default_init(ValueId self_ptr, Type* struct_type)
     // Discriminants are zero-initialized (first enum variant)
     for (const auto& wfd : struct_decl.when_clauses) {
         const FieldInfo* field_info = struct_type_info.find_field(wfd.discriminant_name);
-        if (!field_info) continue;
+        if (!field_info)
+            continue;
         ValueId value = emit_zero_value(field_info->type);
-        emit_set_field(self_ptr, field_info->name, field_info->slot_offset,
-                       field_info->slot_count, value, field_info->type);
+        emit_set_field(self_ptr, field_info->name, field_info->slot_offset, field_info->slot_count,
+                       value, field_info->type);
     }
 
     // Zero the whole union region of each when-clause. Stack allocation
@@ -946,7 +990,8 @@ void IRBuilder::emit_own_field_default_init(ValueId self_ptr, Type* struct_type)
     // `slab_allocator::free_in_slab`. Zeroing the union once covers every
     // variant's fields — no per-variant iteration needed.
     for (const auto& clause : struct_type_info.when_clauses) {
-        if (clause.union_slot_count == 0) continue;
+        if (clause.union_slot_count == 0)
+            continue;
         emit_zero_slots(self_ptr, clause.union_slot_offset, clause.union_slot_count);
     }
 }
@@ -964,8 +1009,7 @@ void IRBuilder::emit_struct_default_init(ValueId ptr, Type* struct_type) {
 IRFunction* IRBuilder::build_synthesized_default_destructor(Type* struct_type) {
     StructTypeInfo& struct_type_info = struct_type->struct_info;
     begin_ir_function(mangle_destructor(struct_type_info.name),
-                      struct_type_info.decl && struct_type_info.decl->struct_decl.is_pub,
-                      0);
+                      struct_type_info.decl && struct_type_info.decl->struct_decl.is_pub, 0);
 
     // Set up parameters - only 'self'
     setup_parameters({}, struct_type);
@@ -1005,7 +1049,8 @@ IRFunction* IRBuilder::build_cleanup_wrapper(Type* noncopyable_type, u32 wrapper
     // Emit typed delete — runtime handles container iteration and element cleanup
     emit_delete(param_val, noncopyable_type);
 
-    // Set Return terminator directly (avoid finish_block_return which calls emit_ref_param_decrements).
+    // Set Return terminator directly (avoid finish_block_return which calls
+    // emit_ref_param_decrements).
     if (m_current_block && m_current_block->terminator.kind == TerminatorKind::None) {
         m_current_block->terminator.kind = TerminatorKind::Return;
         m_current_block->terminator.return_value = ValueId::invalid();
@@ -1017,7 +1062,8 @@ IRFunction* IRBuilder::build_cleanup_wrapper(Type* noncopyable_type, u32 wrapper
 StringView IRBuilder::request_container_to_string(Type* container_type) {
     container_type = container_type->base_type();
     auto it = m_container_tostring_names.find(container_type);
-    if (it != m_container_tostring_names.end()) return it->second;
+    if (it != m_container_tostring_names.end())
+        return it->second;
 
     // "List$i32$$to_string", module-local-wrapped like any non-pub function
     // (each module synthesizes its own private copy — no merge collisions).
@@ -1031,10 +1077,12 @@ StringView IRBuilder::request_container_to_string(Type* container_type) {
 // ── Builtin exception types (KeyError / IndexError) ──
 
 bool IRBuilder::is_builtin_exception_type(Type* type) const {
-    if (!type) return false;
+    if (!type)
+        return false;
     type = type->base_type();
     // Builtins are decl-less structs registered by register_builtin_exception_types.
-    if (!type || !type->is_struct() || type->struct_info.decl != nullptr) return false;
+    if (!type || !type->is_struct() || type->struct_info.decl != nullptr)
+        return false;
     StringView name = type->struct_info.name;
     return name == "KeyError"_sv || name == "IndexError"_sv;
 }
@@ -1045,8 +1093,10 @@ bool IRBuilder::is_builtin_exception_type(Type* type) const {
 // collect_backend_types never adds them — the throw / message sites do.
 void IRBuilder::register_backend_exception_type(Type* exc_type) {
     exc_type = exc_type->base_type();
-    if (!exc_type) return;
-    if (!m_backend_exc_types_added.insert(exc_type).second) return;
+    if (!exc_type)
+        return;
+    if (!m_backend_exc_types_added.insert(exc_type).second)
+        return;
     m_module->struct_types.push_back(exc_type);
 }
 
@@ -1054,12 +1104,12 @@ StringView IRBuilder::request_exception_message(Type* exc_type) {
     exc_type = exc_type->base_type();
     register_backend_exception_type(exc_type);
     auto it = m_exception_message_names.find(exc_type);
-    if (it != m_exception_message_names.end()) return it->second;
+    if (it != m_exception_message_names.end())
+        return it->second;
 
     // Module-local-wrapped like container to_string — each module synthesizes its
     // own private "KeyError$$message" copy, so multi-module link can't collide.
-    StringView name = mangle_module_local(
-        mangle_method(exc_type->struct_info.name, "message"_sv));
+    StringView name = mangle_module_local(mangle_method(exc_type->struct_info.name, "message"_sv));
     m_exception_message_names[exc_type] = name;
     m_exception_message_pending.push_back(exc_type);
     return name;
@@ -1070,7 +1120,8 @@ void IRBuilder::build_exception_messages() {
         Type* exc_type = m_exception_message_pending[i];
         StringView name = m_exception_message_names[exc_type];
         IRFunction* func = build_exception_message(exc_type, name);
-        if (func) m_module->functions.push_back(func);
+        if (func)
+            m_module->functions.push_back(func);
     }
 }
 
@@ -1093,8 +1144,8 @@ IRFunction* IRBuilder::build_exception_message(Type* exc_type, StringView name) 
     set_current_block(create_block("entry"_sv));
 
     ValueId msg = (exc_type->struct_info.name == "KeyError"_sv)
-        ? emit_const_string("Map key not found"_sv)
-        : emit_const_string("List index out of bounds"_sv);
+                      ? emit_const_string("Map key not found"_sv)
+                      : emit_const_string("List index out of bounds"_sv);
     finish_block_return(msg);
 
     return finish_ir_function();
@@ -1106,13 +1157,15 @@ IRFunction* IRBuilder::build_exception_message(Type* exc_type, StringView name) 
 // (or on the unhandled path).
 void IRBuilder::emit_throw_builtin_exception(StringView exc_type_name) {
     Type* exc_type = m_type_env.named_type_by_name(exc_type_name);
-    if (exc_type) register_backend_exception_type(exc_type);
+    if (exc_type)
+        register_backend_exception_type(exc_type);
     Span<ValueId> empty_args = {};
     Type* uniq_type = exc_type ? m_types.uniq_type(exc_type) : nullptr;
     ValueId exc = emit_new(exc_type_name, empty_args, uniq_type);
 
     IRInst* inst = emit_inst(IROp::Throw, m_types.void_type());
-    if (inst) inst->unary = exc;
+    if (inst)
+        inst->unary = exc;
 
     finish_block_unreachable();
 }
@@ -1127,8 +1180,8 @@ void IRBuilder::emit_list_bounds_check(ValueId list_val, ValueId index_val) {
         report_error("Internal error: List$$len native missing");
         return;
     }
-    ValueId len = emit_call_native(len_name, alloc_span({list_val}), i32_type,
-                                   static_cast<u32>(len_idx));
+    ValueId len =
+        emit_call_native(len_name, alloc_span({list_val}), i32_type, static_cast<u32>(len_idx));
 
     // The list index is i32 (List.index(idx: i32)). Two signed checks catch both
     // a too-large index and a negative one — kept signed (not a single unsigned
@@ -1157,7 +1210,8 @@ void IRBuilder::build_container_to_strings() {
         Type* container_type = m_container_tostring_pending[i];
         StringView name = m_container_tostring_names[container_type];
         IRFunction* func = build_container_to_string(container_type, name);
-        if (func) m_module->functions.push_back(func);
+        if (func)
+            m_module->functions.push_back(func);
     }
 }
 
@@ -1194,7 +1248,8 @@ IRFunction* IRBuilder::build_container_to_string(Type* container_type, StringVie
         }
         ValueId next_acc = concat(acc, piece);
         emit_str_release(acc);
-        if (owned) emit_str_release(piece);
+        if (owned)
+            emit_str_release(piece);
         return next_acc;
     };
 
@@ -1233,8 +1288,8 @@ IRFunction* IRBuilder::build_container_to_string(Type* container_type, StringVie
         i32 len_idx = m_registry.get_index(len_name);
         assert(len_idx >= 0);
 
-        ValueId len = emit_call_native(len_name, alloc_span({self_val}), i32_type,
-                                       static_cast<u32>(len_idx));
+        ValueId len =
+            emit_call_native(len_name, alloc_span({self_val}), i32_type, static_cast<u32>(len_idx));
         ValueId lbracket = emit_const_string("["_sv);
 
         IRBlock* header = create_block("ts_header"_sv);
@@ -1267,8 +1322,8 @@ IRFunction* IRBuilder::build_container_to_string(Type* container_type, StringVie
         ValueId is_first = emit_binary(IROp::EqI, i_param, zero, bool_type);
         Vector<BlockArgPair> first_args;
         first_args.push_back({acc_param});
-        finish_block_branch(is_first, elem_block->id, sep->id,
-                            alloc_span(first_args), Span<BlockArgPair>());
+        finish_block_branch(is_first, elem_block->id, sep->id, alloc_span(first_args),
+                            Span<BlockArgPair>());
 
         set_current_block(sep);
         ValueId comma = emit_const_string(", "_sv);
@@ -1308,17 +1363,18 @@ IRFunction* IRBuilder::build_container_to_string(Type* container_type, StringVie
         // convention). Everything else is ≤2 inline slots and comes back
         // packed by value.
         auto fetch = [&](bool is_key, ValueId bucket_idx, Type* type) -> ValueId {
-            StringView fetch_name = type->is_struct()
-                ? (is_key ? "__map_iter_key_ptr_at"_sv : "__map_iter_value_ptr_at"_sv)
-                : (is_key ? "__map_iter_key_at"_sv : "__map_iter_value_at"_sv);
+            StringView fetch_name =
+                type->is_struct()
+                    ? (is_key ? "__map_iter_key_ptr_at"_sv : "__map_iter_value_ptr_at"_sv)
+                    : (is_key ? "__map_iter_key_at"_sv : "__map_iter_value_at"_sv);
             i32 fetch_idx = m_registry.get_index(fetch_name);
             assert(fetch_idx >= 0);
             return emit_call_native(fetch_name, alloc_span({self_val, bucket_idx}), type,
                                     static_cast<u32>(fetch_idx));
         };
 
-        ValueId cap = emit_call_native(cap_name, alloc_span({self_val}), i32_type,
-                                       static_cast<u32>(cap_idx));
+        ValueId cap =
+            emit_call_native(cap_name, alloc_span({self_val}), i32_type, static_cast<u32>(cap_idx));
         ValueId lbrace = emit_const_string("{"_sv);
 
         IRBlock* header = create_block("ts_header"_sv);
@@ -1354,8 +1410,8 @@ IRFunction* IRBuilder::build_container_to_string(Type* container_type, StringVie
         ValueId is_first = emit_binary(IROp::EqI, n_param, zero, bool_type);
         Vector<BlockArgPair> first_args;
         first_args.push_back({acc_param});
-        finish_block_branch(is_first, kv_block->id, sep->id,
-                            alloc_span(first_args), Span<BlockArgPair>());
+        finish_block_branch(is_first, kv_block->id, sep->id, alloc_span(first_args),
+                            Span<BlockArgPair>());
 
         set_current_block(sep);
         ValueId comma = emit_const_string(", "_sv);
@@ -1412,7 +1468,8 @@ StringView IRBuilder::mangle_module_local(StringView name) {
 }
 
 void IRBuilder::emit_zero_slots(ValueId self_ptr, u32 start_slot, u32 slot_count) {
-    if (slot_count == 0) return;
+    if (slot_count == 0)
+        return;
     ValueId null_val = emit_const_null();
     Type* void_ty = m_types.void_type();
     StringView tag("__zero", 6);
@@ -1433,10 +1490,14 @@ void IRBuilder::emit_zero_slots(ValueId self_ptr, u32 start_slot, u32 slot_count
 
 Type* IRBuilder::apply_ref_kind(Type* base_type, RefKind ref_kind) {
     switch (ref_kind) {
-        case RefKind::Uniq: return m_types.uniq_type(base_type);
-        case RefKind::Ref:  return m_types.ref_type(base_type);
-        case RefKind::Weak: return m_types.weak_type(base_type);
-        case RefKind::None: return base_type;
+        case RefKind::Uniq:
+            return m_types.uniq_type(base_type);
+        case RefKind::Ref:
+            return m_types.ref_type(base_type);
+        case RefKind::Weak:
+            return m_types.weak_type(base_type);
+        case RefKind::None:
+            return base_type;
     }
     return base_type;
 }
@@ -1455,8 +1516,8 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
     // Add function parameters to local scope
     // Skip the hidden return pointer parameter if requested
     u32 param_count = skip_hidden_return && m_current_func->returns_large_struct()
-        ? m_current_func->params.size() - 1
-        : m_current_func->params.size();
+                          ? m_current_func->params.size() - 1
+                          : m_current_func->params.size();
     for (u32 i = 0; i < param_count; i++) {
         BlockParam& bp = m_current_func->params[i];
         // Cache the pointer-param bit on the LocalVar (out/inout/self) so
@@ -1475,7 +1536,8 @@ void IRBuilder::begin_function_body(bool skip_hidden_return) {
         if (param_owns_its_value(bp.type) && !m_param_is_ptr.count(bp.name)) {
             u32 scope_depth = static_cast<u32>(m_local_scopes.size());
             BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
-            m_ownership.track({bp.name, bp.type, scope_depth, false, false, current_block_id, bp.value});
+            m_ownership.track(
+                {bp.name, bp.type, scope_depth, false, false, current_block_id, bp.value});
         }
     }
 
@@ -1530,9 +1592,9 @@ void IRBuilder::end_function_body() {
         // so the two paths are mutually exclusive.
         if (m_ref_param_entry_block.is_valid() && end_block.is_valid()) {
             for (const RefParamInfo& rp : m_ref_params) {
-                m_current_func->cleanup_info.push_back(
-                    {rp.value, rp.type, m_ref_param_entry_block, end_block,
-                     IRCleanupKind::RefDec, /*whole_function_scope=*/true});
+                m_current_func->cleanup_info.push_back({rp.value, rp.type, m_ref_param_entry_block,
+                                                        end_block, IRCleanupKind::RefDec,
+                                                        /*whole_function_scope=*/true});
             }
         }
 
@@ -1553,7 +1615,7 @@ void IRBuilder::end_function_body() {
 
 void IRBuilder::setup_parameters(Span<Param> params, Type* self_type) {
     // Clear parameter tracking
-    m_param_is_ptr.clear();  // robin_map::clear already keeps capacity
+    m_param_is_ptr.clear(); // robin_map::clear already keeps capacity
     m_ref_params.clear_keep_capacity();
     m_call_borrow_cleanups.clear_keep_capacity();
 
@@ -1605,4 +1667,4 @@ StringView IRBuilder::mangle_destructor(StringView struct_name, StringView dtor_
     return rx::mangle_destructor(m_allocator, struct_name, dtor_name);
 }
 
-}
+} // namespace rx

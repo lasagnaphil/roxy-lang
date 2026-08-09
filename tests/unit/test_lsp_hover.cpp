@@ -1,11 +1,11 @@
 #include "roxy/core/doctest/doctest.h"
 
-#include "roxy/lsp/global_index.hpp"
-#include "roxy/lsp/lsp_analysis_context.hpp"
-#include "roxy/lsp/lsp_parser.hpp"
-#include "roxy/lsp/indexer.hpp"
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/tsl/robin_map.h"
+#include "roxy/lsp/global_index.hpp"
+#include "roxy/lsp/indexer.hpp"
+#include "roxy/lsp/lsp_analysis_context.hpp"
+#include "roxy/lsp/lsp_parser.hpp"
 
 #include <cstring>
 
@@ -39,7 +39,7 @@ struct HoverTestContext {
 
 // Helper: find the SyntaxNode at a given byte offset
 static SyntaxNode* parse_and_find(const char* source, u32 offset, BumpAllocator& allocator,
-                                   SyntaxTree& out_tree) {
+                                  SyntaxTree& out_tree) {
     u32 length = static_cast<u32>(strlen(source));
     Lexer lexer(source, length);
     LspParser parser(lexer, allocator);
@@ -64,8 +64,9 @@ static SyntaxNode* find_enclosing_function(SyntaxNode* node) {
 
 // Resolve hover text for a node — mirrors the logic in handle_hover
 static String resolve_hover(SyntaxNode* node, const char* source, u32 source_length,
-                             GlobalIndex& index, LspAnalysisContext& analysis_ctx) {
-    if (!node) return String();
+                            GlobalIndex& index, LspAnalysisContext& analysis_ctx) {
+    if (!node)
+        return String();
 
     // Bool literals
     if (node->kind == SyntaxKind::TokenKwTrue || node->kind == SyntaxKind::TokenKwFalse) {
@@ -98,15 +99,16 @@ static String resolve_hover(SyntaxNode* node, const char* source, u32 source_len
     }
 
     // Only identifiers from here on
-    if (node->kind != SyntaxKind::TokenIdentifier) return String();
+    if (node->kind != SyntaxKind::TokenIdentifier)
+        return String();
 
     StringView identifier = node->token.text();
     SyntaxNode* parent = node->parent;
 
     // Field/method access (NodeGetExpr)
     if (parent && parent->kind == SyntaxKind::NodeGetExpr) {
-        bool is_member_name = parent->children.size() >= 3 &&
-            parent->children[parent->children.size() - 1] == node;
+        bool is_member_name =
+            parent->children.size() >= 3 && parent->children[parent->children.size() - 1] == node;
 
         if (is_member_name) {
             SyntaxNode* object_expr = parent->children[0];
@@ -115,8 +117,8 @@ static String resolve_hover(SyntaxNode* node, const char* source, u32 source_len
             SyntaxNode* enclosing_fn = find_enclosing_function(parent);
             if (enclosing_fn) {
                 BumpAllocator ast_allocator(8192);
-                BodyAnalysisResult body_result = analysis_ctx.analyze_function_body(
-                    enclosing_fn, ast_allocator);
+                BodyAnalysisResult body_result =
+                    analysis_ctx.analyze_function_body(enclosing_fn, ast_allocator);
                 if (body_result.decl) {
                     tsl::robin_map<String, Type*> local_vars;
                     analysis_ctx.collect_local_variables(body_result.decl, local_vars);
@@ -162,8 +164,8 @@ static String resolve_hover(SyntaxNode* node, const char* source, u32 source_len
 
     // Static access (NodeStaticGetExpr)
     if (parent && parent->kind == SyntaxKind::NodeStaticGetExpr) {
-        bool is_member_child = parent->children.size() >= 3 &&
-            parent->children[parent->children.size() - 1] == node;
+        bool is_member_child =
+            parent->children.size() >= 3 && parent->children[parent->children.size() - 1] == node;
 
         if (is_member_child) {
             StringView type_name;
@@ -277,8 +279,8 @@ static String resolve_hover(SyntaxNode* node, const char* source, u32 source_len
         SyntaxNode* enclosing_fn = find_enclosing_function(node);
         if (enclosing_fn) {
             BumpAllocator ast_allocator(8192);
-            BodyAnalysisResult body_result = analysis_ctx.analyze_function_body(
-                enclosing_fn, ast_allocator);
+            BodyAnalysisResult body_result =
+                analysis_ctx.analyze_function_body(enclosing_fn, ast_allocator);
             if (body_result.decl) {
                 tsl::robin_map<String, Type*> local_vars;
                 analysis_ctx.collect_local_variables(body_result.decl, local_vars);
@@ -339,12 +341,11 @@ static String resolve_hover(SyntaxNode* node, const char* source, u32 source_len
 TEST_SUITE("LSP Hover") {
 
     TEST_CASE("Variable in expression") {
-        const char* source =
-            "struct Point { x: f32; y: f32; }\n"
-            "fun test() {\n"
-            "    var p: Point;\n"
-            "    p;\n"
-            "}\n";
+        const char* source = "struct Point { x: f32; y: f32; }\n"
+                             "fun test() {\n"
+                             "    var p: Point;\n"
+                             "    p;\n"
+                             "}\n";
 
         HoverTestContext ctx;
         ctx.setup(source);
@@ -357,8 +358,8 @@ TEST_SUITE("LSP Hover") {
         SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
         REQUIRE(node != nullptr);
 
-        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
-                                      ctx.index, ctx.analysis_ctx);
+        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), ctx.index,
+                                     ctx.analysis_ctx);
         CHECK(hover == String("(variable) p: Point"));
     }
 
@@ -375,19 +376,18 @@ TEST_SUITE("LSP Hover") {
         SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
         REQUIRE(node != nullptr);
 
-        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
-                                      ctx.index, ctx.analysis_ctx);
+        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), ctx.index,
+                                     ctx.analysis_ctx);
         CHECK(hover == String("fun add(a: i32, b: i32): i32"));
     }
 
     TEST_CASE("Method after dot") {
-        const char* source =
-            "struct Point { x: f32; y: f32; }\n"
-            "fun Point.length(): f32 { return 0.0; }\n"
-            "fun test() {\n"
-            "    var p: Point;\n"
-            "    p.length();\n"
-            "}\n";
+        const char* source = "struct Point { x: f32; y: f32; }\n"
+                             "fun Point.length(): f32 { return 0.0; }\n"
+                             "fun test() {\n"
+                             "    var p: Point;\n"
+                             "    p.length();\n"
+                             "}\n";
 
         HoverTestContext ctx;
         ctx.setup(source);
@@ -402,18 +402,17 @@ TEST_SUITE("LSP Hover") {
         SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
         REQUIRE(node != nullptr);
 
-        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
-                                      ctx.index, ctx.analysis_ctx);
+        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), ctx.index,
+                                     ctx.analysis_ctx);
         CHECK(hover == String("fun Point.length(): f32"));
     }
 
     TEST_CASE("Field after dot") {
-        const char* source =
-            "struct Point { x: f32; y: f32; }\n"
-            "fun test() {\n"
-            "    var p: Point;\n"
-            "    p.x;\n"
-            "}\n";
+        const char* source = "struct Point { x: f32; y: f32; }\n"
+                             "fun test() {\n"
+                             "    var p: Point;\n"
+                             "    p.x;\n"
+                             "}\n";
 
         HoverTestContext ctx;
         ctx.setup(source);
@@ -428,17 +427,16 @@ TEST_SUITE("LSP Hover") {
         SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
         REQUIRE(node != nullptr);
 
-        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
-                                      ctx.index, ctx.analysis_ctx);
+        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), ctx.index,
+                                     ctx.analysis_ctx);
         CHECK(hover == String("(field) Point.x: f32"));
     }
 
     TEST_CASE("Struct type in annotation") {
-        const char* source =
-            "struct Point { x: f32; y: f32; }\n"
-            "fun test() {\n"
-            "    var p: Point;\n"
-            "}\n";
+        const char* source = "struct Point { x: f32; y: f32; }\n"
+                             "fun test() {\n"
+                             "    var p: Point;\n"
+                             "}\n";
 
         HoverTestContext ctx;
         ctx.setup(source);
@@ -453,17 +451,16 @@ TEST_SUITE("LSP Hover") {
         SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
         REQUIRE(node != nullptr);
 
-        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
-                                      ctx.index, ctx.analysis_ctx);
+        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), ctx.index,
+                                     ctx.analysis_ctx);
         CHECK(hover == String("struct Point"));
     }
 
     TEST_CASE("Enum type") {
-        const char* source =
-            "enum Color { Red, Green, Blue }\n"
-            "fun test() {\n"
-            "    var c: Color;\n"
-            "}\n";
+        const char* source = "enum Color { Red, Green, Blue }\n"
+                             "fun test() {\n"
+                             "    var c: Color;\n"
+                             "}\n";
 
         HoverTestContext ctx;
         ctx.setup(source);
@@ -478,17 +475,16 @@ TEST_SUITE("LSP Hover") {
         SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
         REQUIRE(node != nullptr);
 
-        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
-                                      ctx.index, ctx.analysis_ctx);
+        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), ctx.index,
+                                     ctx.analysis_ctx);
         CHECK(hover == String("enum Color"));
     }
 
     TEST_CASE("Self keyword") {
-        const char* source =
-            "struct Point { x: f32; y: f32; }\n"
-            "fun Point.length(): f32 {\n"
-            "    return self.x;\n"
-            "}\n";
+        const char* source = "struct Point { x: f32; y: f32; }\n"
+                             "fun Point.length(): f32 {\n"
+                             "    return self.x;\n"
+                             "}\n";
 
         HoverTestContext ctx;
         ctx.setup(source);
@@ -503,17 +499,16 @@ TEST_SUITE("LSP Hover") {
         SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
         REQUIRE(node != nullptr);
 
-        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
-                                      ctx.index, ctx.analysis_ctx);
+        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), ctx.index,
+                                     ctx.analysis_ctx);
         CHECK(hover == String("self: Point"));
     }
 
     TEST_CASE("Enum variant via static access") {
-        const char* source =
-            "enum Color { Red, Green, Blue }\n"
-            "fun test() {\n"
-            "    var c = Color::Red;\n"
-            "}\n";
+        const char* source = "enum Color { Red, Green, Blue }\n"
+                             "fun test() {\n"
+                             "    var c = Color::Red;\n"
+                             "}\n";
 
         HoverTestContext ctx;
         ctx.setup(source);
@@ -528,19 +523,18 @@ TEST_SUITE("LSP Hover") {
         SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
         REQUIRE(node != nullptr);
 
-        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
-                                      ctx.index, ctx.analysis_ctx);
+        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), ctx.index,
+                                     ctx.analysis_ctx);
         CHECK(hover == String("(variant) Color::Red"));
     }
 
     TEST_CASE("Inherited field") {
-        const char* source =
-            "struct Base { x: i32; }\n"
-            "struct Child : Base { y: i32; }\n"
-            "fun test() {\n"
-            "    var c: Child;\n"
-            "    c.x;\n"
-            "}\n";
+        const char* source = "struct Base { x: i32; }\n"
+                             "struct Child : Base { y: i32; }\n"
+                             "fun test() {\n"
+                             "    var c: Child;\n"
+                             "    c.x;\n"
+                             "}\n";
 
         HoverTestContext ctx;
         ctx.setup(source);
@@ -555,8 +549,8 @@ TEST_SUITE("LSP Hover") {
         SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
         REQUIRE(node != nullptr);
 
-        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
-                                      ctx.index, ctx.analysis_ctx);
+        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), ctx.index,
+                                     ctx.analysis_ctx);
         CHECK(hover == String("(field) Base.x: i32"));
     }
 
@@ -576,8 +570,8 @@ TEST_SUITE("LSP Hover") {
         SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
         REQUIRE(node != nullptr);
 
-        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
-                                      ctx.index, ctx.analysis_ctx);
+        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), ctx.index,
+                                     ctx.analysis_ctx);
         CHECK(hover == String("(variable) a: i32"));
     }
 
@@ -596,17 +590,16 @@ TEST_SUITE("LSP Hover") {
         SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
         REQUIRE(node != nullptr);
 
-        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
-                                      ctx.index, ctx.analysis_ctx);
+        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), ctx.index,
+                                     ctx.analysis_ctx);
         CHECK(hover == String("bool"));
     }
 
     TEST_CASE("Struct literal name") {
-        const char* source =
-            "struct Point { x: f32; y: f32; }\n"
-            "fun test() {\n"
-            "    var p = Point { x = 1.0, y = 2.0 };\n"
-            "}\n";
+        const char* source = "struct Point { x: f32; y: f32; }\n"
+                             "fun test() {\n"
+                             "    var p = Point { x = 1.0, y = 2.0 };\n"
+                             "}\n";
 
         HoverTestContext ctx;
         ctx.setup(source);
@@ -621,8 +614,8 @@ TEST_SUITE("LSP Hover") {
         SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
         REQUIRE(node != nullptr);
 
-        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
-                                      ctx.index, ctx.analysis_ctx);
+        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), ctx.index,
+                                     ctx.analysis_ctx);
         CHECK(hover == String("struct Point"));
     }
 
@@ -639,8 +632,8 @@ TEST_SUITE("LSP Hover") {
         SyntaxNode* node = parse_and_find(source, offset, parse_allocator, tree);
         REQUIRE(node != nullptr);
 
-        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
-                                      ctx.index, ctx.analysis_ctx);
+        String hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), ctx.index,
+                                     ctx.analysis_ctx);
         CHECK(hover == String("(global) count: i32"));
     }
 
@@ -659,10 +652,10 @@ TEST_SUITE("LSP Hover") {
         // Node may be a keyword or non-identifier; hover should return empty
         String hover;
         if (node) {
-            hover = resolve_hover(node, source, static_cast<u32>(strlen(source)),
-                                   ctx.index, ctx.analysis_ctx);
+            hover = resolve_hover(node, source, static_cast<u32>(strlen(source)), ctx.index,
+                                  ctx.analysis_ctx);
         }
         CHECK(hover.empty());
     }
 
-}  // TEST_SUITE("LSP Hover")
+} // TEST_SUITE("LSP Hover")

@@ -25,8 +25,8 @@ bool has_side_effect(IROp op) {
         // mutate out params)
         case IROp::New:
         case IROp::Delete:
-        case IROp::Closure:  // Allocates and stores fields; same side-effect class as New
-        case IROp::AssertHeap:  // Side-effecting trap
+        case IROp::Closure:    // Allocates and stores fields; same side-effect class as New
+        case IROp::AssertHeap: // Side-effecting trap
         // Container element-borrow pin/unpin (mutate borrow_count; gate mutators)
         case IROp::ContainerPin:
         case IROp::ContainerUnpin:
@@ -51,7 +51,8 @@ bool has_side_effect(IROp op) {
 Vector<u32> compute_use_counts(IRFunction* func) {
     Vector<u32> counts(func->next_value_id, 0u);
     auto bump = [&](ValueId v) {
-        if (v.is_valid() && v.id < counts.size()) counts[v.id]++;
+        if (v.is_valid() && v.id < counts.size())
+            counts[v.id]++;
     };
     for (IRBlock* block : func->blocks) {
         for (IRInst* inst : block->instructions) {
@@ -73,16 +74,23 @@ bool run_dce(IRFunction* func) {
     worklist.reserve(N);
 
     auto consider = [&](IRInst* inst) {
-        if (!inst) return;                          // function/block param
-        if (!inst->result.is_valid()) return;
+        if (!inst)
+            return; // function/block param
+        if (!inst->result.is_valid())
+            return;
         u32 id = inst->result.id;
-        if (id >= N) return;
-        if (is_dead[id]) return;
-        if (use_counts[id] != 0) return;
-        if (has_side_effect(inst->op)) return;
+        if (id >= N)
+            return;
+        if (is_dead[id])
+            return;
+        if (use_counts[id] != 0)
+            return;
+        if (has_side_effect(inst->op))
+            return;
         // Phase 2 leaves block parameters alone; trimming dead block-args
         // is a Phase 3 pass.
-        if (inst->op == IROp::BlockArg) return;
+        if (inst->op == IROp::BlockArg)
+            return;
         is_dead[id] = true;
         worklist.push_back(id);
     };
@@ -100,7 +108,8 @@ bool run_dce(IRFunction* func) {
         IRInst* inst = func->values_by_id[id];
         // Decrement operand use counts; if any drops to zero, re-consider.
         for_each_operand(inst, [&](ValueId& v) {
-            if (!v.is_valid() || v.id >= N) return;
+            if (!v.is_valid() || v.id >= N)
+                return;
             if (use_counts[v.id] > 0) {
                 use_counts[v.id]--;
                 if (use_counts[v.id] == 0) {
@@ -126,7 +135,8 @@ bool run_dce(IRFunction* func) {
         }
         // Vector::resize() reallocates and may copy out-of-range slots when
         // shrinking, so use pop_back() to truncate in place.
-        while (block->instructions.size() > w) block->instructions.pop_back();
+        while (block->instructions.size() > w)
+            block->instructions.pop_back();
     }
     return changed;
 }
@@ -136,13 +146,14 @@ bool run_dce(IRFunction* func) {
 // their source — collapsing them would re-merge the borrow with the owned-local
 // it borrows. See IRInst::no_copy_prop.
 static inline bool is_propagatable_copy(const IRInst* inst, u32 self_id, u32 N) {
-    return inst && inst->op == IROp::Copy && !inst->no_copy_prop &&
-           inst->unary.is_valid() && inst->unary.id != self_id && inst->unary.id < N;
+    return inst && inst->op == IROp::Copy && !inst->no_copy_prop && inst->unary.is_valid() &&
+           inst->unary.id != self_id && inst->unary.id < N;
 }
 
 bool run_copy_propagation(IRFunction* func) {
     const u32 N = func->next_value_id;
-    if (N == 0) return false;
+    if (N == 0)
+        return false;
 
     // Early-out: if there is no propagatable Copy, every pass below is a no-op
     // (identity subst -> nothing to compress or rewrite). Many functions —
@@ -151,21 +162,27 @@ bool run_copy_propagation(IRFunction* func) {
     // and the full operand-rewrite walk. The scan stops at the first copy.
     bool any_copy = false;
     for (u32 i = 0; i < N; i++) {
-        if (is_propagatable_copy(func->values_by_id[i], i, N)) { any_copy = true; break; }
+        if (is_propagatable_copy(func->values_by_id[i], i, N)) {
+            any_copy = true;
+            break;
+        }
     }
-    if (!any_copy) return false;
+    if (!any_copy)
+        return false;
 
     // subst[id] = id        means "no substitution" (root)
     // subst[id] = other.id  means "use other instead of this"
     // (Size-only ctor leaves the buffer uninitialized; the loop below writes
     // every slot, so a fill-with-0 ctor here would just be a wasted O(N) pass.)
     Vector<u32> subst(N);
-    for (u32 i = 0; i < N; i++) subst[i] = i;
+    for (u32 i = 0; i < N; i++)
+        subst[i] = i;
 
     // Pass 1: every Copy is a substitution v_result -> v_source.
     for (u32 i = 0; i < N; i++) {
         IRInst* inst = func->values_by_id[i];
-        if (!is_propagatable_copy(inst, i, N)) continue;
+        if (!is_propagatable_copy(inst, i, N))
+            continue;
         subst[i] = inst->unary.id;
     }
 
@@ -177,12 +194,14 @@ bool run_copy_propagation(IRFunction* func) {
         }
         return id;
     };
-    for (u32 i = 0; i < N; i++) (void)find(i);
+    for (u32 i = 0; i < N; i++)
+        (void)find(i);
 
     // Pass 3: rewrite all operands and terminator operands.
     bool changed = false;
     auto rewrite = [&](ValueId& v) {
-        if (!v.is_valid() || v.id >= N) return;
+        if (!v.is_valid() || v.id >= N)
+            return;
         u32 root = subst[v.id];
         if (root != v.id) {
             v = ValueId{root};
@@ -195,7 +214,8 @@ bool run_copy_propagation(IRFunction* func) {
             // useless (its uses point past it) and DCE removes it; keeping
             // its `unary` pointing at the original source means DCE's
             // operand decrement debits the correct value.
-            if (inst->op == IROp::Copy) continue;
+            if (inst->op == IROp::Copy)
+                continue;
             for_each_operand(inst, [&](ValueId& v) { rewrite(v); });
         }
         for_each_terminator_operand(block->terminator, [&](ValueId& v) { rewrite(v); });
@@ -213,7 +233,8 @@ PredecessorMap compute_predecessors(IRFunction* func) {
     // offsets holds per-block edge counts during the counting pass, then is
     // prefix-summed in place into CSR start offsets.
     preds.offsets.reserve(num_blocks + 1);
-    for (u32 i = 0; i <= num_blocks; i++) preds.offsets.push_back(0);
+    for (u32 i = 0; i <= num_blocks; i++)
+        preds.offsets.push_back(0);
 
     auto for_each_edge = [&](auto fn) {
         for (IRBlock* block : func->blocks) {
@@ -226,7 +247,8 @@ PredecessorMap compute_predecessors(IRFunction* func) {
                     fn(block->id, t.branch.then_target.block);
                     fn(block->id, t.branch.else_target.block);
                     break;
-                default: break;
+                default:
+                    break;
             }
         }
     };
@@ -235,21 +257,26 @@ PredecessorMap compute_predecessors(IRFunction* func) {
     // prefix sum below yields start offsets directly).
     u32 total_edges = 0;
     for_each_edge([&](BlockId, BlockId to) {
-        if (!to.is_valid() || to.id >= num_blocks) return;
+        if (!to.is_valid() || to.id >= num_blocks)
+            return;
         preds.offsets[to.id + 1]++;
         total_edges++;
     });
-    for (u32 i = 0; i < num_blocks; i++) preds.offsets[i + 1] += preds.offsets[i];
+    for (u32 i = 0; i < num_blocks; i++)
+        preds.offsets[i + 1] += preds.offsets[i];
 
     // Pass 2: scatter edges into their target's slice. `cursor` (reusing a
     // copy of the start offsets) tracks the next free slot per block.
     preds.edges.reserve(total_edges);
-    for (u32 i = 0; i < total_edges; i++) preds.edges.push_back(BlockId::invalid());
+    for (u32 i = 0; i < total_edges; i++)
+        preds.edges.push_back(BlockId::invalid());
     Vector<u32> cursor;
     cursor.reserve(num_blocks);
-    for (u32 i = 0; i < num_blocks; i++) cursor.push_back(preds.offsets[i]);
+    for (u32 i = 0; i < num_blocks; i++)
+        cursor.push_back(preds.offsets[i]);
     for_each_edge([&](BlockId from, BlockId to) {
-        if (!to.is_valid() || to.id >= num_blocks) return;
+        if (!to.is_valid() || to.id >= num_blocks)
+            return;
         preds.edges[cursor[to.id]++] = from;
     });
     return preds;
@@ -259,9 +286,11 @@ bool run_branch_folding(IRFunction* func) {
     bool changed = false;
     for (IRBlock* block : func->blocks) {
         Terminator& t = block->terminator;
-        if (t.kind != TerminatorKind::Branch) continue;
+        if (t.kind != TerminatorKind::Branch)
+            continue;
         IRInst* cond_def = func->inst_for(t.branch.condition);
-        if (!cond_def || cond_def->op != IROp::ConstBool) continue;
+        if (!cond_def || cond_def->op != IROp::ConstBool)
+            continue;
         bool taken = cond_def->const_data.bool_val;
         // Snapshot the chosen target before mutating the union.
         JumpTarget chosen = taken ? t.branch.then_target : t.branch.else_target;
@@ -281,20 +310,31 @@ bool run_branch_folding(IRFunction* func) {
 // range), so v1 errs on the side of safety.
 static bool block_in_metadata(IRFunction* func, BlockId b) {
     for (const IRExceptionHandler& h : func->exception_handlers) {
-        if (h.try_entry == b) return true;
-        if (h.try_exit == b) return true;
-        if (h.handler_block == b) return true;
-        for (BlockId tb : h.try_body_blocks) if (tb == b) return true;
+        if (h.try_entry == b)
+            return true;
+        if (h.try_exit == b)
+            return true;
+        if (h.handler_block == b)
+            return true;
+        for (BlockId tb : h.try_body_blocks)
+            if (tb == b)
+                return true;
     }
     for (const IRFinallyInfo& f : func->finally_handlers) {
-        if (f.try_entry == b) return true;
-        if (f.try_exit == b) return true;
-        if (f.finally_block == b) return true;
-        if (f.finally_end_block == b) return true;
+        if (f.try_entry == b)
+            return true;
+        if (f.try_exit == b)
+            return true;
+        if (f.finally_block == b)
+            return true;
+        if (f.finally_end_block == b)
+            return true;
     }
     for (const IRCleanupInfo& ci : func->cleanup_info) {
-        if (ci.start_block == b) return true;
-        if (ci.end_block == b) return true;
+        if (ci.start_block == b)
+            return true;
+        if (ci.end_block == b)
+            return true;
     }
     return false;
 }
@@ -322,20 +362,27 @@ bool run_block_merging(IRFunction* func, PredecessorMap& preds) {
         bool pass_changed = false;
         for (u32 b_idx = 0; b_idx < func->blocks.size(); b_idx++) {
             IRBlock* B = func->blocks[b_idx];
-            if (B->terminator.kind == TerminatorKind::None) continue;  // already-emptied
-            if (preds[B->id.id].size() != 1) continue;
+            if (B->terminator.kind == TerminatorKind::None)
+                continue; // already-emptied
+            if (preds[B->id.id].size() != 1)
+                continue;
             BlockId a_id = preds[B->id.id][0];
-            if (a_id == B->id) continue;                                // self-loop
-            if (a_id.id >= func->blocks.size()) continue;
+            if (a_id == B->id)
+                continue; // self-loop
+            if (a_id.id >= func->blocks.size())
+                continue;
             IRBlock* A = func->blocks[a_id.id];
             // A's terminator must be an unconditional Goto to B (no other
             // successors). This also rejects stale preds entries that name an
             // emptied block (None terminator) merged earlier in this pass.
-            if (A->terminator.kind != TerminatorKind::Goto) continue;
-            if (A->terminator.goto_target.block != B->id) continue;
+            if (A->terminator.kind != TerminatorKind::Goto)
+                continue;
+            if (A->terminator.goto_target.block != B->id)
+                continue;
             // Skip if B is referenced by any exception/finally/cleanup
             // metadata. (We don't rewrite metadata across a merge in v1.)
-            if (block_in_metadata(func, B->id)) continue;
+            if (block_in_metadata(func, B->id))
+                continue;
 
             // Substitute B's params with A's goto args. A block param may be
             // referenced by ANY block B dominates (not just B itself — e.g. a
@@ -348,10 +395,12 @@ bool run_block_merging(IRFunction* func, PredecessorMap& preds) {
             Span<BlockArgPair> a_args = A->terminator.goto_target.args;
             // A count mismatch would indicate malformed IR; skip rather than
             // index out of range.
-            if (a_args.size() != B->params.size()) continue;
+            if (a_args.size() != B->params.size())
+                continue;
             if (subst.empty()) {
                 subst.reserve(num_values);
-                for (u32 i = 0; i < num_values; i++) subst.push_back(i);
+                for (u32 i = 0; i < num_values; i++)
+                    subst.push_back(i);
             }
             for (u32 i = 0; i < B->params.size(); i++) {
                 ValueId param = B->params[i].value;
@@ -368,8 +417,10 @@ bool run_block_merging(IRFunction* func, PredecessorMap& preds) {
             A->terminator = B->terminator;
 
             // Empty B in place; reorder_blocks_rpo() will drop it later.
-            while (B->params.size() > 0) B->params.pop_back();
-            while (B->instructions.size() > 0) B->instructions.pop_back();
+            while (B->params.size() > 0)
+                B->params.pop_back();
+            while (B->instructions.size() > 0)
+                B->instructions.pop_back();
             B->terminator = Terminator{};
 
             pass_changed = true;
@@ -383,14 +434,20 @@ bool run_block_merging(IRFunction* func, PredecessorMap& preds) {
             // Dominance makes cycles impossible: each param maps to a value
             // defined strictly above it.
             auto find = [&](u32 id) -> u32 {
-                while (subst[id] != id) { subst[id] = subst[subst[id]]; id = subst[id]; }
+                while (subst[id] != id) {
+                    subst[id] = subst[subst[id]];
+                    id = subst[id];
+                }
                 return id;
             };
-            for (u32 i = 0; i < num_values; i++) (void)find(i);
+            for (u32 i = 0; i < num_values; i++)
+                (void)find(i);
 
             auto rewrite = [&](ValueId& v) {
-                if (!v.is_valid() || v.id >= num_values) return;
-                if (subst[v.id] != v.id) v = ValueId{subst[v.id]};
+                if (!v.is_valid() || v.id >= num_values)
+                    return;
+                if (subst[v.id] != v.id)
+                    v = ValueId{subst[v.id]};
             };
             for (IRBlock* block : func->blocks) {
                 for (IRInst* inst : block->instructions) {
@@ -401,7 +458,8 @@ bool run_block_merging(IRFunction* func, PredecessorMap& preds) {
             subst.clear_keep_capacity();
         }
 
-        if (!pass_changed) break;
+        if (!pass_changed)
+            break;
         // A merge moved edges, so the snapshot is stale for the next scan.
         preds = compute_predecessors(func);
     }
@@ -416,23 +474,37 @@ static ValueId arg_for_target(IRBlock* P, BlockId target, u32 param_idx, bool& o
     ok = true;
     const Terminator& t = P->terminator;
     auto get = [&](const JumpTarget& jt) -> ValueId {
-        if (jt.args.size() <= param_idx) { ok = false; return ValueId::invalid(); }
+        if (jt.args.size() <= param_idx) {
+            ok = false;
+            return ValueId::invalid();
+        }
         return jt.args[param_idx].value;
     };
     switch (t.kind) {
         case TerminatorKind::Goto:
-            if (t.goto_target.block != target) { ok = false; return ValueId::invalid(); }
+            if (t.goto_target.block != target) {
+                ok = false;
+                return ValueId::invalid();
+            }
             return get(t.goto_target);
         case TerminatorKind::Branch: {
             bool then_match = (t.branch.then_target.block == target);
             bool else_match = (t.branch.else_target.block == target);
-            if (!then_match && !else_match) { ok = false; return ValueId::invalid(); }
+            if (!then_match && !else_match) {
+                ok = false;
+                return ValueId::invalid();
+            }
             if (then_match && else_match) {
                 ValueId tv = get(t.branch.then_target);
-                if (!ok) return ValueId::invalid();
+                if (!ok)
+                    return ValueId::invalid();
                 ValueId ev = get(t.branch.else_target);
-                if (!ok) return ValueId::invalid();
-                if (tv.id != ev.id) { ok = false; return ValueId::invalid(); }
+                if (!ok)
+                    return ValueId::invalid();
+                if (tv.id != ev.id) {
+                    ok = false;
+                    return ValueId::invalid();
+                }
                 return tv;
             }
             return then_match ? get(t.branch.then_target) : get(t.branch.else_target);
@@ -447,11 +519,13 @@ static ValueId arg_for_target(IRBlock* P, BlockId target, u32 param_idx, bool& o
 // `keep`. The bump allocator never frees, so we just reduce the visible
 // size — leftover slots leak but compile lifetime is bounded.
 static void compact_jump_target(JumpTarget& jt, const Vector<bool>& keep) {
-    if (jt.args.size() == 0) return;
+    if (jt.args.size() == 0)
+        return;
     u32 w = 0;
     for (u32 r = 0; r < jt.args.size(); r++) {
         if (r >= keep.size() || keep[r]) {
-            if (w != r) jt.args[w] = jt.args[r];
+            if (w != r)
+                jt.args[w] = jt.args[r];
             w++;
         }
     }
@@ -468,52 +542,83 @@ bool run_trivial_block_arg_elim(IRFunction* func, const PredecessorMap& preds) {
     // a no-op (it found nothing on every function of the Lox workload), so the
     // common path stays down to the predecessor scan — the subst(N) fill and the
     // per-block Vector<bool> masks only get allocated once there's real work.
-    struct Drop { u32 block; u32 param_idx; u32 param_val; u32 common; };
+    struct Drop {
+        u32 block;
+        u32 param_idx;
+        u32 param_val;
+        u32 common;
+    };
     Vector<Drop> drops;
-    for (u32 b = 1; b < func->blocks.size(); b++) {   // skip entry block (b==0):
-        IRBlock* B = func->blocks[b];                 // its params are fn params
+    for (u32 b = 1; b < func->blocks.size(); b++) { // skip entry block (b==0):
+        IRBlock* B = func->blocks[b];               // its params are fn params
         for (u32 pi = 0; pi < B->params.size(); pi++) {
             ValueId param_val = B->params[pi].value;
-            if (!param_val.is_valid()) continue;
+            if (!param_val.is_valid())
+                continue;
             ValueId common = ValueId::invalid();
             bool unanimous = true;
             for (BlockId pred_id : preds[B->id.id]) {
-                if (pred_id.id >= func->blocks.size()) { unanimous = false; break; }
+                if (pred_id.id >= func->blocks.size()) {
+                    unanimous = false;
+                    break;
+                }
                 IRBlock* P = func->blocks[pred_id.id];
                 bool ok = true;
                 ValueId arg = arg_for_target(P, B->id, pi, ok);
-                if (!ok) { unanimous = false; break; }
-                if (!arg.is_valid()) { unanimous = false; break; }
+                if (!ok) {
+                    unanimous = false;
+                    break;
+                }
+                if (!arg.is_valid()) {
+                    unanimous = false;
+                    break;
+                }
                 // Self-references (loop back-edge feeding the param itself)
                 // don't constrain the unanimity check — strip them.
-                if (arg.id == param_val.id) continue;
-                if (!common.is_valid()) common = arg;
-                else if (common.id != arg.id) { unanimous = false; break; }
+                if (arg.id == param_val.id)
+                    continue;
+                if (!common.is_valid())
+                    common = arg;
+                else if (common.id != arg.id) {
+                    unanimous = false;
+                    break;
+                }
             }
-            if (!unanimous) continue;
-            if (!common.is_valid()) continue;  // only self-refs, no real value
+            if (!unanimous)
+                continue;
+            if (!common.is_valid())
+                continue; // only self-refs, no real value
             drops.push_back({b, pi, param_val.id, common.id});
         }
     }
-    if (drops.empty()) return false;
+    if (drops.empty())
+        return false;
 
     // Build the substitution table now that there's work.
     const u32 N = func->next_value_id;
     Vector<u32> subst(N);
-    for (u32 i = 0; i < N; i++) subst[i] = i;
-    for (const Drop& d : drops) subst[d.param_val] = d.common;
+    for (u32 i = 0; i < N; i++)
+        subst[i] = i;
+    for (const Drop& d : drops)
+        subst[d.param_val] = d.common;
 
     // Path-compress so chains (param -> param -> value) collapse.
     auto find = [&](u32 id) -> u32 {
-        while (subst[id] != id) { subst[id] = subst[subst[id]]; id = subst[id]; }
+        while (subst[id] != id) {
+            subst[id] = subst[subst[id]];
+            id = subst[id];
+        }
         return id;
     };
-    for (u32 i = 0; i < N; i++) (void)find(i);
+    for (u32 i = 0; i < N; i++)
+        (void)find(i);
 
     // Rewrite operands across the function.
     auto rewrite = [&](ValueId& v) {
-        if (!v.is_valid() || v.id >= N) return;
-        if (subst[v.id] != v.id) v = ValueId{subst[v.id]};
+        if (!v.is_valid() || v.id >= N)
+            return;
+        if (subst[v.id] != v.id)
+            v = ValueId{subst[v.id]};
     };
     for (IRBlock* block : func->blocks) {
         for (IRInst* inst : block->instructions) {
@@ -538,25 +643,32 @@ bool run_trivial_block_arg_elim(IRFunction* func, const PredecessorMap& preds) {
         u32 w = 0;
         for (u32 r = 0; r < B->params.size(); r++) {
             if (keep[r]) {
-                if (w != r) B->params[w] = B->params[r];
+                if (w != r)
+                    B->params[w] = B->params[r];
                 w++;
             }
         }
-        while (B->params.size() > w) B->params.pop_back();
+        while (B->params.size() > w)
+            B->params.pop_back();
         // Compact every predecessor's jump-target args.
         for (BlockId pred_id : preds[b]) {
-            if (pred_id.id >= func->blocks.size()) continue;
+            if (pred_id.id >= func->blocks.size())
+                continue;
             IRBlock* P = func->blocks[pred_id.id];
             Terminator& t = P->terminator;
             switch (t.kind) {
                 case TerminatorKind::Goto:
-                    if (t.goto_target.block.id == b) compact_jump_target(t.goto_target, keep);
+                    if (t.goto_target.block.id == b)
+                        compact_jump_target(t.goto_target, keep);
                     break;
                 case TerminatorKind::Branch:
-                    if (t.branch.then_target.block.id == b) compact_jump_target(t.branch.then_target, keep);
-                    if (t.branch.else_target.block.id == b) compact_jump_target(t.branch.else_target, keep);
+                    if (t.branch.then_target.block.id == b)
+                        compact_jump_target(t.branch.then_target, keep);
+                    if (t.branch.else_target.block.id == b)
+                        compact_jump_target(t.branch.else_target, keep);
                     break;
-                default: break;
+                default:
+                    break;
             }
         }
     }
@@ -570,32 +682,71 @@ bool run_trivial_block_arg_elim(IRFunction* func, const PredecessorMap& preds) {
 bool is_cse_eligible(IROp op) {
     switch (op) {
         // Constants — same value, same payload, same type → same result.
-        case IROp::ConstNull: case IROp::ConstBool: case IROp::ConstInt:
-        case IROp::ConstF:    case IROp::ConstD:    case IROp::ConstString:
+        case IROp::ConstNull:
+        case IROp::ConstBool:
+        case IROp::ConstInt:
+        case IROp::ConstF:
+        case IROp::ConstD:
+        case IROp::ConstString:
         // Arithmetic.
-        case IROp::AddI: case IROp::SubI: case IROp::MulI:
-        case IROp::DivI: case IROp::ModI: case IROp::NegI:
-        case IROp::DivU: case IROp::ModU:
-        case IROp::AddF: case IROp::SubF: case IROp::MulF:
-        case IROp::DivF: case IROp::NegF:
-        case IROp::AddD: case IROp::SubD: case IROp::MulD:
-        case IROp::DivD: case IROp::NegD:
+        case IROp::AddI:
+        case IROp::SubI:
+        case IROp::MulI:
+        case IROp::DivI:
+        case IROp::ModI:
+        case IROp::NegI:
+        case IROp::DivU:
+        case IROp::ModU:
+        case IROp::AddF:
+        case IROp::SubF:
+        case IROp::MulF:
+        case IROp::DivF:
+        case IROp::NegF:
+        case IROp::AddD:
+        case IROp::SubD:
+        case IROp::MulD:
+        case IROp::DivD:
+        case IROp::NegD:
         // Comparisons.
-        case IROp::EqI: case IROp::NeI: case IROp::LtI:
-        case IROp::LeI: case IROp::GtI: case IROp::GeI:
-        case IROp::LtU: case IROp::LeU: case IROp::GtU: case IROp::GeU:
-        case IROp::EqF: case IROp::NeF: case IROp::LtF:
-        case IROp::LeF: case IROp::GtF: case IROp::GeF:
-        case IROp::EqD: case IROp::NeD: case IROp::LtD:
-        case IROp::LeD: case IROp::GtD: case IROp::GeD:
+        case IROp::EqI:
+        case IROp::NeI:
+        case IROp::LtI:
+        case IROp::LeI:
+        case IROp::GtI:
+        case IROp::GeI:
+        case IROp::LtU:
+        case IROp::LeU:
+        case IROp::GtU:
+        case IROp::GeU:
+        case IROp::EqF:
+        case IROp::NeF:
+        case IROp::LtF:
+        case IROp::LeF:
+        case IROp::GtF:
+        case IROp::GeF:
+        case IROp::EqD:
+        case IROp::NeD:
+        case IROp::LtD:
+        case IROp::LeD:
+        case IROp::GtD:
+        case IROp::GeD:
         // Logical.
-        case IROp::Not: case IROp::And: case IROp::Or:
+        case IROp::Not:
+        case IROp::And:
+        case IROp::Or:
         // Bitwise.
-        case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor:
-        case IROp::BitNot: case IROp::Shl:   case IROp::Shr:  case IROp::UShr:
+        case IROp::BitAnd:
+        case IROp::BitOr:
+        case IROp::BitXor:
+        case IROp::BitNot:
+        case IROp::Shl:
+        case IROp::Shr:
+        case IROp::UShr:
         // Conversions / Cast — pure functions of source value (+ result type).
-        case IROp::I_TO_F64: case IROp::F64_TO_I:
-        case IROp::I_TO_B:   case IROp::B_TO_I:
+        case IROp::I_TO_F64:
+        case IROp::F64_TO_I:
+        case IROp::I_TO_B:
+        case IROp::B_TO_I:
         case IROp::Cast:
             return true;
         default:
@@ -608,11 +759,11 @@ namespace {
 // Hashed as raw bytes by CSEKeyHash, so the layout must stay padding-free
 // (asserted below) with every byte an explicit, zeroed member.
 struct CSEKey {
-    Type* result_type;   // disambiguates Cast; redundant elsewhere but harmless
-    u64 payload;         // const literal bits / Cast source_type pointer / 0
-    u32 a;               // operand 1 ValueId.id, or 0
-    u32 b;               // operand 2 ValueId.id, or 0
-    u32 op;              // IROp, widened to keep the layout padding-free
+    Type* result_type; // disambiguates Cast; redundant elsewhere but harmless
+    u64 payload;       // const literal bits / Cast source_type pointer / 0
+    u32 a;             // operand 1 ValueId.id, or 0
+    u32 b;             // operand 2 ValueId.id, or 0
+    u32 op;            // IROp, widened to keep the layout padding-free
     u32 pad = 0;
 };
 static_assert(sizeof(CSEKey) == 32, "CSEKey must stay padding-free for byte hashing");
@@ -628,8 +779,8 @@ struct CSEKeyHash {
 
 struct CSEKeyEq {
     bool operator()(const CSEKey& l, const CSEKey& r) const noexcept {
-        return l.op == r.op && l.result_type == r.result_type
-            && l.a == r.a && l.b == r.b && l.payload == r.payload;
+        return l.op == r.op && l.result_type == r.result_type && l.a == r.a && l.b == r.b &&
+               l.payload == r.payload;
     }
 };
 
@@ -639,29 +790,64 @@ CSEKey make_cse_key(IRInst* inst) {
     k.result_type = inst->type;
     switch (inst->op) {
         // Binary ops.
-        case IROp::AddI: case IROp::SubI: case IROp::MulI:
-        case IROp::DivI: case IROp::ModI:
-        case IROp::DivU: case IROp::ModU:
-        case IROp::AddF: case IROp::SubF: case IROp::MulF: case IROp::DivF:
-        case IROp::AddD: case IROp::SubD: case IROp::MulD: case IROp::DivD:
-        case IROp::EqI: case IROp::NeI: case IROp::LtI:
-        case IROp::LeI: case IROp::GtI: case IROp::GeI:
-        case IROp::LtU: case IROp::LeU: case IROp::GtU: case IROp::GeU:
-        case IROp::EqF: case IROp::NeF: case IROp::LtF:
-        case IROp::LeF: case IROp::GtF: case IROp::GeF:
-        case IROp::EqD: case IROp::NeD: case IROp::LtD:
-        case IROp::LeD: case IROp::GtD: case IROp::GeD:
-        case IROp::And: case IROp::Or:
-        case IROp::BitAnd: case IROp::BitOr: case IROp::BitXor:
-        case IROp::Shl: case IROp::Shr: case IROp::UShr:
+        case IROp::AddI:
+        case IROp::SubI:
+        case IROp::MulI:
+        case IROp::DivI:
+        case IROp::ModI:
+        case IROp::DivU:
+        case IROp::ModU:
+        case IROp::AddF:
+        case IROp::SubF:
+        case IROp::MulF:
+        case IROp::DivF:
+        case IROp::AddD:
+        case IROp::SubD:
+        case IROp::MulD:
+        case IROp::DivD:
+        case IROp::EqI:
+        case IROp::NeI:
+        case IROp::LtI:
+        case IROp::LeI:
+        case IROp::GtI:
+        case IROp::GeI:
+        case IROp::LtU:
+        case IROp::LeU:
+        case IROp::GtU:
+        case IROp::GeU:
+        case IROp::EqF:
+        case IROp::NeF:
+        case IROp::LtF:
+        case IROp::LeF:
+        case IROp::GtF:
+        case IROp::GeF:
+        case IROp::EqD:
+        case IROp::NeD:
+        case IROp::LtD:
+        case IROp::LeD:
+        case IROp::GtD:
+        case IROp::GeD:
+        case IROp::And:
+        case IROp::Or:
+        case IROp::BitAnd:
+        case IROp::BitOr:
+        case IROp::BitXor:
+        case IROp::Shl:
+        case IROp::Shr:
+        case IROp::UShr:
             k.a = inst->binary.left.id;
             k.b = inst->binary.right.id;
             break;
         // Unary ops.
-        case IROp::NegI: case IROp::NegF: case IROp::NegD:
-        case IROp::BitNot: case IROp::Not:
-        case IROp::I_TO_F64: case IROp::F64_TO_I:
-        case IROp::I_TO_B:   case IROp::B_TO_I:
+        case IROp::NegI:
+        case IROp::NegF:
+        case IROp::NegD:
+        case IROp::BitNot:
+        case IROp::Not:
+        case IROp::I_TO_F64:
+        case IROp::F64_TO_I:
+        case IROp::I_TO_B:
+        case IROp::B_TO_I:
             k.a = inst->unary.id;
             break;
         // Cast carries source_type to disambiguate conversion strategy.
@@ -692,8 +878,7 @@ CSEKey make_cse_key(IRInst* inst) {
             // approximation; in practice the lexer interns string
             // literals into a shared source buffer so identical literals
             // share identity.
-            k.a = static_cast<u32>(reinterpret_cast<uintptr_t>(
-                inst->const_data.string_val.data()));
+            k.a = static_cast<u32>(reinterpret_cast<uintptr_t>(inst->const_data.string_val.data()));
             k.b = inst->const_data.string_val.size();
             break;
         case IROp::ConstNull:
@@ -707,16 +892,20 @@ CSEKey make_cse_key(IRInst* inst) {
     return k;
 }
 
-}  // namespace
+} // namespace
 
 bool run_local_cse(IRFunction* func) {
     const u32 N = func->next_value_id;
-    if (N == 0) return false;
+    if (N == 0)
+        return false;
 
     // Collect redirects (duplicate -> canonical) first, so a no-op run — the
     // common case, ~89% on the Lox workload — skips the subst(N) allocation and
     // identity fill entirely.
-    struct Redirect { u32 from; u32 to; };
+    struct Redirect {
+        u32 from;
+        u32 to;
+    };
     Vector<Redirect> redirects;
 
     // One map reused across blocks (CSE is block-local, so clear between them).
@@ -726,8 +915,10 @@ bool run_local_cse(IRFunction* func) {
     for (IRBlock* block : func->blocks) {
         seen.clear();
         for (IRInst* inst : block->instructions) {
-            if (!is_cse_eligible(inst->op)) continue;
-            if (!inst->result.is_valid()) continue;
+            if (!is_cse_eligible(inst->op))
+                continue;
+            if (!inst->result.is_valid())
+                continue;
             CSEKey key = make_cse_key(inst);
             auto it = seen.find(key);
             if (it != seen.end()) {
@@ -739,23 +930,32 @@ bool run_local_cse(IRFunction* func) {
             }
         }
     }
-    if (redirects.empty()) return false;
+    if (redirects.empty())
+        return false;
 
     Vector<u32> subst(N);
-    for (u32 i = 0; i < N; i++) subst[i] = i;
-    for (const Redirect& r : redirects) subst[r.from] = r.to;
+    for (u32 i = 0; i < N; i++)
+        subst[i] = i;
+    for (const Redirect& r : redirects)
+        subst[r.from] = r.to;
 
     // Path-compress to flatten any redirect chains.
     auto find = [&](u32 id) -> u32 {
-        while (subst[id] != id) { subst[id] = subst[subst[id]]; id = subst[id]; }
+        while (subst[id] != id) {
+            subst[id] = subst[subst[id]];
+            id = subst[id];
+        }
         return id;
     };
-    for (u32 i = 0; i < N; i++) (void)find(i);
+    for (u32 i = 0; i < N; i++)
+        (void)find(i);
 
     // Function-wide operand rewrite. Same shape as copy propagation.
     auto rewrite = [&](ValueId& v) {
-        if (!v.is_valid() || v.id >= N) return;
-        if (subst[v.id] != v.id) v = ValueId{subst[v.id]};
+        if (!v.is_valid() || v.id >= N)
+            return;
+        if (subst[v.id] != v.id)
+            v = ValueId{subst[v.id]};
     };
     for (IRBlock* block : func->blocks) {
         for (IRInst* inst : block->instructions) {
@@ -781,12 +981,16 @@ static bool run_orphaned_cleanup_elim(IRFunction* func) {
     const u32 num_values = func->next_value_id;
     Vector<bool> defined(num_values, false);
     auto define = [&](ValueId v) {
-        if (v.is_valid() && v.id < num_values) defined[v.id] = true;
+        if (v.is_valid() && v.id < num_values)
+            defined[v.id] = true;
     };
-    for (const BlockParam& param : func->params) define(param.value);
+    for (const BlockParam& param : func->params)
+        define(param.value);
     for (IRBlock* block : func->blocks) {
-        for (const BlockParam& param : block->params) define(param.value);
-        for (IRInst* inst : block->instructions) define(inst->result);
+        for (const BlockParam& param : block->params)
+            define(param.value);
+        for (IRInst* inst : block->instructions)
+            define(inst->result);
     }
 
     bool changed = false;
@@ -812,7 +1016,8 @@ static bool run_orphaned_cleanup_elim(IRFunction* func) {
                 block->instructions[w++] = inst;
             }
         }
-        while (block->instructions.size() > w) block->instructions.pop_back();
+        while (block->instructions.size() > w)
+            block->instructions.pop_back();
     }
     return changed;
 }
@@ -833,16 +1038,20 @@ void optimize_function(IRFunction* func, BumpAllocator& /*allocator*/) {
     bool changed = true;
     while (changed) {
         changed = false;
-        if (run_branch_folding(func)) changed = true;
+        if (run_branch_folding(func))
+            changed = true;
         // Predecessors are computed once here (after branch folding settled the
         // CFG edges) and shared by both passes: block-merging refreshes the map
         // internally only when it merges, and trivial-arg-elim never touches
         // edges, so the common no-op iteration builds the map exactly once
         // instead of once per pass. See §4.3.
         PredecessorMap preds = compute_predecessors(func);
-        if (run_block_merging(func, preds)) changed = true;
-        if (run_trivial_block_arg_elim(func, preds)) changed = true;
-        if (run_local_cse(func)) changed = true;
+        if (run_block_merging(func, preds))
+            changed = true;
+        if (run_trivial_block_arg_elim(func, preds))
+            changed = true;
+        if (run_local_cse(func))
+            changed = true;
         if (changed) {
             // Re-run Phase 2 to clean up dead values exposed by the CFG
             // mutations (ConstBool conditions, eliminated params, CSE-
@@ -869,4 +1078,4 @@ void optimize_module(IRModule* module, BumpAllocator& allocator) {
     }
 }
 
-}  // namespace rx
+} // namespace rx

@@ -1,18 +1,17 @@
 #include "roxy/core/doctest/doctest.h"
 
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/lsp/indexer.hpp"
 #include "roxy/lsp/lsp_analysis_context.hpp"
 #include "roxy/lsp/lsp_parser.hpp"
-#include "roxy/lsp/indexer.hpp"
-#include "roxy/core/bump_allocator.hpp"
 
 #include <cstring>
 
 using namespace rx;
 
 // Helper to parse source and create a SourceFile for rebuild_declarations
-static LspAnalysisContext::SourceFile make_source_file(
-    const char* source, BumpAllocator& allocator, SyntaxTree& out_tree)
-{
+static LspAnalysisContext::SourceFile make_source_file(const char* source, BumpAllocator& allocator,
+                                                       SyntaxTree& out_tree) {
     u32 length = static_cast<u32>(strlen(source));
     Lexer lexer(source, length);
     LspParser parser(lexer, allocator);
@@ -28,7 +27,8 @@ static LspAnalysisContext::SourceFile make_source_file(
 
 // Find the first function/method node in a CST
 static SyntaxNode* find_first_function(SyntaxNode* root) {
-    if (!root) return nullptr;
+    if (!root)
+        return nullptr;
     for (u32 i = 0; i < root->children.size(); i++) {
         SyntaxKind kind = root->children[i]->kind;
         if (kind == SyntaxKind::NodeFunDecl || kind == SyntaxKind::NodeMethodDecl ||
@@ -234,7 +234,8 @@ struct Point { x: i32; y: i32; }
         CHECK(LspAnalysisContext::type_to_string(context.types().i32_type()) == String("i32"));
         CHECK(LspAnalysisContext::type_to_string(context.types().f64_type()) == String("f64"));
         CHECK(LspAnalysisContext::type_to_string(context.types().bool_type()) == String("bool"));
-        CHECK(LspAnalysisContext::type_to_string(context.types().string_type()) == String("string"));
+        CHECK(LspAnalysisContext::type_to_string(context.types().string_type()) ==
+              String("string"));
         CHECK(LspAnalysisContext::type_to_string(context.types().void_type()) == String("void"));
 
         // Struct type
@@ -247,8 +248,8 @@ struct Point { x: i32; y: i32; }
         CHECK(LspAnalysisContext::type_to_string(list_type) == String("List<i32>"));
 
         // Map type
-        Type* map_type = context.types().map_type(
-            context.types().string_type(), context.types().i32_type());
+        Type* map_type =
+            context.types().map_type(context.types().string_type(), context.types().i32_type());
         CHECK(LspAnalysisContext::type_to_string(map_type) == String("Map<string, i32>"));
 
         // Null type
@@ -286,4 +287,4 @@ fun test(): i32 { return 1; }
         CHECK(foo_type != nullptr);
     }
 
-}  // TEST_SUITE("LSP Analysis Context")
+} // TEST_SUITE("LSP Analysis Context")

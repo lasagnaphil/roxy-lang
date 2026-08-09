@@ -52,9 +52,9 @@ namespace rx {
 // Unified result of running a Roxy program on either backend. Field names match
 // TestResult so converted assertions need no edits.
 struct E2EResult {
-    bool success;           // compiled AND ran successfully
-    i64 value;              // VM: return value of main(); C: process exit code (0..255)
-    String stdout_output;   // captured stdout (identical across backends)
+    bool success;         // compiled AND ran successfully
+    i64 value;            // VM: return value of main(); C: process exit code (0..255)
+    String stdout_output; // captured stdout (identical across backends)
 };
 
 // Bytecode VM backend: compile to bytecode and run main() in-process.
@@ -69,8 +69,8 @@ struct VMBackend {
 struct CBackend {
     static E2EResult run(const char* source, bool debug = false) {
         CBackendResult r = compile_and_run_cpp(source, debug);
-        return E2EResult{r.compile_success && r.run_success,
-                         static_cast<i64>(r.exit_code), std::move(r.stdout_output)};
+        return E2EResult{r.compile_success && r.run_success, static_cast<i64>(r.exit_code),
+                         std::move(r.stdout_output)};
     }
 };
 

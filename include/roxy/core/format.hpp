@@ -1,8 +1,8 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
-#include "roxy/core/string_view.hpp"
 #include "roxy/core/string.hpp"
+#include "roxy/core/string_view.hpp"
+#include "roxy/core/types.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -11,20 +11,20 @@
 namespace rx {
 
 // Forward declaration for StaticString support
-template<u32 N> class StaticString;
+template <u32 N> class StaticString;
 
-template<typename T> struct is_static_string : std::false_type {};
-template<u32 N> struct is_static_string<StaticString<N>> : std::true_type {};
+template <typename T> struct is_static_string : std::false_type {};
+template <u32 N> struct is_static_string<StaticString<N>> : std::true_type {};
 
 namespace detail {
 
 // Format spec: {:[fill][align][sign][0][width][type]}
 struct FmtSpec {
     char fill = ' ';
-    char align = 0;   // 0 = default ('>'), '<' = left, '>' = right
-    char sign = '-';   // '-' = only negative, '+' = always
+    char align = 0;  // 0 = default ('>'), '<' = left, '>' = right
+    char sign = '-'; // '-' = only negative, '+' = always
     u32 width = 0;
-    char type = 0;     // 'x' = hex lower, 'X' = hex upper, 0 = default
+    char type = 0; // 'x' = hex lower, 'X' = hex upper, 0 = default
 };
 
 inline FmtSpec parse_format_spec(const char* start, const char* end) {
@@ -74,18 +74,21 @@ inline FmtSpec parse_format_spec(const char* start, const char* end) {
 // Buffer write helpers. Callers guarantee size >= 1.
 inline void fmt_write(char* buf, u32 size, u32& pos, const char* s, u32 len) {
     for (u32 i = 0; i < len; i++) {
-        if (pos < size - 1) buf[pos] = s[i];
+        if (pos < size - 1)
+            buf[pos] = s[i];
         pos++;
     }
 }
 
 inline void fmt_write_char(char* buf, u32 size, u32& pos, char c) {
-    if (pos < size - 1) buf[pos] = c;
+    if (pos < size - 1)
+        buf[pos] = c;
     pos++;
 }
 
 // Apply format spec (padding/alignment) to a formatted value
-inline void fmt_apply_spec(char* buf, u32 size, u32& pos, const char* val, u32 val_len, const FmtSpec* spec) {
+inline void fmt_apply_spec(char* buf, u32 size, u32& pos, const char* val, u32 val_len,
+                           const FmtSpec* spec) {
     if (!spec || spec->width <= val_len) {
         fmt_write(buf, size, pos, val, val_len);
         return;
@@ -97,19 +100,22 @@ inline void fmt_apply_spec(char* buf, u32 size, u32& pos, const char* val, u32 v
     if (fill == '0' && align == '>' && val_len > 0 && (val[0] == '+' || val[0] == '-')) {
         // Zero-padding with sign: sign first, then zeros, then digits
         fmt_write_char(buf, size, pos, val[0]);
-        for (u32 i = 0; i < pad; i++) fmt_write_char(buf, size, pos, '0');
+        for (u32 i = 0; i < pad; i++)
+            fmt_write_char(buf, size, pos, '0');
         fmt_write(buf, size, pos, val + 1, val_len - 1);
     } else if (align == '<') {
         fmt_write(buf, size, pos, val, val_len);
-        for (u32 i = 0; i < pad; i++) fmt_write_char(buf, size, pos, fill);
+        for (u32 i = 0; i < pad; i++)
+            fmt_write_char(buf, size, pos, fill);
     } else {
-        for (u32 i = 0; i < pad; i++) fmt_write_char(buf, size, pos, fill);
+        for (u32 i = 0; i < pad; i++)
+            fmt_write_char(buf, size, pos, fill);
         fmt_write(buf, size, pos, val, val_len);
     }
 }
 
 // Type-erased format argument
-using FmtWriteFn = void(*)(char*, u32, u32&, const void*, const FmtSpec*);
+using FmtWriteFn = void (*)(char*, u32, u32&, const void*, const FmtSpec*);
 
 struct FmtArg {
     const void* ptr;
@@ -129,7 +135,7 @@ inline void fmt_char(char* buf, u32 size, u32& pos, const void* val, const FmtSp
     fmt_apply_spec(buf, size, pos, &c, 1, spec);
 }
 
-template<typename T>
+template <typename T>
 void fmt_signed(char* buf, u32 size, u32& pos, const void* val, const FmtSpec* spec) {
     char tmp[24];
     int n;
@@ -142,10 +148,11 @@ void fmt_signed(char* buf, u32 size, u32& pos, const void* val, const FmtSpec* s
     } else {
         n = snprintf(tmp, sizeof(tmp), "%lld", ll);
     }
-    if (n > 0) fmt_apply_spec(buf, size, pos, tmp, static_cast<u32>(n), spec);
+    if (n > 0)
+        fmt_apply_spec(buf, size, pos, tmp, static_cast<u32>(n), spec);
 }
 
-template<typename T>
+template <typename T>
 void fmt_unsigned(char* buf, u32 size, u32& pos, const void* val, const FmtSpec* spec) {
     char tmp[24];
     int n;
@@ -158,7 +165,8 @@ void fmt_unsigned(char* buf, u32 size, u32& pos, const void* val, const FmtSpec*
     } else {
         n = snprintf(tmp, sizeof(tmp), "%llu", ull);
     }
-    if (n > 0) fmt_apply_spec(buf, size, pos, tmp, static_cast<u32>(n), spec);
+    if (n > 0)
+        fmt_apply_spec(buf, size, pos, tmp, static_cast<u32>(n), spec);
 }
 
 inline void fmt_f32(char* buf, u32 size, u32& pos, const void* val, const FmtSpec* spec) {
@@ -170,7 +178,8 @@ inline void fmt_f32(char* buf, u32 size, u32& pos, const void* val, const FmtSpe
     } else {
         n = snprintf(tmp, sizeof(tmp), "%g", v);
     }
-    if (n > 0) fmt_apply_spec(buf, size, pos, tmp, static_cast<u32>(n), spec);
+    if (n > 0)
+        fmt_apply_spec(buf, size, pos, tmp, static_cast<u32>(n), spec);
 }
 
 inline void fmt_f64(char* buf, u32 size, u32& pos, const void* val, const FmtSpec* spec) {
@@ -182,7 +191,8 @@ inline void fmt_f64(char* buf, u32 size, u32& pos, const void* val, const FmtSpe
     } else {
         n = snprintf(tmp, sizeof(tmp), "%g", v);
     }
-    if (n > 0) fmt_apply_spec(buf, size, pos, tmp, static_cast<u32>(n), spec);
+    if (n > 0)
+        fmt_apply_spec(buf, size, pos, tmp, static_cast<u32>(n), spec);
 }
 
 inline void fmt_cstr(char* buf, u32 size, u32& pos, const void* val, const FmtSpec* spec) {
@@ -208,13 +218,13 @@ inline void fmt_string(char* buf, u32 size, u32& pos, const void* val, const Fmt
 inline void fmt_ptr(char* buf, u32 size, u32& pos, const void* val, const FmtSpec* spec) {
     char tmp[24];
     int n = snprintf(tmp, sizeof(tmp), "%p", val);
-    if (n > 0) fmt_apply_spec(buf, size, pos, tmp, static_cast<u32>(n), spec);
+    if (n > 0)
+        fmt_apply_spec(buf, size, pos, tmp, static_cast<u32>(n), spec);
 }
 
 // Type dispatch via constexpr if
 
-template<typename T>
-FmtArg make_arg(const T& val) {
+template <typename T> FmtArg make_arg(const T& val) {
     using D = std::decay_t<T>;
 
     if constexpr (std::is_same_v<D, bool>) {
@@ -258,7 +268,8 @@ FmtArg make_arg(const T& val) {
 // Core format string parser (non-template)
 
 inline i32 fmt_impl(char* buf, u32 size, const char* fmt, const FmtArg* args, u32 nargs) {
-    if (size == 0) return 0;
+    if (size == 0)
+        return 0;
 
     u32 pos = 0;
     u32 ai = 0;
@@ -280,7 +291,8 @@ inline i32 fmt_impl(char* buf, u32 size, const char* fmt, const FmtArg* args, u3
                 // Format spec: {:spec}
                 const char* spec_start = fmt + 2;
                 const char* spec_end = spec_start;
-                while (*spec_end && *spec_end != '}') spec_end++;
+                while (*spec_end && *spec_end != '}')
+                    spec_end++;
                 if (*spec_end == '}') {
                     FmtSpec spec = parse_format_spec(spec_start, spec_end);
                     if (ai < nargs) {
@@ -323,19 +335,25 @@ constexpr u32 count_placeholders(const char* fmt) {
     while (*fmt) {
         if (fmt[0] == '{') {
             if (fmt[1] == '{') {
-                fmt += 2;                       // {{ escape
+                fmt += 2; // {{ escape
             } else if (fmt[1] == '}') {
-                n++; fmt += 2;                  // {} placeholder
+                n++;
+                fmt += 2; // {} placeholder
             } else if (fmt[1] == ':') {
                 const char* end = fmt + 2;
-                while (*end && *end != '}') end++;
-                if (*end == '}') { n++; fmt = end + 1; }  // {:spec} placeholder
-                else fmt++;                     // no closing } -> literal
+                while (*end && *end != '}')
+                    end++;
+                if (*end == '}') {
+                    n++;
+                    fmt = end + 1;
+                } // {:spec} placeholder
+                else
+                    fmt++; // no closing } -> literal
             } else {
-                fmt++;                          // lone { -> literal
+                fmt++; // lone { -> literal
             }
         } else if (fmt[0] == '}' && fmt[1] == '}') {
-            fmt += 2;                           // }} escape
+            fmt += 2; // }} escape
         } else {
             fmt++;
         }
@@ -355,12 +373,10 @@ inline void format_placeholder_count_does_not_match_argument_count() {}
 // this through the consteval constructor, which verifies the placeholder count
 // equals NArgs (the caller's argument count) at build time. Non-literal format
 // strings cannot form one — route those through rx::runtime() instead.
-template<size_t NArgs>
-struct fmt_string {
+template <size_t NArgs> struct fmt_string {
     const char* str;
 
-    template<size_t N>
-    consteval fmt_string(const char (&s)[N]) : str(s) {
+    template <size_t N> consteval fmt_string(const char (&s)[N]) : str(s) {
         if (detail::count_placeholders(s) != NArgs)
             detail::format_placeholder_count_does_not_match_argument_count();
     }
@@ -380,10 +396,10 @@ inline runtime_format_string runtime(const char* fmt) { return {fmt}; }
 /// If return value >= size, output was truncated. Always null-terminates if size > 0.
 /// Use {{ and }} to write literal braces.
 /// Supports format specifiers: {:04} {:+} {:<12} {:>8} {:08x} {:08X}
-/// Supports: bool, char, integers, f32, f64, const char*, StringView, String, StaticString, pointers, enums.
-/// The format string is placeholder-count-checked at build time when it is a
+/// Supports: bool, char, integers, f32, f64, const char*, StringView, String, StaticString,
+/// pointers, enums. The format string is placeholder-count-checked at build time when it is a
 /// literal; pass rx::runtime(fmt) for a dynamic one.
-template<typename... Args>
+template <typename... Args>
 i32 format_to(char* buf, u32 size, runtime_format_string fmt, const Args&... args) {
     if constexpr (sizeof...(Args) == 0) {
         return detail::fmt_impl(buf, size, fmt.str, nullptr, 0);
@@ -393,14 +409,13 @@ i32 format_to(char* buf, u32 size, runtime_format_string fmt, const Args&... arg
     }
 }
 
-template<typename... Args>
+template <typename... Args>
 i32 format_to(char* buf, u32 size, fmt_string<sizeof...(Args)> fmt, const Args&... args) {
     return format_to(buf, size, runtime_format_string{fmt.str}, args...);
 }
 
 /// Format and return a String using {} placeholders.
-template<typename... Args>
-String format(runtime_format_string fmt, const Args&... args) {
+template <typename... Args> String format(runtime_format_string fmt, const Args&... args) {
     char stack_buf[256];
     i32 n = format_to(stack_buf, sizeof(stack_buf), fmt, args...);
     if (static_cast<u32>(n) < sizeof(stack_buf)) {
@@ -412,8 +427,7 @@ String format(runtime_format_string fmt, const Args&... args) {
     return result;
 }
 
-template<typename... Args>
-String format(fmt_string<sizeof...(Args)> fmt, const Args&... args) {
+template <typename... Args> String format(fmt_string<sizeof...(Args)> fmt, const Args&... args) {
     return format(runtime_format_string{fmt.str}, args...);
 }
 
@@ -423,7 +437,7 @@ String format(fmt_string<sizeof...(Args)> fmt, const Args&... args) {
 /// then formats again into the allocation — so names longer than the probe
 /// buffer are handled without truncation or out-of-bounds copies. Use this for
 /// name mangling instead of `format_to` into a fixed `char buf[N]`.
-template<typename Alloc, typename... Args>
+template <typename Alloc, typename... Args>
 StringView format_to_arena(Alloc& alloc, runtime_format_string fmt, const Args&... args) {
     char probe[256];
     u32 len = static_cast<u32>(format_to(probe, sizeof(probe), fmt, args...));
@@ -432,7 +446,7 @@ StringView format_to_arena(Alloc& alloc, runtime_format_string fmt, const Args&.
     return StringView(dst, len);
 }
 
-template<typename Alloc, typename... Args>
+template <typename Alloc, typename... Args>
 StringView format_to_arena(Alloc& alloc, fmt_string<sizeof...(Args)> fmt, const Args&... args) {
     return format_to_arena(alloc, runtime_format_string{fmt.str}, args...);
 }

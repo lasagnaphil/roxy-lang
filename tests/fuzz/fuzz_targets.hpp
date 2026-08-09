@@ -56,12 +56,11 @@ namespace detail {
 // out of bounds and is caught by ASAN, rather than reading into libFuzzer's
 // persistent, padded input buffer.
 struct SourceBuffer {
-    std::vector<char> bytes;  // `len` logical bytes + 1 trailing '\0'
+    std::vector<char> bytes; // `len` logical bytes + 1 trailing '\0'
     uint32_t len = 0;
     bool ok;
 
-    SourceBuffer(const uint8_t* data, size_t size)
-        : ok(size <= static_cast<size_t>(UINT32_MAX)) {
+    SourceBuffer(const uint8_t* data, size_t size) : ok(size <= static_cast<size_t>(UINT32_MAX)) {
         if (ok) {
             len = static_cast<uint32_t>(size);
             bytes.reserve(size + 1);

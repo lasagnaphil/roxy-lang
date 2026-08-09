@@ -49,14 +49,17 @@ public:
     }
 
     bool equals(const StringView& other) const {
-        if (m_size != other.m_size) return false;
-        if (m_size == 0) return true;  // Both empty
+        if (m_size != other.m_size)
+            return false;
+        if (m_size == 0)
+            return true; // Both empty
         return memcmp(m_data, other.m_data, m_size) == 0;
     }
 
     bool equals(const char* str) const {
         u32 len = (u32)strlen(str);
-        if (m_size != len) return false;
+        if (m_size != len)
+            return false;
         return memcmp(m_data, str, m_size) == 0;
     }
 
@@ -74,13 +77,12 @@ constexpr StringView operator""_sv(const char* str, size_t len) {
     return StringView(str, static_cast<u32>(len));
 }
 
-}
+} // namespace rx
 
 // Specialization of std::hash for rx::StringView so that
 // tsl::robin_map<StringView, ...> works without explicit hash/equal args.
 namespace std {
-template<>
-struct hash<rx::StringView> {
+template <> struct hash<rx::StringView> {
     size_t operator()(rx::StringView sv) const noexcept {
         rx::u64 h = 14695981039346656037ULL;
         for (char c : sv) {
@@ -90,4 +92,4 @@ struct hash<rx::StringView> {
         return static_cast<size_t>(h);
     }
 };
-}
+} // namespace std

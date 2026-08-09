@@ -1,7 +1,7 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
 #include "roxy/core/string_view.hpp"
+#include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
 #include "roxy/lsp/syntax_tree.hpp"
 

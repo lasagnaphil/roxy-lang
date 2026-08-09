@@ -21,9 +21,7 @@ bool VirtualMemoryOps::decommit(void* addr, u64 size) {
     return madvise(addr, size, MADV_DONTNEED) == 0;
 }
 
-void VirtualMemoryOps::release(void* addr, u64 size) {
-    munmap(addr, size);
-}
+void VirtualMemoryOps::release(void* addr, u64 size) { munmap(addr, size); }
 
 bool VirtualMemoryOps::remap_to_zero(void* addr, u64 size) {
     // Release physical pages (returns zeros on next read) and make read-only
@@ -32,10 +30,8 @@ bool VirtualMemoryOps::remap_to_zero(void* addr, u64 size) {
     return mprotect(addr, size, PROT_READ) == 0;
 }
 
-u64 VirtualMemoryOps::page_size() {
-    return static_cast<u64>(sysconf(_SC_PAGESIZE));
-}
+u64 VirtualMemoryOps::page_size() { return static_cast<u64>(sysconf(_SC_PAGESIZE)); }
 
-}
+} // namespace rx
 
 #endif // !defined(_WIN32)

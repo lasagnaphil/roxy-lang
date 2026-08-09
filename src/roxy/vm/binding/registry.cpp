@@ -1,8 +1,8 @@
 #include "roxy/vm/binding/registry.hpp"
-#include "roxy/compiler/types/type_env.hpp"
 #include "roxy/compiler/parse/ast.hpp"
-#include "roxy/shared/lexer.hpp"
 #include "roxy/compiler/parse/parser.hpp"
+#include "roxy/compiler/types/type_env.hpp"
+#include "roxy/shared/lexer.hpp"
 
 #include <cassert>
 #include <cstring>
@@ -24,20 +24,34 @@ static u32 slot_count_for_kind(NativeTypeKind kind) {
 
 static Type* type_from_kind(NativeTypeKind kind, TypeCache& types) {
     switch (kind) {
-        case NativeTypeKind::Void: return types.void_type();
-        case NativeTypeKind::Bool: return types.bool_type();
-        case NativeTypeKind::I8: return types.i8_type();
-        case NativeTypeKind::I16: return types.i16_type();
-        case NativeTypeKind::I32: return types.i32_type();
-        case NativeTypeKind::I64: return types.i64_type();
-        case NativeTypeKind::U8: return types.u8_type();
-        case NativeTypeKind::U16: return types.u16_type();
-        case NativeTypeKind::U32: return types.u32_type();
-        case NativeTypeKind::U64: return types.u64_type();
-        case NativeTypeKind::F32: return types.f32_type();
-        case NativeTypeKind::F64: return types.f64_type();
-        case NativeTypeKind::String: return types.string_type();
-        default: return types.error_type();
+        case NativeTypeKind::Void:
+            return types.void_type();
+        case NativeTypeKind::Bool:
+            return types.bool_type();
+        case NativeTypeKind::I8:
+            return types.i8_type();
+        case NativeTypeKind::I16:
+            return types.i16_type();
+        case NativeTypeKind::I32:
+            return types.i32_type();
+        case NativeTypeKind::I64:
+            return types.i64_type();
+        case NativeTypeKind::U8:
+            return types.u8_type();
+        case NativeTypeKind::U16:
+            return types.u16_type();
+        case NativeTypeKind::U32:
+            return types.u32_type();
+        case NativeTypeKind::U64:
+            return types.u64_type();
+        case NativeTypeKind::F32:
+            return types.f32_type();
+        case NativeTypeKind::F64:
+            return types.f64_type();
+        case NativeTypeKind::String:
+            return types.string_type();
+        default:
+            return types.error_type();
     }
 }
 
@@ -61,8 +75,8 @@ void NativeFunctionEntry::resolve_param_types(TypeCache& types, Type** out_param
                 out_params[i] = param_resolvers[i](types);
                 break;
             case NativeTypeInfoMode::Parsed:
-                out_params[i] = NativeRegistry::resolve_type_expr(
-                    param_type_exprs[i], {}, {}, types);
+                out_params[i] =
+                    NativeRegistry::resolve_type_expr(param_type_exprs[i], {}, {}, types);
                 break;
         }
     }
@@ -112,11 +126,14 @@ void NativeRegistry::parse_type_decl(const char* type_decl, StringView& out_name
     const char* p = angle + 1;
     while (*p && *p != '>') {
         // Skip whitespace
-        while (*p == ' ' || *p == ',') p++;
-        if (*p == '>' || *p == '\0') break;
+        while (*p == ' ' || *p == ',')
+            p++;
+        if (*p == '>' || *p == '\0')
+            break;
 
         const char* start = p;
-        while (*p && *p != ',' && *p != '>' && *p != ' ') p++;
+        while (*p && *p != ',' && *p != '>' && *p != ' ')
+            p++;
         u32 param_len = static_cast<u32>(p - start);
         char* param_buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(param_len + 1, 1));
         memcpy(param_buf, start, param_len);
@@ -125,11 +142,10 @@ void NativeRegistry::parse_type_decl(const char* type_decl, StringView& out_name
     }
 }
 
-Type* NativeRegistry::resolve_type_expr(TypeExpr* expr,
-                                        Span<StringView> type_param_names,
-                                        Span<Type*> type_args,
-                                        TypeCache& types) {
-    if (!expr) return types.void_type();
+Type* NativeRegistry::resolve_type_expr(TypeExpr* expr, Span<StringView> type_param_names,
+                                        Span<Type*> type_args, TypeCache& types) {
+    if (!expr)
+        return types.void_type();
 
     StringView name = expr->name;
     Type* result = types.error_type();
@@ -153,11 +169,14 @@ Type* NativeRegistry::resolve_type_expr(TypeExpr* expr,
         } else if (expr->type_args.size() > 0) {
             // Generic type application: List<T>, Map<K, V>
             if (name == "List"_sv && expr->type_args.size() == 1) {
-                Type* elem = resolve_type_expr(expr->type_args[0], type_param_names, type_args, types);
+                Type* elem =
+                    resolve_type_expr(expr->type_args[0], type_param_names, type_args, types);
                 result = types.list_type(elem);
             } else if (name == "Map"_sv && expr->type_args.size() == 2) {
-                Type* key = resolve_type_expr(expr->type_args[0], type_param_names, type_args, types);
-                Type* val = resolve_type_expr(expr->type_args[1], type_param_names, type_args, types);
+                Type* key =
+                    resolve_type_expr(expr->type_args[0], type_param_names, type_args, types);
+                Type* val =
+                    resolve_type_expr(expr->type_args[1], type_param_names, type_args, types);
                 result = types.map_type(key, val);
             }
         }
@@ -187,8 +206,7 @@ void NativeRegistry::bind_native(NativeFunction func, const char* signature,
 
     NativeFunctionEntry entry;
     entry.name = fun.name;
-    entry.aot_symbol_name = aot_symbol_name
-        ? make_string_view(aot_symbol_name) : entry.name;
+    entry.aot_symbol_name = aot_symbol_name ? make_string_view(aot_symbol_name) : entry.name;
     entry.func = func;
     entry.type_info_mode = NativeTypeInfoMode::Parsed;
     entry.param_count = fun.params.size();
@@ -254,18 +272,19 @@ void NativeRegistry::bind_native_overload(NativeFunction func, const char* signa
     // Mint the "$ol$<name>$<t1>$<t2>..." key from the parsed signature. Param
     // types must be simple named types so the spelling matches
     // rx::mangle_overload's mangle_type_name output for the resolved types.
-    u32 total_len = 4 + fun.name.size();  // "$ol$" + name
+    u32 total_len = 4 + fun.name.size(); // "$ol$" + name
     for (const auto& param : fun.params) {
         assert(param.type && param.type->kind == TypeExprKind::Named &&
-               param.type->type_args.size() == 0 &&
-               param.type->ref_kind == RefKind::None &&
+               param.type->type_args.size() == 0 && param.type->ref_kind == RefKind::None &&
                "bind_native_overload: parameter types must be simple named types");
         total_len += 1 + param.type->name.size();
     }
     char* buf = reinterpret_cast<char*>(m_allocator.alloc_bytes(total_len + 1, 1));
     u32 pos = 0;
-    memcpy(buf + pos, "$ol$", 4); pos += 4;
-    memcpy(buf + pos, fun.name.data(), fun.name.size()); pos += fun.name.size();
+    memcpy(buf + pos, "$ol$", 4);
+    pos += 4;
+    memcpy(buf + pos, fun.name.data(), fun.name.size());
+    pos += fun.name.size();
     for (const auto& param : fun.params) {
         buf[pos++] = '$';
         memcpy(buf + pos, param.type->name.data(), param.type->name.size());
@@ -276,8 +295,7 @@ void NativeRegistry::bind_native_overload(NativeFunction func, const char* signa
     NativeFunctionEntry entry;
     entry.name = StringView(buf, total_len);
     entry.source_name = fun.name;
-    entry.aot_symbol_name = aot_symbol_name
-        ? make_string_view(aot_symbol_name) : entry.name;
+    entry.aot_symbol_name = aot_symbol_name ? make_string_view(aot_symbol_name) : entry.name;
     entry.func = func;
     entry.type_info_mode = NativeTypeInfoMode::Parsed;
     entry.param_count = fun.params.size();
@@ -300,7 +318,8 @@ void NativeRegistry::bind_native_overload(NativeFunction func, const char* signa
     m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
 }
 
-void NativeRegistry::register_struct(const char* name, std::initializer_list<NativeFieldEntry> fields) {
+void NativeRegistry::register_struct(const char* name,
+                                     std::initializer_list<NativeFieldEntry> fields) {
     NativeStructEntry entry;
     entry.name = make_string_view(name);
     for (const auto& f : fields) {
@@ -373,8 +392,8 @@ void NativeRegistry::bind_constructor(NativeFunction func, const char* signature
     m_name_to_index[entry.name] = static_cast<i32>(m_function_entries.size() - 1);
 }
 
-void NativeRegistry::register_generic_type(const char* type_decl,
-                                           const char* alloc_name, NativeFunction alloc_func) {
+void NativeRegistry::register_generic_type(const char* type_decl, const char* alloc_name,
+                                           NativeFunction alloc_func) {
     NativeGenericTypeEntry entry;
     parse_type_decl(type_decl, entry.name, entry.type_param_names);
     entry.type_param_count = static_cast<u32>(entry.type_param_names.size());
@@ -413,7 +432,8 @@ void NativeRegistry::bind_generic_copy_constructor(const char* type_name,
                                                    const char* copy_func_name,
                                                    NativeFunction func) {
     auto it = m_generic_types.find(make_string_view(type_name));
-    if (it == m_generic_types.end()) return;
+    if (it == m_generic_types.end())
+        return;
 
     StringView copy_name = make_string_view(copy_func_name);
     it.value().copy_native_name = copy_name;
@@ -443,15 +463,15 @@ StringView NativeRegistry::get_generic_copy_name(StringView name) const {
 }
 
 Span<MethodInfo> NativeRegistry::instantiate_generic_methods(StringView name, Span<Type*> type_args,
-                                                              BumpAllocator& allocator, TypeCache& types) const {
+                                                             BumpAllocator& allocator,
+                                                             TypeCache& types) const {
     // Look up type param names for this generic type
     auto gen_it = m_generic_types.find(name);
     Span<StringView> type_param_names;
     if (gen_it != m_generic_types.end()) {
         const auto& param_names = gen_it->second.type_param_names;
-        type_param_names = Span<StringView>(
-            const_cast<StringView*>(param_names.data()),
-            static_cast<u32>(param_names.size()));
+        type_param_names = Span<StringView>(const_cast<StringView*>(param_names.data()),
+                                            static_cast<u32>(param_names.size()));
     }
 
     // Count method entries for this struct
@@ -462,7 +482,8 @@ Span<MethodInfo> NativeRegistry::instantiate_generic_methods(StringView name, Sp
             count++;
         }
     }
-    if (count == 0) return Span<MethodInfo>();
+    if (count == 0)
+        return Span<MethodInfo>();
 
     MethodInfo* methods = reinterpret_cast<MethodInfo*>(
         allocator.alloc_bytes(sizeof(MethodInfo) * count, alignof(MethodInfo)));
@@ -470,7 +491,8 @@ Span<MethodInfo> NativeRegistry::instantiate_generic_methods(StringView name, Sp
     u32 idx = 0;
     for (const auto& entry : m_function_entries) {
         if (!entry.is_method || entry.struct_name != name ||
-            entry.method_kind != GenericMethodKind::Method) continue;
+            entry.method_kind != GenericMethodKind::Method)
+            continue;
 
         MethodInfo& method_info = methods[idx++];
         method_info.name = entry.method_name;
@@ -485,8 +507,8 @@ Span<MethodInfo> NativeRegistry::instantiate_generic_methods(StringView name, Sp
             for (u32 j = 0; j < param_count; j++) {
                 switch (entry.type_info_mode) {
                     case NativeTypeInfoMode::Parsed:
-                        param_types[j] = resolve_type_expr(
-                            entry.param_type_exprs[j], type_param_names, type_args, types);
+                        param_types[j] = resolve_type_expr(entry.param_type_exprs[j],
+                                                           type_param_names, type_args, types);
                         break;
                     case NativeTypeInfoMode::Resolver:
                         param_types[j] = entry.param_resolvers[j](types);
@@ -503,8 +525,8 @@ Span<MethodInfo> NativeRegistry::instantiate_generic_methods(StringView name, Sp
 
         switch (entry.type_info_mode) {
             case NativeTypeInfoMode::Parsed:
-                method_info.return_type = resolve_type_expr(
-                    entry.return_type_expr, type_param_names, type_args, types);
+                method_info.return_type =
+                    resolve_type_expr(entry.return_type_expr, type_param_names, type_args, types);
                 // Record that the signature said `borrowed` (see MethodInfo).
                 // resolve_type_expr already applied the transform to
                 // `return_type`; for the kinds where it is the identity, this
@@ -521,22 +543,23 @@ Span<MethodInfo> NativeRegistry::instantiate_generic_methods(StringView name, Sp
     return Span<MethodInfo>(methods, count);
 }
 
-ResolvedConstructor NativeRegistry::instantiate_generic_constructor(StringView name, Span<Type*> type_args,
-                                                                     BumpAllocator& allocator,
-                                                                     TypeCache& types) const {
+ResolvedConstructor NativeRegistry::instantiate_generic_constructor(StringView name,
+                                                                    Span<Type*> type_args,
+                                                                    BumpAllocator& allocator,
+                                                                    TypeCache& types) const {
     // Look up type param names for this generic type
     auto gen_it = m_generic_types.find(name);
     Span<StringView> type_param_names;
     if (gen_it != m_generic_types.end()) {
         const auto& param_names = gen_it->second.type_param_names;
-        type_param_names = Span<StringView>(
-            const_cast<StringView*>(param_names.data()),
-            static_cast<u32>(param_names.size()));
+        type_param_names = Span<StringView>(const_cast<StringView*>(param_names.data()),
+                                            static_cast<u32>(param_names.size()));
     }
 
     for (const auto& entry : m_function_entries) {
         if (!entry.is_method || entry.struct_name != name ||
-            entry.method_kind != GenericMethodKind::Constructor) continue;
+            entry.method_kind != GenericMethodKind::Constructor)
+            continue;
 
         u32 param_count = entry.param_count;
         Type** param_types = nullptr;
@@ -546,8 +569,8 @@ ResolvedConstructor NativeRegistry::instantiate_generic_constructor(StringView n
             for (u32 j = 0; j < param_count; j++) {
                 switch (entry.type_info_mode) {
                     case NativeTypeInfoMode::Parsed:
-                        param_types[j] = resolve_type_expr(
-                            entry.param_type_exprs[j], type_param_names, type_args, types);
+                        param_types[j] = resolve_type_expr(entry.param_type_exprs[j],
+                                                           type_param_names, type_args, types);
                         break;
                     case NativeTypeInfoMode::Resolver:
                         param_types[j] = entry.param_resolvers[j](types);
@@ -561,7 +584,8 @@ ResolvedConstructor NativeRegistry::instantiate_generic_constructor(StringView n
     return {StringView(nullptr, 0), Span<Type*>(), 0};
 }
 
-void NativeRegistry::apply_structs_to_types(TypeEnv& type_env, BumpAllocator& allocator, SymbolTable& symbols) {
+void NativeRegistry::apply_structs_to_types(TypeEnv& type_env, BumpAllocator& allocator,
+                                            SymbolTable& symbols) {
     TypeCache& types = type_env.types();
     for (const auto& se : m_struct_entries) {
         // Create struct type (decl = nullptr for native structs)
@@ -609,13 +633,15 @@ void NativeRegistry::apply_methods_to_types(TypeEnv& type_env, BumpAllocator& al
     // Group methods by struct name
     tsl::robin_map<StringView, Vector<const NativeFunctionEntry*>> methods_by_struct;
     for (const auto& entry : m_function_entries) {
-        if (!entry.is_method) continue;
+        if (!entry.is_method)
+            continue;
         methods_by_struct[entry.struct_name].push_back(&entry);
     }
 
     for (auto& [struct_name, methods] : methods_by_struct) {
         Type* struct_type = type_env.named_type_by_name(struct_name);
-        if (!struct_type || !struct_type->is_struct()) continue;
+        if (!struct_type || !struct_type->is_struct())
+            continue;
 
         u32 existing = struct_type->struct_info.methods.size();
         u32 total = existing + static_cast<u32>(methods.size());
@@ -632,7 +658,7 @@ void NativeRegistry::apply_methods_to_types(TypeEnv& type_env, BumpAllocator& al
             const NativeFunctionEntry* e = methods[i];
             MethodInfo& method_info = method_info_array[existing + i];
             method_info.name = e->method_name;
-            method_info.decl = nullptr;  // Native methods have no AST
+            method_info.decl = nullptr; // Native methods have no AST
 
             // Build param types (excluding self)
             u32 param_count = e->param_count;
@@ -650,10 +676,12 @@ void NativeRegistry::apply_methods_to_types(TypeEnv& type_env, BumpAllocator& al
     }
 }
 
-void NativeRegistry::apply_to_symbols(SymbolTable& symbols, TypeCache& types, BumpAllocator& allocator) {
+void NativeRegistry::apply_to_symbols(SymbolTable& symbols, TypeCache& types,
+                                      BumpAllocator& allocator) {
     for (const auto& entry : m_function_entries) {
         // Skip method entries - they are applied via apply_methods_to_types
-        if (entry.is_method) continue;
+        if (entry.is_method)
+            continue;
 
         // Get return type
         Type* ret_type = entry.resolve_return_type(types);
@@ -667,8 +695,8 @@ void NativeRegistry::apply_to_symbols(SymbolTable& symbols, TypeCache& types, Bu
         }
 
         // Create function type using provided TypeCache
-        Type* func_type = types.function_type(
-            Span<Type*>(param_array, entry.param_count), ret_type);
+        Type* func_type =
+            types.function_type(Span<Type*>(param_array, entry.param_count), ret_type);
 
         // Define under the source-visible name. Overloaded entries
         // (bind_native_overload) share a source_name — the first defines the
@@ -678,17 +706,17 @@ void NativeRegistry::apply_to_symbols(SymbolTable& symbols, TypeCache& types, Bu
         // IR builder; non-overloaded entries keep their historical
         // Function-kind shape (their name IS the registry key).
         if (entry.source_name.empty()) {
-            symbols.define(SymbolKind::Function, entry.name, func_type,
-                          SourceLocation{0, 0, 0, 0}, nullptr);
+            symbols.define(SymbolKind::Function, entry.name, func_type, SourceLocation{0, 0, 0, 0},
+                           nullptr);
         } else {
             Symbol* head = symbols.lookup_local(entry.source_name);
             Symbol* sym;
             if (head && is_function_symbol_kind(head->kind)) {
-                sym = symbols.append_overload(head, SymbolKind::ImportedFunction,
-                                              func_type, SourceLocation{0, 0, 0, 0}, nullptr);
+                sym = symbols.append_overload(head, SymbolKind::ImportedFunction, func_type,
+                                              SourceLocation{0, 0, 0, 0}, nullptr);
             } else {
-                sym = symbols.define(SymbolKind::ImportedFunction, entry.source_name,
-                                     func_type, SourceLocation{0, 0, 0, 0}, nullptr);
+                sym = symbols.define(SymbolKind::ImportedFunction, entry.source_name, func_type,
+                                     SourceLocation{0, 0, 0, 0}, nullptr);
             }
             sym->imported_func.module_name = StringView{};
             sym->imported_func.original_name = entry.name;

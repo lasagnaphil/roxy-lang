@@ -14,9 +14,7 @@ using ObjectHeader = roxy_object_header;
 
 // Check if the object is alive (not tombstoned).
 // `weak_generation == 0` means dead; non-zero means alive.
-inline bool is_alive(const ObjectHeader* hdr) {
-    return hdr && hdr->weak_generation != 0;
-}
+inline bool is_alive(const ObjectHeader* hdr) { return hdr && hdr->weak_generation != 0; }
 
 // Get pointer to object data (immediately after the header).
 inline void* header_data(ObjectHeader* hdr) {
@@ -29,13 +27,12 @@ inline const void* header_data(const ObjectHeader* hdr) {
 
 // Get object header from a data pointer.
 inline ObjectHeader* get_header_from_data(void* data) {
-    return reinterpret_cast<ObjectHeader*>(
-        reinterpret_cast<u8*>(data) - sizeof(ObjectHeader));
+    return reinterpret_cast<ObjectHeader*>(reinterpret_cast<u8*>(data) - sizeof(ObjectHeader));
 }
 
 inline const ObjectHeader* get_header_from_data(const void* data) {
-    return reinterpret_cast<const ObjectHeader*>(
-        reinterpret_cast<const u8*>(data) - sizeof(ObjectHeader));
+    return reinterpret_cast<const ObjectHeader*>(reinterpret_cast<const u8*>(data) -
+                                                 sizeof(ObjectHeader));
 }
 
 // Forward declaration
@@ -47,7 +44,8 @@ void* object_alloc(RoxyVM* vm, u32 type_id, u32 data_size);
 
 // Increment reference count
 inline void ref_inc(void* data) {
-    if (data == nullptr) return;
+    if (data == nullptr)
+        return;
     ObjectHeader* header = get_header_from_data(data);
     header->ref_count++;
 }
@@ -69,13 +67,13 @@ void object_free(RoxyVM* vm, void* data);
 // Object type registry
 struct ObjectTypeInfo {
     u32 type_id;
-    u32 size;                   // Size of object data (not including header)
+    u32 size; // Size of object data (not including header)
     // Type name for debugging. A StringView, not a `const char*`: the names that
     // matter — user struct names, from `BCTypeInfo` — point into the module's
     // source text and are NOT null-terminated, so printing one as `%s` ran off
     // the end of the name and into the rest of the file. Print with `%.*s`.
     StringView name;
-    void (*destructor)(RoxyVM* vm, void* data);  // Optional destructor
+    void (*destructor)(RoxyVM* vm, void* data); // Optional destructor
 };
 
 // NOTE: The type registry is global and NOT thread-safe.
@@ -93,4 +91,4 @@ u32 register_object_type(StringView name, u32 size, void (*destructor)(RoxyVM*, 
 // Get type info by ID
 const ObjectTypeInfo* get_object_type(u32 type_id);
 
-}
+} // namespace rx

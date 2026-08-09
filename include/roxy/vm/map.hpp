@@ -12,11 +12,11 @@ struct RoxyVM;
 // `ROXY_MAP_KEY_*` defines in roxy_rt.h so a `MapKeyKind` cast to/from
 // `uint8_t` round-trips through the unified header's `key_kind` field.
 enum class MapKeyKind : u8 {
-    Integer = ROXY_MAP_KEY_INTEGER,    // i8..i64, u8..u64, bool, enum
-    Float32 = ROXY_MAP_KEY_FLOAT32,    // Normalize -0→+0, then hash bit representation
+    Integer = ROXY_MAP_KEY_INTEGER, // i8..i64, u8..u64, bool, enum
+    Float32 = ROXY_MAP_KEY_FLOAT32, // Normalize -0→+0, then hash bit representation
     Float64 = ROXY_MAP_KEY_FLOAT64,
-    String  = ROXY_MAP_KEY_STRING,     // Dereference pointer, hash via cached header field
-    Struct  = ROXY_MAP_KEY_STRUCT,     // Bytewise FNV-1a hash + memcmp, or user Hash/Eq
+    String = ROXY_MAP_KEY_STRING, // Dereference pointer, hash via cached header field
+    Struct = ROXY_MAP_KEY_STRUCT, // Bytewise FNV-1a hash + memcmp, or user Hash/Eq
 };
 
 // `MapHeader` is now a typedef of the unified C runtime header (see
@@ -28,9 +28,7 @@ enum class MapKeyKind : u8 {
 using MapHeader = roxy_map_header;
 
 // Get the MapHeader from map data pointer
-inline MapHeader* get_map_header(void* data) {
-    return static_cast<MapHeader*>(data);
-}
+inline MapHeader* get_map_header(void* data) { return static_cast<MapHeader*>(data); }
 
 inline const MapHeader* get_map_header(const void* data) {
     return static_cast<const MapHeader*>(data);
@@ -44,18 +42,15 @@ inline const MapHeader* get_map_header(const void* data) {
 // Hash and Eq methods on Struct keys (UINT32_MAX = no custom impl, fall back
 // to bytewise). Ignored for non-struct key kinds.
 // Returns pointer to map data (MapHeader).
-void* map_alloc(RoxyVM* vm, MapKeyKind key_kind, u32 capacity,
-                u8 key_slot_count = 2, bool key_is_inline = true,
-                u8 value_slot_count = 2, bool value_is_inline = true,
+void* map_alloc(RoxyVM* vm, MapKeyKind key_kind, u32 capacity, u8 key_slot_count = 2,
+                bool key_is_inline = true, u8 value_slot_count = 2, bool value_is_inline = true,
                 u32 hash_fn_index = UINT32_MAX, u32 eq_fn_index = UINT32_MAX);
 
 // Deep-copy a map
 void* map_copy(RoxyVM* vm, void* src);
 
 // Get map length
-inline u32 map_length(const void* data) {
-    return get_map_header(data)->length;
-}
+inline u32 map_length(const void* data) { return get_map_header(data)->length; }
 
 // All key reads now use byte pointers. `key_src` points to
 // `key_slot_count * 4` bytes that the runtime hashes/compares per the
@@ -98,4 +93,4 @@ u32 register_map_type();
 // Get the registered map type ID
 u32 get_map_type_id();
 
-}
+} // namespace rx

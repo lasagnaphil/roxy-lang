@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -159,7 +159,8 @@ TEST_SUITE("E2E Lists") {
         CHECK(result.stdout_output == "30\n20\n10\n");
     }
 
-    TEST_CASE("List quicksort") {  // VM-only: C backend: inout container threaded through loop block args loses its void** pointer-ness
+    TEST_CASE("List quicksort") { // VM-only: C backend: inout container threaded through loop block
+                                  // args loses its void** pointer-ness
         const char* source = R"(
         fun swap(lst: inout List<i32>, i: i32, j: i32) {
             var temp: i32 = lst[i];
@@ -466,7 +467,8 @@ TEST_SUITE("E2E Lists") {
     // as a large positive 32-bit number despite printing correctly).
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("List<i32>: negative element compares as negative", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("List<i32>: negative element compares as negative", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var lst: List<i32> = List<i32>();
@@ -484,7 +486,8 @@ TEST_SUITE("E2E Lists") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("List<Struct>: negative i32 field of struct element compares as negative", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("List<Struct>: negative i32 field of struct element compares as negative",
+                       Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         struct E { enc: i32; }
         fun main(): i32 {
@@ -503,7 +506,8 @@ TEST_SUITE("E2E Lists") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("List<i32>: while loop with negative-sentinel guard terminates", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("List<i32>: while loop with negative-sentinel guard terminates", Backend,
+                       RX_E2E_BACKENDS) {
         // The TODO note's "while-loop-doesn't-re-check-condition" symptom:
         // assigning `idx = lst[idx].enc` where enc=-1 would silently give a large
         // positive number under zero-extension, so `idx >= 0` stayed true and the
@@ -539,7 +543,8 @@ TEST_SUITE("E2E Lists") {
     // List<value-struct-with-owned-fields>.
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("List<value-struct with destructor>: per-element cleanup", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("List<value-struct with destructor>: per-element cleanup", Backend,
+                       RX_E2E_BACKENDS) {
         // Each Item is an inline value struct with a user destructor. When the list
         // is destroyed at scope exit, each element's destructor must run with the
         // correct `self`, in element order.
@@ -561,7 +566,8 @@ TEST_SUITE("E2E Lists") {
         CHECK(result.stdout_output == "del 1\ndel 2\ndel 3\n");
     }
 
-    TEST_CASE_TEMPLATE("List<struct with uniq field>: per-element field cleanup", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("List<struct with uniq field>: per-element field cleanup", Backend,
+                       RX_E2E_BACKENDS) {
         // Holder is an inline value struct owning a uniq Inner. Destroying the list
         // must walk each element's fields in place and free the owned Inner.
         const char* source = R"(
@@ -586,7 +592,8 @@ TEST_SUITE("E2E Lists") {
     // List Printable: synthesized per-instantiation to_string
     // ------------------------------------------------------------------------
 
-    TEST_CASE_TEMPLATE("List to_string: primitives via f-string and method", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("List to_string: primitives via f-string and method", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var xs: List<i32> = List<i32>();
@@ -675,7 +682,8 @@ TEST_SUITE("E2E Lists") {
         CHECK(result.stdout_output == "[[1, 2], [3]]\n");
     }
 
-    TEST_CASE_TEMPLATE("List to_string: repeated in loop (release balance)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("List to_string: repeated in loop (release balance)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var xs: List<i32> = List<i32>();
@@ -693,7 +701,8 @@ TEST_SUITE("E2E Lists") {
         CHECK(result.stdout_output == "[1, 2]\n");
     }
 
-    TEST_CASE_TEMPLATE("List to_string: passed as param and stored in struct", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("List to_string: passed as param and stored in struct", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Bag { items: List<i32>; }
 
@@ -721,7 +730,8 @@ TEST_SUITE("E2E Lists") {
     // so those counts need a releaser. Bound to a variable the literal is
     // adopted; as an argument it had nowhere to go and leaked one count per
     // push. "Drop where you acquired" applies to a temporary too.
-    TEST_CASE_TEMPLATE("push of an inline struct literal owning a string", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("push of an inline struct literal owning a string", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct S { s: string; n: i32; }
         fun main(): i32 {
@@ -752,5 +762,4 @@ TEST_SUITE("E2E Lists") {
         CHECK(result.success);
         CHECK(result.stdout_output == "e1\n");
     }
-
 }

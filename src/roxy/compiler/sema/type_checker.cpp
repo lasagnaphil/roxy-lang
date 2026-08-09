@@ -3,17 +3,22 @@
 namespace rx {
 
 bool TypeChecker::is_assignable(Type* target, Type* source) const {
-    if (!target || !source) return false;
-    if (target->is_error() || source->is_error()) return true;
-    if (target == source) return true;
+    if (!target || !source)
+        return false;
+    if (target->is_error() || source->is_error())
+        return true;
+    if (target == source)
+        return true;
     // TypeParam is assignable to itself (same name/index = same parameter)
     if (target->is_type_param() && source->is_type_param()) {
-        return target->type_param_info.index == source->type_param_info.index
-            && target->type_param_info.name == source->type_param_info.name;
+        return target->type_param_info.index == source->type_param_info.index &&
+               target->type_param_info.name == source->type_param_info.name;
     }
-    if (source->is_nil() && target->is_reference()) return true;
+    if (source->is_nil() && target->is_reference())
+        return true;
     if (target->is_struct() && source->is_struct()) {
-        if (is_subtype_of(source, target)) return true;
+        if (is_subtype_of(source, target))
+            return true;
     }
     // Coroutine values are first-class: a per-function Coro<T> (from a coroutine
     // call) and the interned generic Coro<T> (from a `Coro<T>` annotation) are
@@ -26,33 +31,41 @@ bool TypeChecker::is_assignable(Type* target, Type* source) const {
         if (target->kind == source->kind) {
             Type* target_inner = target->ref_info.inner_type;
             Type* source_inner = source->ref_info.inner_type;
-            if (is_subtype_of(source_inner, target_inner)) return true;
+            if (is_subtype_of(source_inner, target_inner))
+                return true;
         }
     }
-    if (can_convert_ref(source, target)) return true;
+    if (can_convert_ref(source, target))
+        return true;
     // Unsuffixed literals are polymorphic — see check_assignable for the rule.
-    if (source->is_int_literal() && target->is_numeric()) return true;
-    if (source->is_float_literal() && target->is_float()) return true;
+    if (source->is_int_literal() && target->is_numeric())
+        return true;
+    if (source->is_float_literal() && target->is_float())
+        return true;
     return false;
 }
 
 bool TypeChecker::check_assignable(Type* target, Type* source, SourceLocation loc) {
-    if (!target || !source) return false;
-    if (target->is_error() || source->is_error()) return true;  // Don't cascade errors
+    if (!target || !source)
+        return false;
+    if (target->is_error() || source->is_error())
+        return true; // Don't cascade errors
 
     // Same type is always assignable
-    if (target == source) return true;
+    if (target == source)
+        return true;
 
     // TypeParam is assignable to itself (same name/index = same parameter)
     if (target->is_type_param() && source->is_type_param()) {
-        if (target->type_param_info.index == source->type_param_info.index
-            && target->type_param_info.name == source->type_param_info.name) {
+        if (target->type_param_info.index == source->type_param_info.index &&
+            target->type_param_info.name == source->type_param_info.name) {
             return true;
         }
     }
 
     // nil is assignable to reference types
-    if (source->is_nil() && target->is_reference()) return true;
+    if (source->is_nil() && target->is_reference())
+        return true;
 
     // Struct subtyping: Child assignable to Parent (value slicing for values)
     if (target->is_struct() && source->is_struct()) {
@@ -83,15 +96,18 @@ bool TypeChecker::check_assignable(Type* target, Type* source, SourceLocation lo
     }
 
     // Check reference type conversions
-    if (can_convert_ref(source, target)) return true;
+    if (can_convert_ref(source, target))
+        return true;
 
     // An unsuffixed literal is polymorphic: it adapts to whatever type its
     // context asks for. An integer literal reaches any numeric type, float
     // included (`var x: f64 = 1;`); a float literal reaches the float types
     // (`var x: f32 = 1.0;`) but not an integer, which would truncate. Only
     // *typed* values are held to strict matching, below.
-    if (source->is_int_literal() && target->is_numeric()) return true;
-    if (source->is_float_literal() && target->is_float()) return true;
+    if (source->is_int_literal() && target->is_numeric())
+        return true;
+    if (source->is_float_literal() && target->is_float())
+        return true;
 
     // Strict numeric typing: no implicit conversions between numeric types
     if (target->is_numeric() && source->is_numeric() && target != source) {
@@ -101,15 +117,18 @@ bool TypeChecker::check_assignable(Type* target, Type* source, SourceLocation lo
 
     // Specific error messages for forbidden reference conversions
     if (source->kind == TypeKind::Ref && target->kind == TypeKind::Uniq) {
-        m_reporter.error(loc, "cannot convert 'ref' to 'uniq': borrowing does not transfer ownership");
+        m_reporter.error(loc,
+                         "cannot convert 'ref' to 'uniq': borrowing does not transfer ownership");
         return false;
     }
     if (source->kind == TypeKind::Weak && target->kind == TypeKind::Uniq) {
-        m_reporter.error(loc, "cannot convert 'weak' to 'uniq': weak reference cannot become owner");
+        m_reporter.error(loc,
+                         "cannot convert 'weak' to 'uniq': weak reference cannot become owner");
         return false;
     }
     if (source->kind == TypeKind::Weak && target->kind == TypeKind::Ref) {
-        m_reporter.error(loc, "cannot convert 'weak' to 'ref': weak reference cannot become strong borrow");
+        m_reporter.error(
+            loc, "cannot convert 'weak' to 'ref': weak reference cannot become strong borrow");
         return false;
     }
 
@@ -126,34 +145,44 @@ bool TypeChecker::check_assignable(Type* target, Type* source, SourceLocation lo
 }
 
 bool TypeChecker::can_cast(Type* source, Type* target) {
-    if (!source || !target) return false;
-    if (source->is_error() || target->is_error()) return true;  // Allow error types to avoid cascading errors
+    if (!source || !target)
+        return false;
+    if (source->is_error() || target->is_error())
+        return true; // Allow error types to avoid cascading errors
 
     // Same type is always castable (no-op)
-    if (source == target) return true;
+    if (source == target)
+        return true;
 
     // Numeric to numeric: allowed
-    if (source->is_numeric() && target->is_numeric()) return true;
+    if (source->is_numeric() && target->is_numeric())
+        return true;
 
     // Integer/float to bool: allowed
-    if ((source->is_numeric()) && target->is_bool()) return true;
+    if ((source->is_numeric()) && target->is_bool())
+        return true;
 
     // Bool to integer/float: allowed
-    if (source->is_bool() && target->is_numeric()) return true;
+    if (source->is_bool() && target->is_numeric())
+        return true;
 
     // String and void casts are not allowed
-    if (source->kind == TypeKind::String || target->kind == TypeKind::String) return false;
-    if (source->is_void() || target->is_void()) return false;
+    if (source->kind == TypeKind::String || target->kind == TypeKind::String)
+        return false;
+    if (source->is_void() || target->is_void())
+        return false;
 
     return false;
 }
 
 bool TypeChecker::can_convert_ref(Type* from, Type* to) const {
-    if (!from || !to) return false;
+    if (!from || !to)
+        return false;
 
     // Helper to check inner type compatibility (same type or subtype)
     auto inner_compatible = [](Type* from_inner, Type* to_inner) -> bool {
-        if (from_inner == to_inner) return true;
+        if (from_inner == to_inner)
+            return true;
         // Covariant: Child -> Parent
         if (from_inner && to_inner && from_inner->is_struct() && to_inner->is_struct()) {
             return is_subtype_of(from_inner, to_inner);
@@ -204,7 +233,8 @@ bool TypeChecker::can_convert_ref(Type* from, Type* to) const {
 }
 
 bool TypeChecker::check_numeric(Type* type, SourceLocation loc) {
-    if (!type || type->is_error()) return false;
+    if (!type || type->is_error())
+        return false;
     if (!type->is_numeric()) {
         m_reporter.error(loc, "expected numeric type");
         return false;
@@ -213,7 +243,8 @@ bool TypeChecker::check_numeric(Type* type, SourceLocation loc) {
 }
 
 bool TypeChecker::check_integer(Type* type, SourceLocation loc) {
-    if (!type || type->is_error()) return false;
+    if (!type || type->is_error())
+        return false;
     if (!type->is_integer()) {
         m_reporter.error(loc, "expected integer type");
         return false;
@@ -222,7 +253,8 @@ bool TypeChecker::check_integer(Type* type, SourceLocation loc) {
 }
 
 bool TypeChecker::check_boolean(Type* type, SourceLocation loc) {
-    if (!type || type->is_error()) return false;
+    if (!type || type->is_error())
+        return false;
     if (!type->is_bool()) {
         m_reporter.error(loc, "expected boolean type");
         return false;
@@ -237,33 +269,39 @@ String TypeChecker::type_string(Type* type) {
     return str;
 }
 
-bool TypeChecker::require_types_match(Type* left, Type* right, SourceLocation loc, const char* context) {
-    if (left == right) return true;
+bool TypeChecker::require_types_match(Type* left, Type* right, SourceLocation loc,
+                                      const char* context) {
+    if (left == right)
+        return true;
 
     auto left_str = type_string(left);
     auto right_str = type_string(right);
-    m_reporter.error_fmt(loc, "{} requires matching types, got '{}' and '{}'",
-              context, left_str.data(), right_str.data());
+    m_reporter.error_fmt(loc, "{} requires matching types, got '{}' and '{}'", context,
+                         left_str.data(), right_str.data());
     return false;
 }
 
-void TypeChecker::error_cannot_convert(Type* source, Type* target, SourceLocation loc, const char* context) {
+void TypeChecker::error_cannot_convert(Type* source, Type* target, SourceLocation loc,
+                                       const char* context) {
     auto source_str = type_string(source);
     auto target_str = type_string(target);
-    m_reporter.error_fmt(loc, "cannot {} '{}' to '{}'",
-              context, source_str.data(), target_str.data());
+    m_reporter.error_fmt(loc, "cannot {} '{}' to '{}'", context, source_str.data(),
+                         target_str.data());
 }
 
 void TypeChecker::coerce_numeric_literal(Expr* expr, Type* target) {
-    if (!expr || !target || !expr->resolved_type) return;
+    if (!expr || !target || !expr->resolved_type)
+        return;
     Type* source = expr->resolved_type;
     if (source->is_int_literal()) {
         // An integer literal adapts to any numeric type, float included.
-        if (!target->is_numeric()) return;
+        if (!target->is_numeric())
+            return;
     } else if (source->is_float_literal()) {
         // A float literal adapts only among the float types — `var x: i32 = 1.0;`
         // is still a truncating conversion and stays an error.
-        if (!target->is_float()) return;
+        if (!target->is_float())
+            return;
     } else {
         return;
     }
@@ -281,8 +319,7 @@ void TypeChecker::coerce_numeric_literal(Expr* expr, Type* target) {
         // picked up a concrete type isn't a literal type and returned above.
         coerce_numeric_literal(expr->binary.left, target);
         coerce_numeric_literal(expr->binary.right, target);
-    }
-    else if (expr->kind == AstKind::ExprTernary) {
+    } else if (expr->kind == AstKind::ExprTernary) {
         // Same for an all-literal ternary (analyze_ternary_expr keeps it
         // polymorphic): both arms have to follow the expression's type.
         coerce_numeric_literal(expr->ternary.then_expr, target);
@@ -290,4 +327,4 @@ void TypeChecker::coerce_numeric_literal(Expr* expr, Type* target) {
     }
 }
 
-}
+} // namespace rx

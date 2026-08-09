@@ -1,10 +1,10 @@
 #include "roxy/core/doctest/doctest.h"
 
-#include "roxy/lsp/global_index.hpp"
-#include "roxy/lsp/lsp_parser.hpp"
-#include "roxy/lsp/indexer.hpp"
-#include "roxy/lsp/protocol.hpp"
 #include "roxy/core/bump_allocator.hpp"
+#include "roxy/lsp/global_index.hpp"
+#include "roxy/lsp/indexer.hpp"
+#include "roxy/lsp/lsp_parser.hpp"
+#include "roxy/lsp/protocol.hpp"
 
 #include <cstring>
 
@@ -368,4 +368,4 @@ TEST_SUITE("LSP GlobalIndex") {
         CHECK(memcmp(source + loc->name_range.start, "origin", 6) == 0);
     }
 
-}  // TEST_SUITE("LSP GlobalIndex")
+} // TEST_SUITE("LSP GlobalIndex")

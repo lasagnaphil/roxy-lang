@@ -1,8 +1,8 @@
 #include "roxy/core/doctest/doctest.h"
 
-#include "roxy/lsp/lsp_parser.hpp"
-#include "roxy/lsp/indexer.hpp"
 #include "roxy/core/bump_allocator.hpp"
+#include "roxy/lsp/indexer.hpp"
+#include "roxy/lsp/lsp_parser.hpp"
 
 #include <cstring>
 
@@ -115,7 +115,8 @@ TEST_SUITE("LSP Indexer") {
 
     TEST_CASE("Method with trait") {
         BumpAllocator allocator(4096);
-        FileStubs stubs = index_source("fun Vec2.to_string(): string for Printable { return \"vec\"; }", allocator);
+        FileStubs stubs = index_source(
+            "fun Vec2.to_string(): string for Printable { return \"vec\"; }", allocator);
 
         REQUIRE(stubs.methods.size() == 1);
         CHECK(stubs.methods[0].struct_name == StringView("Vec2"));
@@ -151,12 +152,11 @@ TEST_SUITE("LSP Indexer") {
 
     TEST_CASE("Struct with fields") {
         BumpAllocator allocator(4096);
-        FileStubs stubs = index_source(
-            "struct Point {\n"
-            "    x: f32;\n"
-            "    y: f32;\n"
-            "}",
-            allocator);
+        FileStubs stubs = index_source("struct Point {\n"
+                                       "    x: f32;\n"
+                                       "    y: f32;\n"
+                                       "}",
+                                       allocator);
 
         REQUIRE(stubs.structs.size() == 1);
         CHECK(stubs.structs[0].name == StringView("Point"));
@@ -250,11 +250,10 @@ TEST_SUITE("LSP Indexer") {
 
     TEST_CASE("Source with errors still extracts valid declarations") {
         BumpAllocator allocator(4096);
-        FileStubs stubs = index_source(
-            "fun valid_func(): i32 { return 1; }\n"
-            "var broken =\n"  // incomplete
-            "struct Point { x: f32; y: f32; }",
-            allocator);
+        FileStubs stubs = index_source("fun valid_func(): i32 { return 1; }\n"
+                                       "var broken =\n" // incomplete
+                                       "struct Point { x: f32; y: f32; }",
+                                       allocator);
 
         // Should still get the function and struct
         CHECK(stubs.functions.size() >= 1);
@@ -263,15 +262,14 @@ TEST_SUITE("LSP Indexer") {
 
     TEST_CASE("Multiple declarations") {
         BumpAllocator allocator(4096);
-        FileStubs stubs = index_source(
-            "import math;\n"
-            "var pi: f64 = 3.14;\n"
-            "trait Printable;\n"
-            "enum Color { Red, Green }\n"
-            "struct Point { x: f32; y: f32; }\n"
-            "fun add(a: i32, b: i32): i32 { return a + b; }\n"
-            "fun Point.len(): f32 { return 0.0; }",
-            allocator);
+        FileStubs stubs = index_source("import math;\n"
+                                       "var pi: f64 = 3.14;\n"
+                                       "trait Printable;\n"
+                                       "enum Color { Red, Green }\n"
+                                       "struct Point { x: f32; y: f32; }\n"
+                                       "fun add(a: i32, b: i32): i32 { return a + b; }\n"
+                                       "fun Point.len(): f32 { return 0.0; }",
+                                       allocator);
 
         CHECK(stubs.imports.size() == 1);
         CHECK(stubs.globals.size() == 1);
@@ -300,4 +298,4 @@ TEST_SUITE("LSP Indexer") {
         CHECK(stubs.functions[0].params.size() == 0);
     }
 
-}  // TEST_SUITE("LSP Indexer")
+} // TEST_SUITE("LSP Indexer")

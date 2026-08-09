@@ -1,10 +1,10 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
-#include "roxy/core/string_view.hpp"
-#include "roxy/core/vector.hpp"
-#include "roxy/core/bump_allocator.hpp"
 #include "roxy/compiler/types/types.hpp"
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/string_view.hpp"
+#include "roxy/core/types.hpp"
+#include "roxy/core/vector.hpp"
 #include "roxy/vm/binding/registry.hpp"
 
 #include "roxy/core/tsl/robin_map.h"
@@ -23,13 +23,13 @@ enum class ExportKind : u8 {
 
 // Represents a single exported symbol from a module
 struct ModuleExport {
-    StringView name;        // Source-visible symbol name
-    ExportKind kind;        // What kind of symbol
-    Type* type;             // Type (function type for functions)
-    bool is_native;         // True if this is a native function
-    bool is_pub;            // True if publicly visible
-    u32 index;              // Index in module's function/struct/enum array
-    Decl* decl;             // AST declaration (nullptr for native)
+    StringView name; // Source-visible symbol name
+    ExportKind kind; // What kind of symbol
+    Type* type;      // Type (function type for functions)
+    bool is_native;  // True if this is a native function
+    bool is_pub;     // True if publicly visible
+    u32 index;       // Index in module's function/struct/enum array
+    Decl* decl;      // AST declaration (nullptr for native)
     // Flat/mangled symbol name for members of overload sets — the native
     // registry key ("$ol$print$i32") or a script overload's
     // FunDecl::overload_mangled_name. Empty = same as `name` (the common,
@@ -41,10 +41,10 @@ struct ModuleExport {
 
 // Information about a module
 struct ModuleInfo {
-    StringView name;                    // Module name
-    Vector<ModuleExport> exports;       // All exports
-    NativeRegistry* natives;            // For native modules (nullptr for script modules)
-    bool is_native;                     // True if this is a native-only module
+    StringView name;              // Module name
+    Vector<ModuleExport> exports; // All exports
+    NativeRegistry* natives;      // For native modules (nullptr for script modules)
+    bool is_native;               // True if this is a native-only module
 
     // Lookup an export by name
     const ModuleExport* find_export(StringView symbol_name) const {
@@ -63,9 +63,7 @@ Type* type_from_kind(NativeTypeKind kind, TypeCache& types);
 // Registry for all modules in the compilation
 class ModuleRegistry {
 public:
-    explicit ModuleRegistry(BumpAllocator& allocator)
-        : m_allocator(allocator)
-    {}
+    explicit ModuleRegistry(BumpAllocator& allocator) : m_allocator(allocator) {}
 
     // Register a native module (C++ functions exposed to Roxy)
     // The TypeCache is used to resolve types for the native functions
@@ -76,8 +74,8 @@ public:
     ModuleInfo* register_script_module(StringView name);
 
     // Add an export to a script module
-    void add_export(ModuleInfo* module, StringView name, ExportKind kind,
-                   Type* type, bool is_pub, u32 index, Decl* decl = nullptr);
+    void add_export(ModuleInfo* module, StringView name, ExportKind kind, Type* type, bool is_pub,
+                    u32 index, Decl* decl = nullptr);
 
     // Find a module by name
     ModuleInfo* find_module(StringView name) const {
@@ -94,13 +92,11 @@ public:
     }
 
     // Get all registered modules
-    const tsl::robin_map<StringView, ModuleInfo*>& modules() const {
-        return m_modules;
-    }
+    const tsl::robin_map<StringView, ModuleInfo*>& modules() const { return m_modules; }
 
 private:
     BumpAllocator& m_allocator;
     tsl::robin_map<StringView, ModuleInfo*> m_modules;
 };
 
-}
+} // namespace rx

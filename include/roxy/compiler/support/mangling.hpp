@@ -32,14 +32,16 @@ struct Type;
 
 // "<struct>$$<method>"
 StringView mangle_method(BumpAllocator& alloc, StringView struct_name, StringView method_name);
-String     mangle_method_owned(StringView struct_name, StringView method_name);
+String mangle_method_owned(StringView struct_name, StringView method_name);
 
 // "<struct>$$new", or "<struct>$$new$$<ctor>" when ctor_name is non-empty.
-StringView mangle_constructor(BumpAllocator& alloc, StringView struct_name, StringView ctor_name = {});
+StringView mangle_constructor(BumpAllocator& alloc, StringView struct_name,
+                              StringView ctor_name = {});
 
 // "<struct>$$delete", or "<struct>$$delete$$<dtor>" when dtor_name is non-empty.
-StringView mangle_destructor(BumpAllocator& alloc, StringView struct_name, StringView dtor_name = {});
-String     mangle_destructor_owned(StringView struct_name, StringView dtor_name = {});
+StringView mangle_destructor(BumpAllocator& alloc, StringView struct_name,
+                             StringView dtor_name = {});
+String mangle_destructor_owned(StringView struct_name, StringView dtor_name = {});
 
 // "<module>::<name>", or `name` unchanged when module_name is empty (single-file
 // mode) — keeps non-pub names module-private after IR modules are merged.
@@ -68,4 +70,4 @@ StringView mangle_type_name(BumpAllocator& alloc, Type* type);
 // plain name.
 StringView mangle_overload(BumpAllocator& alloc, StringView fun_name, Span<Type*> param_types);
 
-}  // namespace rx
+} // namespace rx

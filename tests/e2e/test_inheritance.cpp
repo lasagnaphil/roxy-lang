@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -260,7 +260,8 @@ TEST_SUITE("E2E Inheritance") {
         CHECK(result.stdout_output == "2\n1\n");
     }
 
-    TEST_CASE_TEMPLATE("Destructor chaining when the parent has no destructor", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Destructor chaining when the parent has no destructor", Backend,
+                       RX_E2E_BACKENDS) {
         // Only structs that need one get a default destructor, so a plain value
         // struct parent has no function to chain to. Emitting the call anyway
         // failed the whole compile with "function not found during bytecode
@@ -285,7 +286,8 @@ TEST_SUITE("E2E Inheritance") {
         CHECK(result.stdout_output == "player removed\n");
     }
 
-    TEST_CASE_TEMPLATE("Inherited destructor runs when the child declares none", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Inherited destructor runs when the child declares none", Backend,
+                       RX_E2E_BACKENDS) {
         // A struct with nothing of its own to drop still needs a destructor to
         // carry the chain upward. Without one it had no destructor at all and
         // the ancestor's never ran — RAII silently skipped, no diagnostic.
@@ -310,7 +312,8 @@ TEST_SUITE("E2E Inheritance") {
         CHECK(result.stdout_output == "A gone\n");
     }
 
-    TEST_CASE_TEMPLATE("Inherited owned field is destroyed exactly once", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Inherited owned field is destroyed exactly once", Backend,
+                       RX_E2E_BACKENDS) {
         // `struct_info.fields` is parent-prefixed, so cleaning the whole span
         // destroyed an inherited `uniq` here *and* again in the parent the
         // destructor chains to — a double free (the interpreter's assert caught
@@ -338,7 +341,8 @@ TEST_SUITE("E2E Inheritance") {
         CHECK(result.stdout_output == "child\nres freed\n");
     }
 
-    TEST_CASE_TEMPLATE("Destructor chaining skips a level with no destructor", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Destructor chaining skips a level with no destructor", Backend,
+                       RX_E2E_BACKENDS) {
         // A missing middle level must not break the chain: the grandparent's
         // destructor still runs. Skipping is sound because a level without a
         // default destructor has nothing to run — no user body, and no owned
@@ -510,4 +514,4 @@ TEST_SUITE("E2E Inheritance") {
         CHECK(result.stdout_output == "105\n");
     }
 
-}  // TEST_SUITE("E2E Inheritance")
+} // TEST_SUITE("E2E Inheritance")

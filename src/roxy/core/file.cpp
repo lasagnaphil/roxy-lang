@@ -1,6 +1,5 @@
 #include "roxy/core/file.hpp"
 
-
 #ifdef _WIN32
 #ifndef WIN32_MEAN_AND_LEAN
 #define WIN32_MEAN_AND_LEAN
@@ -82,4 +81,4 @@ bool read_file_to_buf(const char* path, Vector<u8>& buf) {
     return true;
 }
 
-}
+} // namespace rx

@@ -1,8 +1,8 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
 #include "roxy/core/span.hpp"
 #include "roxy/core/string.hpp"
+#include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
 #include "roxy/shared/token.hpp"
 
@@ -200,9 +200,9 @@ struct SyntaxNode {
     SyntaxKind kind;
     TextRange range;
     SyntaxNode* parent;
-    Span<SyntaxNode*> children;  // finalized from Vector via alloc_span
-    Token token;                 // set for leaf (terminal) nodes
-    const char* error_message;   // set for Error nodes
+    Span<SyntaxNode*> children; // finalized from Vector via alloc_span
+    Token token;                // set for leaf (terminal) nodes
+    const char* error_message;  // set for Error nodes
 };
 
 // A diagnostic collected during parsing
@@ -221,12 +221,15 @@ struct SyntaxTree {
 
 // Find the deepest (most specific) node containing the given byte offset
 inline SyntaxNode* find_node_at_offset(SyntaxNode* root, u32 offset) {
-    if (!root) return nullptr;
-    if (offset < root->range.start || offset >= root->range.end) return nullptr;
+    if (!root)
+        return nullptr;
+    if (offset < root->range.start || offset >= root->range.end)
+        return nullptr;
 
     for (u32 i = 0; i < root->children.size(); i++) {
         SyntaxNode* result = find_node_at_offset(root->children[i], offset);
-        if (result) return result;
+        if (result)
+            return result;
     }
     return root;
 }

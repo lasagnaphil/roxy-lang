@@ -6,8 +6,7 @@
 
 namespace rx {
 
-template <class T, uint32_t _Size>
-class Array {
+template <class T, uint32_t _Size> class Array {
 public:
     T m_data[_Size];
 
@@ -22,11 +21,11 @@ public:
     const T* end() const { return m_data + _Size; }
     T* end() { return m_data + _Size; }
 
-    constexpr const T& operator[](uint32_t i) const { 
+    constexpr const T& operator[](uint32_t i) const {
         assert(i < _Size);
         return m_data[i];
     };
-    constexpr T& operator[](uint32_t i) { 
+    constexpr T& operator[](uint32_t i) {
         assert(i < _Size);
         return m_data[i];
     };
@@ -34,9 +33,8 @@ public:
     constexpr operator Span<T>() { return {m_data, _Size}; }
 };
 
-// Template deduction rules for Array. 
+// Template deduction rules for Array.
 // A really obscure part of C++ that almost no one really knows...
-template <class T, class... U>
-Array(T, U...) -> Array<T, 1 + sizeof...(U)>;
+template <class T, class... U> Array(T, U...) -> Array<T, 1 + sizeof...(U)>;
 
-}
+} // namespace rx

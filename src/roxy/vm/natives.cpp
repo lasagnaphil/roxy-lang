@@ -1,16 +1,16 @@
 #include "roxy/vm/natives.hpp"
-#include "roxy/vm/vm.hpp"
+#include "roxy/vm/binding/registry.hpp"
 #include "roxy/vm/list.hpp"
 #include "roxy/vm/map.hpp"
 #include "roxy/vm/string.hpp"
 #include "roxy/vm/value.hpp"
-#include "roxy/vm/binding/registry.hpp"
+#include "roxy/vm/vm.hpp"
 
+#include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <cmath>
-#include <chrono>
 
 namespace rx {
 
@@ -137,8 +137,8 @@ static void native_list_cap(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 // matters: it is 4 slots ({ptr, generation}), so writing only regs[dst] would
 // drop the generation and every read back would trap as a dangling reference.
 // Zeroing first keeps the ≤ 2-slot cases byte-identical to the old code path.
-static inline void list_write_element_to_regs(const ListHeader* header, const u32* src,
-                                              u64* regs, u8 dst) {
+static inline void list_write_element_to_regs(const ListHeader* header, const u32* src, u64* regs,
+                                              u8 dst) {
     u32 slot_count = header->element_slot_count;
     u32 reg_count = (slot_count + 1) / 2;
     for (u32 i = 0; i < reg_count; i++) {
@@ -342,8 +342,6 @@ static void native_str_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     regs[dst] = static_cast<u64>(string_length(str));
 }
 
-
-
 // Native function: bool$$to_string(val: bool) -> string
 static void native_bool_to_string(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
@@ -492,7 +490,8 @@ static void native_f32_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
     f32 val;
     memcpy(&val, &regs[first_arg], sizeof(f32));
-    if (val == 0.0f) val = 0.0f; // Normalize -0
+    if (val == 0.0f)
+        val = 0.0f; // Normalize -0
     u32 bits;
     memcpy(&bits, &val, sizeof(u32));
     regs[dst] = splitmix64(static_cast<u64>(bits));
@@ -502,7 +501,8 @@ static void native_f64_hash(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
     f64 val;
     memcpy(&val, &regs[first_arg], sizeof(f64));
-    if (val == 0.0) val = 0.0; // Normalize -0
+    if (val == 0.0)
+        val = 0.0; // Normalize -0
     u64 bits;
     memcpy(&bits, &val, sizeof(u64));
     regs[dst] = splitmix64(bits);
@@ -538,7 +538,8 @@ static void native_list_index(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     }
     i64 index = static_cast<i64>(regs[first_arg + 1]);
     u32* ptr = list_get_ptr(lst_ptr, index, &vm->error);
-    if (!ptr) return;
+    if (!ptr)
+        return;
     ListHeader* header = get_list_header(lst_ptr);
     if (header->element_is_inline) {
         list_write_element_to_regs(header, ptr, regs, dst);
@@ -558,7 +559,8 @@ static void native_list_index_mut(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     i64 index = static_cast<i64>(regs[first_arg + 1]);
     ListHeader* header = get_list_header(lst_ptr);
     if (header->element_is_inline) {
-        if (!list_set_slots(lst_ptr, index, reinterpret_cast<const u32*>(&regs[first_arg + 2]), &vm->error)) {
+        if (!list_set_slots(lst_ptr, index, reinterpret_cast<const u32*>(&regs[first_arg + 2]),
+                            &vm->error)) {
             return;
         }
     } else {
@@ -595,31 +597,33 @@ static void native_map_alloc(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u32 eq_fn_index = UINT32_MAX;
     if (argc >= 1) {
         i32 ksc = static_cast<i32>(regs[first_arg]);
-        if (ksc > 0 && ksc <= 255) key_slot_count = static_cast<u8>(ksc);
+        if (ksc > 0 && ksc <= 255)
+            key_slot_count = static_cast<u8>(ksc);
     }
     if (argc >= 2) {
         key_is_inline = (regs[first_arg + 1] != 0);
     }
     if (argc >= 3) {
         i32 vsc = static_cast<i32>(regs[first_arg + 2]);
-        if (vsc > 0 && vsc <= 255) value_slot_count = static_cast<u8>(vsc);
+        if (vsc > 0 && vsc <= 255)
+            value_slot_count = static_cast<u8>(vsc);
     }
     if (argc >= 4) {
         value_is_inline = (regs[first_arg + 3] != 0);
     }
     if (argc >= 5) {
         i32 idx = static_cast<i32>(regs[first_arg + 4]);
-        if (idx >= 0) hash_fn_index = static_cast<u32>(idx);
+        if (idx >= 0)
+            hash_fn_index = static_cast<u32>(idx);
     }
     if (argc >= 6) {
         i32 idx = static_cast<i32>(regs[first_arg + 5]);
-        if (idx >= 0) eq_fn_index = static_cast<u32>(idx);
+        if (idx >= 0)
+            eq_fn_index = static_cast<u32>(idx);
     }
     // Allocate with Integer key kind by default; constructor sets the real key_kind
-    void* map = map_alloc(vm, MapKeyKind::Integer, 0,
-                          key_slot_count, key_is_inline,
-                          value_slot_count, value_is_inline,
-                          hash_fn_index, eq_fn_index);
+    void* map = map_alloc(vm, MapKeyKind::Integer, 0, key_slot_count, key_is_inline,
+                          value_slot_count, value_is_inline, hash_fn_index, eq_fn_index);
     if (!map) {
         vm->error = "failed to allocate map";
         return;
@@ -657,16 +661,17 @@ static void native_map_init(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
         }
         if (cap > 0) {
             u32 actual = 8;
-            while (actual < static_cast<u32>(cap)) actual *= 2;
+            while (actual < static_cast<u32>(cap))
+                actual *= 2;
             // Allocate buckets using the header's key/value slot counts that
             // were set during native_map_alloc (via IR-builder args). Only
             // commit them to the header if all three succeed, so an OOM failure
             // doesn't leave a non-zero capacity with null bucket arrays.
             u8* distances = static_cast<u8*>(calloc(actual, sizeof(u8)));
-            u32* keys = static_cast<u32*>(calloc(
-                static_cast<size_t>(actual) * header->key_slot_count, sizeof(u32)));
-            u32* values = static_cast<u32*>(calloc(
-                static_cast<size_t>(actual) * header->value_slot_count, sizeof(u32)));
+            u32* keys = static_cast<u32*>(
+                calloc(static_cast<size_t>(actual) * header->key_slot_count, sizeof(u32)));
+            u32* values = static_cast<u32*>(
+                calloc(static_cast<size_t>(actual) * header->value_slot_count, sizeof(u32)));
             if (!distances || !keys || !values) {
                 free(distances);
                 free(keys);
@@ -729,7 +734,8 @@ static void native_map_len(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 // `first_arg + 1`. Inline keys (primitives ≤ 8B packed into the u64 register)
 // point at the register itself; struct keys pass the bytes' address through
 // the register (per the IR builder's struct-argument convention).
-static inline const u32* map_key_src_from_regs(const MapHeader* header, const u64* regs, u8 first_arg) {
+static inline const u32* map_key_src_from_regs(const MapHeader* header, const u64* regs,
+                                               u8 first_arg) {
     if (header->key_is_inline) {
         return reinterpret_cast<const u32*>(&regs[first_arg + 1]);
     }
@@ -740,7 +746,8 @@ static inline const u32* map_key_src_from_regs(const MapHeader* header, const u6
 // For inline (primitive) values, the value bytes live directly in the register
 // array starting at regs[first_arg + 2]. For struct values, the register holds
 // a pointer to the bytes.
-static inline const u32* map_value_src_from_regs(const MapHeader* header, const u64* regs, u8 first_arg) {
+static inline const u32* map_value_src_from_regs(const MapHeader* header, const u64* regs,
+                                                 u8 first_arg) {
     if (header->value_is_inline) {
         return reinterpret_cast<const u32*>(&regs[first_arg + 2]);
     }
@@ -764,8 +771,8 @@ static void native_map_contains(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 // pointer to the value bytes in the map's backing storage — stable until the
 // next insert/remove/clear; callers that materialize a struct copy via
 // STRUCT_LOAD_REGS do so immediately after the call.
-static inline void map_write_value_to_regs(const MapHeader* header, const u32* src,
-                                           u64* regs, u8 dst) {
+static inline void map_write_value_to_regs(const MapHeader* header, const u32* src, u64* regs,
+                                           u8 dst) {
     if (header->value_is_inline) {
         if (header->value_slot_count == 1) {
             // Sign-extend 1-slot (≤ 32-bit) integer values to fill the 64-bit
@@ -938,13 +945,15 @@ static void native_map_index_mut(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
 static void native_map_mark_ref_values(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
-    if (map_ptr) roxy_map_mark_ref_values(map_ptr);
+    if (map_ptr)
+        roxy_map_mark_ref_values(map_ptr);
 }
 
 static void native_list_mark_ref_elements(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     u64* regs = vm->call_stack_back().registers;
     void* list_ptr = reinterpret_cast<void*>(regs[first_arg]);
-    if (list_ptr) roxy_list_mark_ref_elements(list_ptr);
+    if (list_ptr)
+        roxy_list_mark_ref_elements(list_ptr);
 }
 
 static void native_map_iter_capacity(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
@@ -980,8 +989,7 @@ static void native_map_iter_key_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     // 2 u32 slots). Pack the leading 2 slots into a u64.
     u64 packed = 0;
     u32 copy_slots = header->key_slot_count < 2 ? header->key_slot_count : 2;
-    memcpy(&packed,
-           header->keys + static_cast<size_t>(idx) * header->key_slot_count,
+    memcpy(&packed, header->keys + static_cast<size_t>(idx) * header->key_slot_count,
            sizeof(u32) * copy_slots);
     regs[dst] = packed;
 }
@@ -1008,8 +1016,8 @@ static void native_map_iter_key_ptr_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     i32 idx = static_cast<i32>(regs[first_arg + 1]);
     const MapHeader* header = get_map_header(map_ptr);
-    regs[dst] = reinterpret_cast<u64>(
-        header->keys + static_cast<size_t>(idx) * header->key_slot_count);
+    regs[dst] =
+        reinterpret_cast<u64>(header->keys + static_cast<size_t>(idx) * header->key_slot_count);
 }
 
 static void native_map_iter_value_ptr_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
@@ -1018,8 +1026,8 @@ static void native_map_iter_value_ptr_at(RoxyVM* vm, u8 dst, u8 argc, u8 first_a
     void* map_ptr = reinterpret_cast<void*>(regs[first_arg]);
     i32 idx = static_cast<i32>(regs[first_arg + 1]);
     const MapHeader* header = get_map_header(map_ptr);
-    regs[dst] = reinterpret_cast<u64>(
-        header->values + static_cast<size_t>(idx) * header->value_slot_count);
+    regs[dst] =
+        reinterpret_cast<u64>(header->values + static_cast<size_t>(idx) * header->value_slot_count);
 }
 
 // Native function: str_char_at(s: string, i: i32) -> i32
@@ -1057,8 +1065,7 @@ static void native_str_substr(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg) {
     // start <= str_len, then sub_len <= str_len - start (computed in u32, and
     // safe to subtract because the prior clause short-circuits when start is
     // past the end).
-    if (start < 0 || sub_len < 0 ||
-        static_cast<u32>(start) > str_len ||
+    if (start < 0 || sub_len < 0 || static_cast<u32>(start) > str_len ||
         static_cast<u32>(sub_len) > str_len - static_cast<u32>(start)) {
         vm->error = "str_substr: index out of bounds";
         return;
@@ -1169,17 +1176,17 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_constructor(native_list_init, "fun List<T>.new(cap: i32)", 0);
     registry.bind_generic_destructor("List", native_list_delete);
     registry.bind_generic_copy_constructor("List", "list_copy", native_list_copy);
-    registry.bind_method(native_list_len,       "fun List<T>.len(): i32");
-    registry.bind_method(native_list_cap,       "fun List<T>.cap(): i32");
-    registry.bind_method(native_list_push,      "fun List<T>.push(val: T)");
-    registry.bind_method(native_list_pop,       "fun List<T>.pop(): T");
+    registry.bind_method(native_list_len, "fun List<T>.len(): i32");
+    registry.bind_method(native_list_cap, "fun List<T>.cap(): i32");
+    registry.bind_method(native_list_push, "fun List<T>.push(val: T)");
+    registry.bind_method(native_list_pop, "fun List<T>.pop(): T");
     // index borrows the element (borrowed T -> ref T for noncopyable elements,
     // T for copyable); pop transfers ownership and stays `: T`.
-    registry.bind_method(native_list_index,     "fun List<T>.index(idx: i32): borrowed T");
+    registry.bind_method(native_list_index, "fun List<T>.index(idx: i32): borrowed T");
     registry.bind_method(native_list_index_mut, "fun List<T>.index_mut(idx: i32, val: T)");
     // Explicit deep copy — containers are move-only, so `.copy()` is how you ask
     // for an independent duplicate (lifetimes.md "Applying the model").
-    registry.bind_method(native_list_copy,      "fun List<T>.copy(): List<T>");
+    registry.bind_method(native_list_copy, "fun List<T>.copy(): List<T>");
 
     // Free functions
     // print is an OVERLOAD SET: one member per Printable primitive kind (the
@@ -1188,14 +1195,14 @@ void register_builtin_natives(NativeRegistry& registry) {
     // (print(v) -> print(v.to_string()) -> the string member). NOTE: no
     // registry entry is literally named "print" — the entries are keyed
     // "$ol$print$<type>" and sema records the resolved key on each call.
-    registry.bind_native_overload(native_print,       "fun print(s: string)", "roxy_print");
-    registry.bind_native_overload(native_print_bool,  "fun print(v: bool)",   "roxy_print_bool");
-    registry.bind_native_overload(native_print_i32,   "fun print(v: i32)",    "roxy_print_i32");
-    registry.bind_native_overload(native_print_i64,   "fun print(v: i64)",    "roxy_print_i64");
-    registry.bind_native_overload(native_print_u32,   "fun print(v: u32)",    "roxy_print_u32");
-    registry.bind_native_overload(native_print_u64,   "fun print(v: u64)",    "roxy_print_u64");
-    registry.bind_native_overload(native_print_f32,   "fun print(v: f32)",    "roxy_print_f32");
-    registry.bind_native_overload(native_print_f64,   "fun print(v: f64)",    "roxy_print_f64");
+    registry.bind_native_overload(native_print, "fun print(s: string)", "roxy_print");
+    registry.bind_native_overload(native_print_bool, "fun print(v: bool)", "roxy_print_bool");
+    registry.bind_native_overload(native_print_i32, "fun print(v: i32)", "roxy_print_i32");
+    registry.bind_native_overload(native_print_i64, "fun print(v: i64)", "roxy_print_i64");
+    registry.bind_native_overload(native_print_u32, "fun print(v: u32)", "roxy_print_u32");
+    registry.bind_native_overload(native_print_u64, "fun print(v: u64)", "roxy_print_u64");
+    registry.bind_native_overload(native_print_f32, "fun print(v: f32)", "roxy_print_f32");
+    registry.bind_native_overload(native_print_f64, "fun print(v: f64)", "roxy_print_f64");
 
     // String functions
     registry.bind_native(native_str_concat, "fun str_concat(a: string, b: string): string");
@@ -1203,7 +1210,8 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_native(native_str_ne, "fun str_ne(a: string, b: string): bool");
     registry.bind_native(native_str_len, "fun str_len(s: string): i32");
     registry.bind_native(native_str_char_at, "fun str_char_at(s: string, i: i32): i32");
-    registry.bind_native(native_str_substr, "fun str_substr(s: string, start: i32, len: i32): string");
+    registry.bind_native(native_str_substr,
+                         "fun str_substr(s: string, start: i32, len: i32): string");
     registry.bind_native(native_str_to_f64, "fun str_to_f64(s: string): f64");
     registry.bind_native(native_str_from_code, "fun str_from_code(code: i32): string");
 
@@ -1215,58 +1223,69 @@ void register_builtin_natives(NativeRegistry& registry) {
     registry.bind_native(native_sqrt, "fun sqrt(x: f64): f64");
 
     // to_string natives for primitive types ($$-mangled name override)
-    registry.bind_native("bool$$to_string",   native_bool_to_string,   "fun to_string(val: bool): string");
-    registry.bind_native("i32$$to_string",    native_i32_to_string,    "fun to_string(val: i32): string");
-    registry.bind_native("i64$$to_string",    native_i64_to_string,    "fun to_string(val: i64): string");
-    registry.bind_native("u32$$to_string",    native_u32_to_string,    "fun to_string(val: u32): string");
-    registry.bind_native("u64$$to_string",    native_u64_to_string,    "fun to_string(val: u64): string");
-    registry.bind_native("f32$$to_string",    native_f32_to_string,    "fun to_string(val: f32): string");
-    registry.bind_native("f64$$to_string",    native_f64_to_string,    "fun to_string(val: f64): string");
-    registry.bind_native("string$$to_string", native_string_to_string, "fun to_string(val: string): string");
+    registry.bind_native("bool$$to_string", native_bool_to_string,
+                         "fun to_string(val: bool): string");
+    registry.bind_native("i32$$to_string", native_i32_to_string, "fun to_string(val: i32): string");
+    registry.bind_native("i64$$to_string", native_i64_to_string, "fun to_string(val: i64): string");
+    registry.bind_native("u32$$to_string", native_u32_to_string, "fun to_string(val: u32): string");
+    registry.bind_native("u64$$to_string", native_u64_to_string, "fun to_string(val: u64): string");
+    registry.bind_native("f32$$to_string", native_f32_to_string, "fun to_string(val: f32): string");
+    registry.bind_native("f64$$to_string", native_f64_to_string, "fun to_string(val: f64): string");
+    registry.bind_native("string$$to_string", native_string_to_string,
+                         "fun to_string(val: string): string");
 
     // Hash natives for primitive types
-    registry.bind_native("bool$$hash",   native_bool_hash,   "fun hash(val: bool): u64");
-    registry.bind_native("i8$$hash",     native_i8_hash,     "fun hash(val: i8): u64");
-    registry.bind_native("i16$$hash",    native_i16_hash,    "fun hash(val: i16): u64");
-    registry.bind_native("i32$$hash",    native_i32_hash,    "fun hash(val: i32): u64");
-    registry.bind_native("i64$$hash",    native_i64_hash,    "fun hash(val: i64): u64");
-    registry.bind_native("u8$$hash",     native_u8_hash,     "fun hash(val: u8): u64");
-    registry.bind_native("u16$$hash",    native_u16_hash,    "fun hash(val: u16): u64");
-    registry.bind_native("u32$$hash",    native_u32_hash,    "fun hash(val: u32): u64");
-    registry.bind_native("u64$$hash",    native_u64_hash,    "fun hash(val: u64): u64");
-    registry.bind_native("f32$$hash",    native_f32_hash,    "fun hash(val: f32): u64");
-    registry.bind_native("f64$$hash",    native_f64_hash,    "fun hash(val: f64): u64");
+    registry.bind_native("bool$$hash", native_bool_hash, "fun hash(val: bool): u64");
+    registry.bind_native("i8$$hash", native_i8_hash, "fun hash(val: i8): u64");
+    registry.bind_native("i16$$hash", native_i16_hash, "fun hash(val: i16): u64");
+    registry.bind_native("i32$$hash", native_i32_hash, "fun hash(val: i32): u64");
+    registry.bind_native("i64$$hash", native_i64_hash, "fun hash(val: i64): u64");
+    registry.bind_native("u8$$hash", native_u8_hash, "fun hash(val: u8): u64");
+    registry.bind_native("u16$$hash", native_u16_hash, "fun hash(val: u16): u64");
+    registry.bind_native("u32$$hash", native_u32_hash, "fun hash(val: u32): u64");
+    registry.bind_native("u64$$hash", native_u64_hash, "fun hash(val: u64): u64");
+    registry.bind_native("f32$$hash", native_f32_hash, "fun hash(val: f32): u64");
+    registry.bind_native("f64$$hash", native_f64_hash, "fun hash(val: f64): u64");
     registry.bind_native("string$$hash", native_string_hash, "fun hash(val: string): u64");
 
     // Map<K, V> - registered as a generic native type with 2 type params
     registry.register_generic_type("Map<K, V>", "map_alloc", native_map_alloc);
     // Constructor receives: key_kind (i32, hidden), capacity (i32, optional)
-    registry.bind_constructor(native_map_init, "fun Map<K, V>.new(key_kind: i32, capacity: i32)", 1);
+    registry.bind_constructor(native_map_init, "fun Map<K, V>.new(key_kind: i32, capacity: i32)",
+                              1);
     registry.bind_generic_destructor("Map", native_map_delete);
     registry.bind_generic_copy_constructor("Map", "map_copy", native_map_copy);
-    registry.bind_method(native_map_len,       "fun Map<K, V>.len(): i32");
-    registry.bind_method(native_map_contains,  "fun Map<K, V>.contains(key: K): bool");
-    registry.bind_method(native_map_get,       "fun Map<K, V>.get(key: K): borrowed V");
-    registry.bind_method(native_map_get_or,    "fun Map<K, V>.get_or(key: K, fallback: V): V");
-    registry.bind_method(native_map_insert,    "fun Map<K, V>.insert(key: K, val: V)");
-    registry.bind_method(native_map_remove,    "fun Map<K, V>.remove(key: K): bool");
-    registry.bind_method(native_map_clear,     "fun Map<K, V>.clear()");
-    registry.bind_method(native_map_keys,      "fun Map<K, V>.keys(): List<K>");
-    registry.bind_method(native_map_values,    "fun Map<K, V>.values(): List<V>");
-    registry.bind_method(native_map_index,     "fun Map<K, V>.index(key: K): borrowed V");
+    registry.bind_method(native_map_len, "fun Map<K, V>.len(): i32");
+    registry.bind_method(native_map_contains, "fun Map<K, V>.contains(key: K): bool");
+    registry.bind_method(native_map_get, "fun Map<K, V>.get(key: K): borrowed V");
+    registry.bind_method(native_map_get_or, "fun Map<K, V>.get_or(key: K, fallback: V): V");
+    registry.bind_method(native_map_insert, "fun Map<K, V>.insert(key: K, val: V)");
+    registry.bind_method(native_map_remove, "fun Map<K, V>.remove(key: K): bool");
+    registry.bind_method(native_map_clear, "fun Map<K, V>.clear()");
+    registry.bind_method(native_map_keys, "fun Map<K, V>.keys(): List<K>");
+    registry.bind_method(native_map_values, "fun Map<K, V>.values(): List<V>");
+    registry.bind_method(native_map_index, "fun Map<K, V>.index(key: K): borrowed V");
     registry.bind_method(native_map_index_mut, "fun Map<K, V>.index_mut(key: K, val: V)");
-    registry.bind_method(native_map_copy,      "fun Map<K, V>.copy(): Map<K, V>");
+    registry.bind_method(native_map_copy, "fun Map<K, V>.copy(): Map<K, V>");
 
-    registry.bind_native("__list_mark_ref_elements", native_list_mark_ref_elements, "fun __list_mark_ref_elements(list: i64)");
+    registry.bind_native("__list_mark_ref_elements", native_list_mark_ref_elements,
+                         "fun __list_mark_ref_elements(list: i64)");
 
     // Internal map bucket iteration functions (used by emit_map_cleanup for noncopyable elements)
-    registry.bind_native("__map_mark_ref_values",    native_map_mark_ref_values,    "fun __map_mark_ref_values(map: i64)");
-    registry.bind_native("__map_iter_capacity",       native_map_iter_capacity,       "fun __map_iter_capacity(map: i64): i32");
-    registry.bind_native("__map_iter_next_occupied", native_map_iter_next_occupied, "fun __map_iter_next_occupied(map: i64, idx: i32): i32");
-    registry.bind_native("__map_iter_key_at",        native_map_iter_key_at,        "fun __map_iter_key_at(map: i64, idx: i32): i64");
-    registry.bind_native("__map_iter_value_at",      native_map_iter_value_at,      "fun __map_iter_value_at(map: i64, idx: i32): i64");
-    registry.bind_native("__map_iter_key_ptr_at",    native_map_iter_key_ptr_at,    "fun __map_iter_key_ptr_at(map: i64, idx: i32): i64");
-    registry.bind_native("__map_iter_value_ptr_at",  native_map_iter_value_ptr_at,  "fun __map_iter_value_ptr_at(map: i64, idx: i32): i64");
+    registry.bind_native("__map_mark_ref_values", native_map_mark_ref_values,
+                         "fun __map_mark_ref_values(map: i64)");
+    registry.bind_native("__map_iter_capacity", native_map_iter_capacity,
+                         "fun __map_iter_capacity(map: i64): i32");
+    registry.bind_native("__map_iter_next_occupied", native_map_iter_next_occupied,
+                         "fun __map_iter_next_occupied(map: i64, idx: i32): i32");
+    registry.bind_native("__map_iter_key_at", native_map_iter_key_at,
+                         "fun __map_iter_key_at(map: i64, idx: i32): i64");
+    registry.bind_native("__map_iter_value_at", native_map_iter_value_at,
+                         "fun __map_iter_value_at(map: i64, idx: i32): i64");
+    registry.bind_native("__map_iter_key_ptr_at", native_map_iter_key_ptr_at,
+                         "fun __map_iter_key_ptr_at(map: i64, idx: i32): i64");
+    registry.bind_native("__map_iter_value_ptr_at", native_map_iter_value_ptr_at,
+                         "fun __map_iter_value_ptr_at(map: i64, idx: i32): i64");
 }
 
-}
+} // namespace rx

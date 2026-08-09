@@ -1,7 +1,7 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
 #include "roxy/core/string_view.hpp"
+#include "roxy/core/types.hpp"
 
 #include <cassert>
 #include <cstring>
@@ -31,12 +31,12 @@ private:
         u32 size;
         u32 capacity;
         char pad[7];
-        u8 tag;  // 0 = heap
+        u8 tag; // 0 = heap
     };
 
     struct SSO {
         char buf[23];
-        u8 tag;  // bit7=1, bits0-6 = remaining capacity
+        u8 tag; // bit7=1, bits0-6 = remaining capacity
     };
 
     union {
@@ -83,10 +83,22 @@ public:
     bool empty() const { return size() == 0; }
     u32 capacity() const { return is_sso() ? SSO_CAP : m_heap.capacity; }
 
-    char operator[](u32 i) const { assert(i < size()); return data()[i]; }
-    char& operator[](u32 i) { assert(i < size()); return data()[i]; }
-    char front() const { assert(!empty()); return data()[0]; }
-    char back() const { assert(!empty()); return data()[size() - 1]; }
+    char operator[](u32 i) const {
+        assert(i < size());
+        return data()[i];
+    }
+    char& operator[](u32 i) {
+        assert(i < size());
+        return data()[i];
+    }
+    char front() const {
+        assert(!empty());
+        return data()[0];
+    }
+    char back() const {
+        assert(!empty());
+        return data()[size() - 1];
+    }
 
     // Iterators
     const char* begin() const { return data(); }
@@ -131,8 +143,7 @@ public:
 // Specialization of std::hash for rx::String so that
 // tsl::robin_map<String, ...> works without explicit hash/equal args.
 namespace std {
-template<>
-struct hash<rx::String> {
+template <> struct hash<rx::String> {
     size_t operator()(const rx::String& s) const noexcept {
         rx::u64 h = 14695981039346656037ULL;
         for (rx::u32 i = 0; i < s.size(); i++) {
@@ -142,4 +153,4 @@ struct hash<rx::String> {
         return static_cast<size_t>(h);
     }
 };
-}
+} // namespace std

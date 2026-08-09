@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -177,7 +177,11 @@ TEST_SUITE("E2E Recursion") {
         CHECK(result.stdout_output == "1\n1\n0\n1\n");
     }
 
-    TEST_CASE("unbounded recursion fails gracefully (call stack overflow)") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE("unbounded recursion fails gracefully (call stack overflow)") { // VM-only:
+                                                                              // runtime-trap/abort
+                                                                              // behavior differs on
+                                                                              // C backend (VM-only
+                                                                              // by nature)
         // Unbounded recursion must hit the call-stack-depth guard in CALL and
         // return a clean error, not write past the fixed-size call-frame array.
         const char* source = R"(
@@ -189,4 +193,4 @@ TEST_SUITE("E2E Recursion") {
         CHECK_FALSE(result.success);
     }
 
-}  // TEST_SUITE("E2E Recursion")
+} // TEST_SUITE("E2E Recursion")

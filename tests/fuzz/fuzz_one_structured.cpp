@@ -30,7 +30,7 @@ namespace rx::fuzz {
 void fuzz_one_structured(const uint8_t* data, size_t size) {
     gen::Entropy entropy(data, size);
     gen::GenConfig config = gen::GenConfig::fuzz_default();
-    config.num_modules = 1 + entropy.range(3);  // exercise toposort + linking
+    config.num_modules = 1 + entropy.range(3); // exercise toposort + linking
     gen::GeneratedProgram program = gen::generate_program(entropy, config);
 
     BumpAllocator allocator(1 << 16);

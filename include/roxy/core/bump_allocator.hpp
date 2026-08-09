@@ -1,7 +1,7 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
 #include "roxy/core/span.hpp"
+#include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
 
 #include <cassert>
@@ -42,7 +42,8 @@ public:
         assert((align & (align - 1)) == 0); // power of two
 
         u8* base = m_current->data() + m_current->used;
-        u8* aligned = reinterpret_cast<u8*>((reinterpret_cast<uintptr_t>(base) + align - 1) & ~(align - 1));
+        u8* aligned =
+            reinterpret_cast<u8*>((reinterpret_cast<uintptr_t>(base) + align - 1) & ~(align - 1));
         u64 padding = static_cast<u64>(aligned - base);
         u64 total_size = padding + size;
 
@@ -60,7 +61,8 @@ public:
 
             // Recalculate alignment in new chunk
             base = m_current->data();
-            aligned = reinterpret_cast<u8*>((reinterpret_cast<uintptr_t>(base) + align - 1) & ~(align - 1));
+            aligned = reinterpret_cast<u8*>((reinterpret_cast<uintptr_t>(base) + align - 1) &
+                                            ~(align - 1));
             padding = static_cast<u64>(aligned - base);
             total_size = padding + size;
         }
@@ -69,9 +71,9 @@ public:
         return aligned;
     }
 
-    template <typename T>
-    Span<T> alloc_span(const Vector<T>& vec) {
-        if (vec.empty()) return Span<T>();
+    template <typename T> Span<T> alloc_span(const Vector<T>& vec) {
+        if (vec.empty())
+            return Span<T>();
         T* data = reinterpret_cast<T*>(alloc_bytes(sizeof(T) * vec.size(), alignof(T)));
         for (u32 i = 0; i < vec.size(); i++) {
             data[i] = vec[i];
@@ -79,8 +81,7 @@ public:
         return Span<T>(data, vec.size());
     }
 
-    template <typename T, typename ... Args>
-    T* emplace(Args&&... args) {
+    template <typename T, typename... Args> T* emplace(Args&&... args) {
         u8* ptr = alloc_bytes(sizeof(T), alignof(T));
         new (ptr) T(std::forward<Args>(args)...);
         return reinterpret_cast<T*>(ptr);
@@ -95,8 +96,8 @@ private:
         return chunk;
     }
 
-    Chunk* m_head;     // First chunk in the list
-    Chunk* m_current;  // Current chunk being allocated from
+    Chunk* m_head;    // First chunk in the list
+    Chunk* m_current; // Current chunk being allocated from
 };
 
-}
+} // namespace rx

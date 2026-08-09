@@ -24,11 +24,13 @@ void IRBuilder::set_current_block(IRBlock* block) {
     m_current_block = block;
     // Remember where emission last was, so current_or_last_block_id() can answer
     // "where does this scope end" after a terminator has cleared m_current_block.
-    if (block) m_last_current_block = block;
+    if (block)
+        m_last_current_block = block;
 }
 
 void IRBuilder::finish_block_goto(BlockId target, Span<BlockArgPair> args) {
-    if (!m_current_block) return;
+    if (!m_current_block)
+        return;
     m_current_block->terminator.kind = TerminatorKind::Goto;
     m_current_block->terminator.goto_target.block = target;
     m_current_block->terminator.goto_target.args = args;
@@ -36,7 +38,8 @@ void IRBuilder::finish_block_goto(BlockId target, Span<BlockArgPair> args) {
 
 void IRBuilder::finish_block_branch(ValueId cond, BlockId then_block, BlockId else_block,
                                     Span<BlockArgPair> then_args, Span<BlockArgPair> else_args) {
-    if (!m_current_block) return;
+    if (!m_current_block)
+        return;
     m_current_block->terminator.kind = TerminatorKind::Branch;
     m_current_block->terminator.branch.condition = cond;
     m_current_block->terminator.branch.then_target.block = then_block;
@@ -46,7 +49,8 @@ void IRBuilder::finish_block_branch(ValueId cond, BlockId then_block, BlockId el
 }
 
 void IRBuilder::finish_block_return(ValueId value) {
-    if (!m_current_block) return;
+    if (!m_current_block)
+        return;
 
     // Release ref borrows before returning (constraint reference model)
     emit_ref_param_decrements();
@@ -56,22 +60,25 @@ void IRBuilder::finish_block_return(ValueId value) {
 }
 
 void IRBuilder::finish_block_unreachable() {
-    if (!m_current_block) return;
+    if (!m_current_block)
+        return;
     m_current_block->terminator.kind = TerminatorKind::Unreachable;
-    m_current_block = nullptr;  // Dead code after unreachable
+    m_current_block = nullptr; // Dead code after unreachable
 }
 
 // Instruction emission
 
 void IRBuilder::gen_stmt(Stmt* stmt) {
-    if (!stmt) return;
+    if (!stmt)
+        return;
 
     // Track this statement's source line so `emit_inst` can stamp it onto
     // every IRInst produced by lowering its body. Nested blocks/expressions
     // overwrite and never need to restore — at the top of each new
     // statement we re-set, and synthesized lowering paths that don't go
     // through `gen_stmt` keep `source_line == 0`.
-    if (stmt->loc.line != 0) m_current_source_line = stmt->loc.line;
+    if (stmt->loc.line != 0)
+        m_current_source_line = stmt->loc.line;
 
     switch (stmt->kind) {
         case AstKind::StmtExpr:
@@ -118,9 +125,7 @@ void IRBuilder::gen_stmt(Stmt* stmt) {
     }
 }
 
-void IRBuilder::gen_expr_stmt(Stmt* stmt) {
-    gen_expr(stmt->expr_stmt.expr);
-}
+void IRBuilder::gen_expr_stmt(Stmt* stmt) { gen_expr(stmt->expr_stmt.expr); }
 
 void IRBuilder::gen_block_stmt(Stmt* stmt) {
     push_scope();
@@ -168,12 +173,17 @@ Vector<IRBuilder::PhiInfo> IRBuilder::make_merge_phis(IRBlock* merge_block,
     Vector<PhiInfo> phi_info;
     for (const auto& name : modified) {
         LocalVar* local_var = find_local(name);
-        if (!local_var || !local_var->value.is_valid()) continue;
+        if (!local_var || !local_var->value.is_valid())
+            continue;
         bool seen = false;
         for (const auto& phi : phi_info) {
-            if (phi.name == name) { seen = true; break; }
+            if (phi.name == name) {
+                seen = true;
+                break;
+            }
         }
-        if (seen) continue;
+        if (seen)
+            continue;
         ValueId param = m_current_func->new_value();
         merge_block->params.push_back({param, local_var->type, name});
         phi_info.push_back({name, local_var->type, param, local_var->value});
@@ -217,18 +227,21 @@ void IRBuilder::rebind_owned_local_to_merge_param(StringView name, ValueId merge
     // param, so the two records tile the local's live range instead of one of
     // them covering it wrongly.
     OwnedLocalInfo* info = m_ownership.find_by_name(name);
-    if (!info || !m_current_block) return;
+    if (!info || !m_current_block)
+        return;
     // Temporaries are keyed by value in the tracker's index; re-anchoring one
     // would desync it. Only named locals reach a merge param anyway.
-    if (info->is_temporary) return;
-    if (info->initial_value == merge_param) return;
+    if (info->is_temporary)
+        return;
+    if (info->initial_value == merge_param)
+        return;
 
     if (!info->is_moved && info->start_block.is_valid() && info->initial_value.is_valid()) {
         IRCleanupKind kind = info->kind == OwnedKind::RefBorrow ? IRCleanupKind::RefDec
-                           : info->kind == OwnedKind::StrOwn    ? IRCleanupKind::StrRelease
-                           : IRCleanupKind::Delete;
-        IRCleanupInfo ci{info->initial_value, info->type, info->start_block,
-                         m_current_block->id, kind};
+                             : info->kind == OwnedKind::StrOwn  ? IRCleanupKind::StrRelease
+                                                                : IRCleanupKind::Delete;
+        IRCleanupInfo ci{info->initial_value, info->type, info->start_block, m_current_block->id,
+                         kind};
         ci.ends_before_block = true;
         m_current_func->cleanup_info.push_back(ci);
     }
@@ -245,8 +258,7 @@ void IRBuilder::goto_merge_if_open(IRBlock* merge_block, const Vector<PhiInfo>& 
 }
 
 void IRBuilder::reconcile_divergent_moves(Vector<MergePath>& paths, IRBlock* fallthrough_pred,
-                                          IRBlock* merge_block,
-                                          const Vector<PhiInfo>& phi_info) {
+                                          IRBlock* merge_block, const Vector<PhiInfo>& phi_info) {
     // A value moved on one path into a merge and not on another is *dead* at
     // the merge either way: semantic analysis rejects every later read of it
     // ("use of possibly moved value"). So the only open question is who
@@ -259,7 +271,8 @@ void IRBuilder::reconcile_divergent_moves(Vector<MergePath>& paths, IRBlock* fal
     // still hold the value, "not moved" double-frees on the paths that already
     // gave it away. Both were reachable before this existed — a plain `if`
     // leaked, an `if/else if` chain double-freed.
-    if (paths.size() < 2) return;
+    if (paths.size() < 2)
+        return;
 
     // Entries are pushed in declaration order and popped from the back, so a
     // given index means the same local in every snapshot. Compare only the
@@ -267,23 +280,29 @@ void IRBuilder::reconcile_divergent_moves(Vector<MergePath>& paths, IRBlock* fal
     // branch and cannot outlive it.
     u32 common = UINT32_MAX;
     for (const MergePath& path : paths) {
-        if (!path.state.has_move_state) return;
+        if (!path.state.has_move_state)
+            return;
         common = std::min(common, static_cast<u32>(path.state.is_moved.size()));
     }
     common = std::min(common, m_ownership.count());
-    if (common == 0) return;
+    if (common == 0)
+        return;
 
     Vector<u32> divergent;
     for (u32 i = 0; i < common; i++) {
         bool any_moved = false;
         bool all_moved = true;
         for (const MergePath& path : paths) {
-            if (path.state.is_moved[i]) any_moved = true;
-            else all_moved = false;
+            if (path.state.is_moved[i])
+                any_moved = true;
+            else
+                all_moved = false;
         }
-        if (any_moved && !all_moved) divergent.push_back(i);
+        if (any_moved && !all_moved)
+            divergent.push_back(i);
     }
-    if (divergent.empty()) return;
+    if (divergent.empty())
+        return;
 
     // The caller has already established the merge-point state; restore it when
     // we're done walking back through the paths.
@@ -293,9 +312,13 @@ void IRBuilder::reconcile_divergent_moves(Vector<MergePath>& paths, IRBlock* fal
     for (MergePath& path : paths) {
         bool needs_drop = false;
         for (u32 index : divergent) {
-            if (!path.state.is_moved[index]) { needs_drop = true; break; }
+            if (!path.state.is_moved[index]) {
+                needs_drop = true;
+                break;
+            }
         }
-        if (!needs_drop) continue;
+        if (!needs_drop)
+            continue;
 
         IRBlock* block = path.end_block;
         bool materialized = false;
@@ -303,8 +326,7 @@ void IRBuilder::reconcile_divergent_moves(Vector<MergePath>& paths, IRBlock* fal
             // The implicit fall-through edge has no block to drop in. Give it
             // one and retarget the predecessor's false edge through it; the phi
             // args move onto the new block's jump, so the new edge carries none.
-            if (!fallthrough_pred ||
-                fallthrough_pred->terminator.kind != TerminatorKind::Branch) {
+            if (!fallthrough_pred || fallthrough_pred->terminator.kind != TerminatorKind::Branch) {
                 continue;
             }
             block = create_block("else_drop");
@@ -320,10 +342,11 @@ void IRBuilder::reconcile_divergent_moves(Vector<MergePath>& paths, IRBlock* fal
         restore_scopes(path.state, /*restore_move_state=*/true);
         set_current_block(block);
         for (i32 k = static_cast<i32>(divergent.size()) - 1; k >= 0; k--) {
-            u32 index = divergent[static_cast<u32>(k)];  // LIFO, as scope cleanup runs
-            if (path.state.is_moved[index]) continue;
+            u32 index = divergent[static_cast<u32>(k)]; // LIFO, as scope cleanup runs
+            if (path.state.is_moved[index])
+                continue;
             OwnedLocalInfo& info = m_ownership.entry(index);
-            info.is_moved = false;  // cleared per path; emit_implicit_destroy re-sets it
+            info.is_moved = false; // cleared per path; emit_implicit_destroy re-sets it
             emit_implicit_destroy(info);
         }
         if (materialized) {
@@ -334,7 +357,8 @@ void IRBuilder::reconcile_divergent_moves(Vector<MergePath>& paths, IRBlock* fal
     restore_scopes(merge_state, /*restore_move_state=*/true);
     set_current_block(merge_state_block);
     // Every path now either moved the value or just dropped it.
-    for (u32 index : divergent) m_ownership.entry(index).is_moved = true;
+    for (u32 index : divergent)
+        m_ownership.entry(index).is_moved = true;
 }
 
 void IRBuilder::gen_if_stmt(Stmt* stmt) {
@@ -371,8 +395,7 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
         finish_block_branch(cond, then_block->id, else_block->id);
     } else {
         // No else branch - pass original values as args to merge_block
-        finish_block_branch(cond, then_block->id, merge_block->id, {},
-                            phi_original_args(phi_info));
+        finish_block_branch(cond, then_block->id, merge_block->id, {}, phi_original_args(phi_info));
     }
 
     // Save pre-if local-scope and is_moved state. We must roll the IR builder's
@@ -387,15 +410,18 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     // with exactly the pre-branch bindings. (`pre_if` itself gets move-restored
     // below, so this is a separate capture rather than a copy of it.)
     ScopeSnapshot fallthrough_state;
-    if (!else_block) fallthrough_state = snapshot_scopes(/*with_move_state=*/true);
+    if (!else_block)
+        fallthrough_state = snapshot_scopes(/*with_move_state=*/true);
 
     // Generate then branch
     set_current_block(then_block);
     gen_stmt(is.then_branch);
-    bool then_terminated = !m_current_block || m_current_block->terminator.kind != TerminatorKind::None;
+    bool then_terminated =
+        !m_current_block || m_current_block->terminator.kind != TerminatorKind::None;
     IRBlock* then_end = then_terminated ? nullptr : m_current_block;
     ScopeSnapshot then_state;
-    if (!then_terminated) then_state = snapshot_scopes(/*with_move_state=*/true);
+    if (!then_terminated)
+        then_state = snapshot_scopes(/*with_move_state=*/true);
     goto_merge_if_open(merge_block, phi_info);
 
     // Snapshot post-then state in case the else branch terminates and we need to
@@ -415,9 +441,11 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
 
         set_current_block(else_block);
         gen_stmt(is.else_branch);
-        else_terminated = !m_current_block || m_current_block->terminator.kind != TerminatorKind::None;
+        else_terminated =
+            !m_current_block || m_current_block->terminator.kind != TerminatorKind::None;
         else_end = else_terminated ? nullptr : m_current_block;
-        if (!else_terminated) else_state = snapshot_scopes(/*with_move_state=*/true);
+        if (!else_terminated)
+            else_state = snapshot_scopes(/*with_move_state=*/true);
         goto_merge_if_open(merge_block, phi_info);
     }
 
@@ -447,9 +475,11 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     // the paths that still hold it (see reconcile_divergent_moves).
     {
         Vector<MergePath> paths;
-        if (then_end) paths.push_back({then_end, std::move(then_state)});
+        if (then_end)
+            paths.push_back({then_end, std::move(then_state)});
         if (else_block) {
-            if (else_end) paths.push_back({else_end, std::move(else_state)});
+            if (else_end)
+                paths.push_back({else_end, std::move(else_state)});
         } else {
             paths.push_back({nullptr, std::move(fallthrough_state)});
         }
@@ -472,8 +502,7 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
     Stmt* current = stmt;
     while (current && current->kind == AstKind::StmtIf) {
         branches.push_back({current->if_stmt.condition, current->if_stmt.then_branch});
-        if (current->if_stmt.else_branch &&
-            current->if_stmt.else_branch->kind == AstKind::StmtIf) {
+        if (current->if_stmt.else_branch && current->if_stmt.else_branch->kind == AstKind::StmtIf) {
             current = current->if_stmt.else_branch;
         } else {
             default_body = current->if_stmt.else_branch;
@@ -486,7 +515,8 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
     for (auto& branch : branches) {
         collect_assigned_vars(branch.body, all_modified);
     }
-    if (default_body) collect_assigned_vars(default_body, all_modified);
+    if (default_body)
+        collect_assigned_vars(default_body, all_modified);
 
     // 2. Create merge block with parameters for phi vars
     IRBlock* merge_block = create_block("endif");
@@ -542,8 +572,8 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
             // No default: this is the edge that reaches the merge without
             // running any branch, and the one that may need a drop block.
             chain_fallthrough_pred = m_current_block;
-            finish_block_branch(cond, body_blocks[i]->id, fallthrough_block->id,
-                                {}, phi_original_args(phi_info));
+            finish_block_branch(cond, body_blocks[i]->id, fallthrough_block->id, {},
+                                phi_original_args(phi_info));
         } else {
             finish_block_branch(cond, body_blocks[i]->id, fallthrough_block->id);
         }
@@ -569,8 +599,8 @@ void IRBuilder::gen_if_else_chain(Stmt* stmt) {
         restore_scopes(saved);
         set_current_block(block);
         gen_stmt(body);
-        bool terminated = !m_current_block
-            || m_current_block->terminator.kind != TerminatorKind::None;
+        bool terminated =
+            !m_current_block || m_current_block->terminator.kind != TerminatorKind::None;
         if (!terminated) {
             paths.push_back({m_current_block, snapshot_scopes(/*with_move_state=*/true)});
         }
@@ -673,7 +703,7 @@ void IRBuilder::gen_while_stmt(Stmt* stmt) {
     }
 
     // Save the loop vars before popping (need them for exit block)
-    Vector<LoopVarInfo> saved_loop_vars = m_loop_stack.back().loop_vars;  // copy, not move
+    Vector<LoopVarInfo> saved_loop_vars = m_loop_stack.back().loop_vars; // copy, not move
     m_loop_stack.pop_back();
 
     // 10. Exit block - use header params as final values
@@ -760,7 +790,7 @@ void IRBuilder::gen_for_stmt(Stmt* stmt) {
     finish_block_goto(header_block->id, back_args);
 
     // Save the loop vars before popping (need them for exit block)
-    Vector<LoopVarInfo> saved_loop_vars = m_loop_stack.back().loop_vars;  // copy, not move
+    Vector<LoopVarInfo> saved_loop_vars = m_loop_stack.back().loop_vars; // copy, not move
     m_loop_stack.pop_back();
 
     pop_scope();
@@ -809,9 +839,9 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
             // Counting convention: a ref return hands off exactly one borrow
             // count for the caller to adopt. How we produce that one count
             // depends on the returned expression:
-            OwnedLocalInfo* ref_local =
-                rs.value->kind == AstKind::ExprIdentifier
-                    ? m_ownership.find_by_name(rs.value->identifier.name) : nullptr;
+            OwnedLocalInfo* ref_local = rs.value->kind == AstKind::ExprIdentifier
+                                            ? m_ownership.find_by_name(rs.value->identifier.name)
+                                            : nullptr;
             if (ref_local && ref_local->kind == OwnedKind::RefBorrow) {
                 // Ref *local*: hand off by marking it moved so emit_scope_cleanup
                 // skips its normal-path RefDec — its create-inc survives as the
@@ -835,8 +865,8 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
                 // handing onward.
                 acquire_ref_borrow(val, rs.value);
             }
-        } else if (returns_ownership && rs.value->kind == AstKind::ExprIdentifier
-                   && value_type && value_type->noncopyable()) {
+        } else if (returns_ownership && rs.value->kind == AstKind::ExprIdentifier && value_type &&
+                   value_type->noncopyable()) {
             // Returning an owned identifier by value: mark it moved so scope
             // cleanup doesn't destroy what we're handing to the caller. Pass
             // null_ssa/nullify_record = false — the return value register may be
@@ -867,11 +897,12 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
         // before being retained.
         // Copyable only; a move-only struct return is already handled above.
         // Which of the three shapes applies depends on who owns the source:
-        if (!returns_borrow && value_type && value_type->is_struct()
-            && value_type->is_copy() && tracked_for_cleanup(value_type)) {
+        if (!returns_borrow && value_type && value_type->is_struct() && value_type->is_copy() &&
+            tracked_for_cleanup(value_type)) {
             OwnedLocalInfo* temp = m_ownership.find_live_temp(val);
             OwnedLocalInfo* named = (!temp && rs.value->kind == AstKind::ExprIdentifier)
-                ? m_ownership.find_by_name(rs.value->identifier.name) : nullptr;
+                                        ? m_ownership.find_by_name(rs.value->identifier.name)
+                                        : nullptr;
             if (temp) {
                 // A producer temporary already holds the counts — adopt them.
                 consume_temp_noncopyable(val);
@@ -894,7 +925,8 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
         // `return o.field`: null the moved-out field before scope cleanup destroys
         // the root (val already read its value above). Only when the field was
         // actually moved out — borrowing it leaves the root owning it.
-        if (returns_ownership) nullify_moved_field_source(rs.value);
+        if (returns_ownership)
+            nullify_moved_field_source(rs.value);
 
         // uniq/ref/fun -> weak on the way out. `check_assignable` permits the
         // conversion, but the return path never performed it, so a bare pointer
@@ -914,9 +946,9 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
             ValueId output_ptr = m_current_func->params.back().value;
             u32 slot_count = m_current_func->return_type->struct_info.slot_count;
             // Move: the return handoff above already produced the caller's count.
-            emit_struct_copy(output_ptr, val, slot_count,
-                             m_current_func->return_type, StructCopyKind::Move);
-            finish_block_return(ValueId::invalid());  // Return void
+            emit_struct_copy(output_ptr, val, slot_count, m_current_func->return_type,
+                             StructCopyKind::Move);
+            finish_block_return(ValueId::invalid()); // Return void
         } else {
             finish_block_return(val);
         }
@@ -928,7 +960,8 @@ void IRBuilder::gen_return_stmt(Stmt* stmt) {
 }
 
 void IRBuilder::gen_break_stmt(Stmt*) {
-    if (m_loop_stack.empty()) return;  // Should be caught by semantic analysis
+    if (m_loop_stack.empty())
+        return; // Should be caught by semantic analysis
 
     LoopInfo& loop = m_loop_stack.back();
 
@@ -940,7 +973,8 @@ void IRBuilder::gen_break_stmt(Stmt*) {
 }
 
 void IRBuilder::gen_continue_stmt(Stmt*) {
-    if (m_loop_stack.empty()) return;  // Should be caught by semantic analysis
+    if (m_loop_stack.empty())
+        return; // Should be caught by semantic analysis
 
     LoopInfo& loop = m_loop_stack.back();
 
@@ -1019,8 +1053,7 @@ void IRBuilder::gen_delete_stmt(Stmt* stmt) {
         // Only pointer-holding globals (uniq/List/Map/Coro) carry an owning pointer
         // in the slot; the Delete above already ran (a refused free would have
         // halted the run before here).
-        auto git = find_local(del_name) ? m_global_indices.end()
-                                        : m_global_indices.find(del_name);
+        auto git = find_local(del_name) ? m_global_indices.end() : m_global_indices.find(del_name);
         if (git != m_global_indices.end()) {
             // `delete` only applies to `uniq` (a `uniq` global's slot holds the
             // owning pointer); a null store makes shutdown's Delete a no-op.
@@ -1154,8 +1187,8 @@ void IRBuilder::gen_when_stmt(Stmt* stmt) {
         // When falling through to merge, pass original phi values
         if (fallthrough_block == merge_block) {
             when_fallthrough_pred = m_current_block;
-            finish_block_branch(case_cond, ci.body_block->id, fallthrough_block->id,
-                                {}, phi_original_args(phi_info));
+            finish_block_branch(case_cond, ci.body_block->id, fallthrough_block->id, {},
+                                phi_original_args(phi_info));
         } else {
             finish_block_branch(case_cond, ci.body_block->id, fallthrough_block->id);
         }
@@ -1382,7 +1415,8 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
     // the try ends up laid out *after* the try's fall-through), so lowering
     // needs the full set to emit the correct per-range handler table.
     Vector<BlockId> try_body_block_ids;
-    try_body_block_ids.reserve(static_cast<u32>(m_current_func->blocks.size()) - try_body_start_idx);
+    try_body_block_ids.reserve(static_cast<u32>(m_current_func->blocks.size()) -
+                               try_body_start_idx);
     for (u32 b = try_body_start_idx; b < m_current_func->blocks.size(); b++) {
         try_body_block_ids.push_back(m_current_func->blocks[b]->id);
     }
@@ -1439,14 +1473,12 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
         // unwind machinery still owns — so no move-state bookkeeping is needed here.
         // A typed catch frees as `uniq E` (runs E's destructor); a catch-all has no
         // compile-time concrete type, so it frees the memory type-erased.
-        Type* owned_exc_type = clause.resolved_type
-            ? m_types.uniq_type(clause.resolved_type)
-            : m_types.exception_ref_type();
+        Type* owned_exc_type = clause.resolved_type ? m_types.uniq_type(clause.resolved_type)
+                                                    : m_types.exception_ref_type();
         u32 catch_scope_depth = static_cast<u32>(m_local_scopes.size());
         BlockId catch_owned_block = m_current_block ? m_current_block->id : BlockId::invalid();
-        m_ownership.track({clause.var_name, owned_exc_type, catch_scope_depth,
-                           false, false, catch_owned_block, exc_param.value,
-                           OwnedKind::Owned});
+        m_ownership.track({clause.var_name, owned_exc_type, catch_scope_depth, false, false,
+                           catch_owned_block, exc_param.value, OwnedKind::Owned});
 
         gen_stmt(clause.body);
         pop_scope();
@@ -1469,12 +1501,13 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
         handler.try_entry = try_entry_block->id;
         handler.try_exit = try_exit_block_id;
         handler.handler_block = catch_block->id;
-        handler.type_id = 0;  // Will be filled by lowering
-        handler.type_name = StringView(nullptr, 0);  // Catch-all by default
+        handler.type_id = 0;                        // Will be filled by lowering
+        handler.type_name = StringView(nullptr, 0); // Catch-all by default
         if (clause.resolved_type) {
             handler.type_name = clause.resolved_type->struct_info.name;
         }
-        for (BlockId bid : try_body_block_ids) handler.try_body_blocks.push_back(bid);
+        for (BlockId bid : try_body_block_ids)
+            handler.try_body_blocks.push_back(bid);
         m_current_func->exception_handlers.push_back(handler);
     }
 
@@ -1517,7 +1550,8 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
         handler.handler_block = finally_catch_block->id;
         handler.type_id = 0;
         handler.type_name = StringView(nullptr, 0);
-        for (BlockId bid : try_body_block_ids) handler.try_body_blocks.push_back(bid);
+        for (BlockId bid : try_body_block_ids)
+            handler.try_body_blocks.push_back(bid);
         m_current_func->exception_handlers.push_back(handler);
     }
 
@@ -1529,10 +1563,12 @@ void IRBuilder::gen_try_stmt(Stmt* stmt) {
 // Expression generation
 
 void IRBuilder::gen_decl(Decl* decl) {
-    if (!decl) return;
+    if (!decl)
+        return;
 
     // Stamp this decl's source line onto subsequent emit_inst calls.
-    if (decl->loc.line != 0) m_current_source_line = decl->loc.line;
+    if (decl->loc.line != 0)
+        m_current_source_line = decl->loc.line;
 
     switch (decl->kind) {
         case AstKind::DeclVar:
@@ -1598,7 +1634,8 @@ void IRBuilder::gen_var_decl(Decl* decl) {
         if (var_decl.initializer) {
             value = gen_expr(var_decl.initializer);
             // Wrap uniq/ref → weak conversion
-            value = maybe_wrap_weak(value, var_decl.initializer->resolved_type, type, var_decl.initializer);
+            value = maybe_wrap_weak(value, var_decl.initializer->resolved_type, type,
+                                    var_decl.initializer);
         } else {
             // Default initialization
             value = emit_const_null();
@@ -1628,7 +1665,8 @@ void IRBuilder::gen_var_decl(Decl* decl) {
 
         u32 scope_depth = static_cast<u32>(m_local_scopes.size());
         BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
-        m_ownership.track({var_decl.name, type, scope_depth, false, false, current_block_id, value});
+        m_ownership.track(
+            {var_decl.name, type, scope_depth, false, false, current_block_id, value});
 
         if (moves_its_source) {
             // Mark the source variable as moved when initializing from an identifier
@@ -1659,8 +1697,8 @@ void IRBuilder::gen_var_decl(Decl* decl) {
         // the param's own borrow uncounted. Pin the identity, exactly as
         // call-site heap-root borrows do (see IRInst::no_copy_prop).
         pin_tracked_value(value);
-        m_ownership.track({var_decl.name, type, scope_depth, false, false,
-                           current_block_id, value, OwnedKind::RefBorrow});
+        m_ownership.track({var_decl.name, type, scope_depth, false, false, current_block_id, value,
+                           OwnedKind::RefBorrow});
     } else if (type && type->kind == TypeKind::String) {
         // String local: a reference-counted owned value (finding 9b). Adopt a
         // fresh producer temp (count transfers) or retain an existing owner, then
@@ -1668,8 +1706,8 @@ void IRBuilder::gen_var_decl(Decl* decl) {
         consume_or_retain_string(value, type, TempAdoption::ByDeclaration);
         u32 scope_depth = static_cast<u32>(m_local_scopes.size());
         BlockId current_block_id = m_current_block ? m_current_block->id : BlockId::invalid();
-        m_ownership.track({var_decl.name, type, scope_depth, false, false,
-                           current_block_id, value, OwnedKind::StrOwn});
+        m_ownership.track({var_decl.name, type, scope_depth, false, false, current_block_id, value,
+                           OwnedKind::StrOwn});
     }
 }
 
@@ -1685,7 +1723,8 @@ void IRBuilder::gen_var_decl(Decl* decl) {
 // way one can sit inside an expression is in a lambda body — a different
 // function, whose yields say nothing about this loop.
 bool IRBuilder::stmt_contains_yield(Stmt* stmt) {
-    if (!stmt) return false;
+    if (!stmt)
+        return false;
 
     // Blocks and `when` arms hold Decls; only the statement-kind ones can yield.
     auto decl_yields = [](Decl* decl) {
@@ -1698,7 +1737,8 @@ bool IRBuilder::stmt_contains_yield(Stmt* stmt) {
             return true;
         case AstKind::StmtBlock:
             for (auto* decl : stmt->block.declarations) {
-                if (decl_yields(decl)) return true;
+                if (decl_yields(decl))
+                    return true;
             }
             return false;
         case AstKind::StmtIf:
@@ -1712,19 +1752,23 @@ bool IRBuilder::stmt_contains_yield(Stmt* stmt) {
             WhenStmt& when_stmt = stmt->when_stmt;
             for (auto& when_case : when_stmt.cases) {
                 for (auto* decl : when_case.body) {
-                    if (decl_yields(decl)) return true;
+                    if (decl_yields(decl))
+                        return true;
                 }
             }
             for (auto* decl : when_stmt.else_body) {
-                if (decl_yields(decl)) return true;
+                if (decl_yields(decl))
+                    return true;
             }
             return false;
         }
         case AstKind::StmtTry: {
             TryStmt& try_stmt = stmt->try_stmt;
-            if (stmt_contains_yield(try_stmt.try_body)) return true;
+            if (stmt_contains_yield(try_stmt.try_body))
+                return true;
             for (u32 i = 0; i < try_stmt.catches.size(); i++) {
-                if (stmt_contains_yield(try_stmt.catches[i].body)) return true;
+                if (stmt_contains_yield(try_stmt.catches[i].body))
+                    return true;
             }
             // `yield` in `finally` is rejected by sema; checked for completeness.
             return try_stmt.finally_body && stmt_contains_yield(try_stmt.finally_body);
@@ -1760,9 +1804,13 @@ void IRBuilder::collect_live_locals(Vector<StringView>& out) {
         for (auto& [name, local] : scope) {
             bool already_present = false;
             for (const auto& existing : out) {
-                if (existing == name) { already_present = true; break; }
+                if (existing == name) {
+                    already_present = true;
+                    break;
+                }
             }
-            if (!already_present) out.push_back(name);
+            if (!already_present)
+                out.push_back(name);
         }
     }
 }
@@ -1783,7 +1831,8 @@ void IRBuilder::collect_assigned_vars_expr(Expr* expr, Vector<StringView>& out) 
 }
 
 void IRBuilder::collect_assigned_vars_impl(Stmt* stmt, Vector<StringView>& out) {
-    if (!stmt) return;
+    if (!stmt)
+        return;
 
     switch (stmt->kind) {
         case AstKind::StmtExpr:
@@ -1792,7 +1841,8 @@ void IRBuilder::collect_assigned_vars_impl(Stmt* stmt, Vector<StringView>& out) 
         case AstKind::StmtBlock: {
             BlockStmt& block = stmt->block;
             for (auto* d : block.declarations) {
-                if (!d) continue;
+                if (!d)
+                    continue;
                 // Recurse into statements (not var decls - those are new vars)
                 if (d->kind >= AstKind::StmtExpr && d->kind <= AstKind::StmtYield) {
                     collect_assigned_vars_impl(&d->stmt, out);
@@ -1850,13 +1900,15 @@ void IRBuilder::collect_assigned_vars_impl(Stmt* stmt, Vector<StringView>& out) 
 }
 
 void IRBuilder::collect_assigned_vars_expr_impl(Expr* expr, Vector<StringView>& out) {
-    if (!expr) return;
+    if (!expr)
+        return;
 
     // Record an assigned/written identifier once (first-occurrence order),
     // deduping against the names already collected.
     auto add_once = [&](StringView name) {
         for (const StringView& existing : out) {
-            if (existing == name) return;
+            if (existing == name)
+                return;
         }
         out.push_back(name);
     };
@@ -1894,8 +1946,8 @@ void IRBuilder::collect_assigned_vars_expr_impl(Expr* expr, Vector<StringView>& 
                 // the reload redefines `xs` inside the body but the SSA value
                 // never makes it back to the header, and post-loop uses read
                 // a stale register / trip register allocation.
-                if ((arg.modifier == ParamModifier::Inout || arg.modifier == ParamModifier::Out)
-                    && arg.expr && arg.expr->kind == AstKind::ExprIdentifier) {
+                if ((arg.modifier == ParamModifier::Inout || arg.modifier == ParamModifier::Out) &&
+                    arg.expr && arg.expr->kind == AstKind::ExprIdentifier) {
                     add_once(arg.expr->identifier.name);
                 }
             }
@@ -1921,7 +1973,8 @@ void IRBuilder::collect_assigned_vars_expr_impl(Expr* expr, Vector<StringView>& 
 }
 
 Span<BlockArgPair> IRBuilder::make_loop_args(const Vector<LoopVarInfo>& loop_vars) {
-    if (loop_vars.empty()) return {};
+    if (loop_vars.empty())
+        return {};
 
     Vector<BlockArgPair> args;
     for (const auto& lv : loop_vars) {
@@ -1934,4 +1987,4 @@ Span<BlockArgPair> IRBuilder::make_loop_args(const Vector<LoopVarInfo>& loop_var
 
 // Opcode selection
 
-}
+} // namespace rx

@@ -10,9 +10,9 @@ namespace rx {
 
 // ===== Helpers =====
 
-template<typename T>
-static Span<T> alloc_span(BumpAllocator& allocator, const Vector<T>& vec) {
-    if (vec.empty()) return {};
+template <typename T> static Span<T> alloc_span(BumpAllocator& allocator, const Vector<T>& vec) {
+    if (vec.empty())
+        return {};
     T* data = reinterpret_cast<T*>(allocator.alloc_bytes(sizeof(T) * vec.size(), alignof(T)));
     for (u32 i = 0; i < vec.size(); i++) {
         data[i] = vec[i];
@@ -20,16 +20,17 @@ static Span<T> alloc_span(BumpAllocator& allocator, const Vector<T>& vec) {
     return Span<T>(data, static_cast<u32>(vec.size()));
 }
 
-template<typename T>
-static Span<T> alloc_span(BumpAllocator& allocator, u32 count) {
-    if (count == 0) return {};
+template <typename T> static Span<T> alloc_span(BumpAllocator& allocator, u32 count) {
+    if (count == 0)
+        return {};
     T* data = reinterpret_cast<T*>(allocator.alloc_bytes(sizeof(T) * count, alignof(T)));
     return Span<T>(data, count);
 }
 
 static StringView alloc_string(BumpAllocator& allocator, const char* str) {
     u32 len = 0;
-    while (str[len]) len++;
+    while (str[len])
+        len++;
     char* buf = reinterpret_cast<char*>(allocator.alloc_bytes(len, 1));
     memcpy(buf, str, len);
     return StringView(buf, len);
@@ -39,8 +40,7 @@ static StringView alloc_string_fmt(BumpAllocator& allocator, const char* fmt, St
     return format_to_arena(allocator, runtime(fmt), arg);
 }
 
-static StringView alloc_string_fmt(BumpAllocator& allocator, const char* fmt, u32 a,
-                                   StringView b) {
+static StringView alloc_string_fmt(BumpAllocator& allocator, const char* fmt, u32 a, StringView b) {
     return format_to_arena(allocator, runtime(fmt), a, b);
 }
 
@@ -54,7 +54,7 @@ struct YieldPoint {
 };
 
 struct PromotedVar {
-    StringView name;        // Source variable name (matches block params)
+    StringView name; // Source variable name (matches block params)
     // State-struct field name. Usually the source name; disambiguated when two
     // variables in DISJOINT scopes share a name at different types, which is
     // legal (only shadowing is banned) and must not share one field — see
@@ -78,20 +78,22 @@ struct PromotedVar {
 // disjoint scopes are never live at once, so the storage is genuinely reusable.
 using PromotedVarIndex = tsl::robin_map<StringView, Vector<u32>>;
 
-static u32 find_promoted(const Vector<PromotedVar>& promoted_vars,
-                         const PromotedVarIndex& index, StringView name, Type* type) {
+static u32 find_promoted(const Vector<PromotedVar>& promoted_vars, const PromotedVarIndex& index,
+                         StringView name, Type* type) {
     auto it = index.find(name);
-    if (it == index.end()) return UINT32_MAX;
+    if (it == index.end())
+        return UINT32_MAX;
     for (u32 candidate : it->second) {
-        if (promoted_vars[candidate].type == type) return candidate;
+        if (promoted_vars[candidate].type == type)
+            return candidate;
     }
     return UINT32_MAX;
 }
 
 // get_type_slot_count is declared in types.hpp and defined in types.cpp.
 
-static IRInst* make_inst(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
-                          IROp op, Type* type) {
+static IRInst* make_inst(BumpAllocator& allocator, IRFunction* func, IRBlock* block, IROp op,
+                         Type* type) {
     IRInst* inst = allocator.emplace<IRInst>();
     inst->op = op;
     inst->type = type;
@@ -100,15 +102,15 @@ static IRInst* make_inst(BumpAllocator& allocator, IRFunction* func, IRBlock* bl
     return inst;
 }
 
-static ValueId emit_const_int(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
-                               i64 value, Type* type) {
+static ValueId emit_const_int(BumpAllocator& allocator, IRFunction* func, IRBlock* block, i64 value,
+                              Type* type) {
     IRInst* inst = make_inst(allocator, func, block, IROp::ConstInt, type);
     inst->const_data.int_val = value;
     return inst->result;
 }
 
 static ValueId emit_new(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
-                         StringView type_name, Type* result_type) {
+                        StringView type_name, Type* result_type) {
     IRInst* inst = make_inst(allocator, func, block, IROp::New, result_type);
     inst->new_data.type_name = type_name;
     inst->new_data.args = Span<ValueId>();
@@ -116,8 +118,8 @@ static ValueId emit_new(BumpAllocator& allocator, IRFunction* func, IRBlock* blo
 }
 
 static ValueId emit_get_field(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
-                               ValueId object, StringView field_name,
-                               u32 slot_offset, u32 slot_count, Type* result_type) {
+                              ValueId object, StringView field_name, u32 slot_offset,
+                              u32 slot_count, Type* result_type) {
     IRInst* inst = make_inst(allocator, func, block, IROp::GetField, result_type);
     inst->field.object = object;
     inst->field.field_name = field_name;
@@ -127,8 +129,8 @@ static ValueId emit_get_field(BumpAllocator& allocator, IRFunction* func, IRBloc
 }
 
 static ValueId emit_get_field_addr(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
-                                    ValueId object, StringView field_name,
-                                    u32 slot_offset, u32 slot_count, Type* field_type) {
+                                   ValueId object, StringView field_name, u32 slot_offset,
+                                   u32 slot_count, Type* field_type) {
     IRInst* inst = make_inst(allocator, func, block, IROp::GetFieldAddr, field_type);
     inst->field.object = object;
     inst->field.field_name = field_name;
@@ -138,8 +140,8 @@ static ValueId emit_get_field_addr(BumpAllocator& allocator, IRFunction* func, I
 }
 
 static ValueId emit_set_field(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
-                               ValueId object, StringView field_name,
-                               u32 slot_offset, u32 slot_count, ValueId value, Type* type) {
+                              ValueId object, StringView field_name, u32 slot_offset,
+                              u32 slot_count, ValueId value, Type* type) {
     IRInst* inst = make_inst(allocator, func, block, IROp::SetField, type);
     inst->field.object = object;
     inst->field.field_name = field_name;
@@ -154,9 +156,8 @@ static ValueId emit_set_field(BumpAllocator& allocator, IRFunction* func, IRBloc
 // struct); a plain SetField would store that pointer into a field sized for the
 // struct's slots, so the reader would decode an address as struct contents.
 static void emit_set_struct_field(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
-                                  ValueId object, StringView field_name,
-                                  u32 slot_offset, u32 slot_count,
-                                  ValueId source_ptr, Type* field_type) {
+                                  ValueId object, StringView field_name, u32 slot_offset,
+                                  u32 slot_count, ValueId source_ptr, Type* field_type) {
     IRInst* addr = make_inst(allocator, func, block, IROp::GetFieldAddr, field_type);
     addr->field.object = object;
     addr->field.field_name = field_name;
@@ -174,8 +175,8 @@ static void emit_set_struct_field(BumpAllocator& allocator, IRFunction* func, IR
     copy->struct_copy.kind = StructCopyKind::Move;
 }
 
-static ValueId emit_eq_i(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
-                           ValueId left, ValueId right, Type* bool_type) {
+static ValueId emit_eq_i(BumpAllocator& allocator, IRFunction* func, IRBlock* block, ValueId left,
+                         ValueId right, Type* bool_type) {
     IRInst* inst = make_inst(allocator, func, block, IROp::EqI, bool_type);
     inst->binary.left = left;
     inst->binary.right = right;
@@ -183,14 +184,13 @@ static ValueId emit_eq_i(BumpAllocator& allocator, IRFunction* func, IRBlock* bl
 }
 
 static void finish_goto(BumpAllocator& allocator, IRBlock* block, BlockId target,
-                         Span<BlockArgPair> args = {}) {
+                        Span<BlockArgPair> args = {}) {
     block->terminator.kind = TerminatorKind::Goto;
     block->terminator.goto_target.block = target;
     block->terminator.goto_target.args = args;
 }
 
-static void finish_branch(IRBlock* block, ValueId cond,
-                           BlockId then_block, BlockId else_block) {
+static void finish_branch(IRBlock* block, ValueId cond, BlockId then_block, BlockId else_block) {
     block->terminator.kind = TerminatorKind::Branch;
     block->terminator.branch.condition = cond;
     block->terminator.branch.then_target.block = then_block;
@@ -217,13 +217,13 @@ static IRBlock* create_block(BumpAllocator& allocator, IRFunction* func, StringV
 }
 
 static ValueId emit_const_null(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
-                                Type* nil_type) {
+                               Type* nil_type) {
     IRInst* inst = make_inst(allocator, func, block, IROp::ConstNull, nil_type);
     return inst->result;
 }
 
 static ValueId emit_call(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
-                           StringView func_name, Span<ValueId> args, Type* result_type) {
+                         StringView func_name, Span<ValueId> args, Type* result_type) {
     IRInst* inst = make_inst(allocator, func, block, IROp::Call, result_type);
     inst->call.func_name = func_name;
     inst->call.args = args;
@@ -232,7 +232,7 @@ static ValueId emit_call(BumpAllocator& allocator, IRFunction* func, IRBlock* bl
 }
 
 static ValueId emit_func_index(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
-                                StringView func_name, Type* u32_type) {
+                               StringView func_name, Type* u32_type) {
     IRInst* inst = make_inst(allocator, func, block, IROp::FuncIndex, u32_type);
     inst->func_index.func_name = func_name;
     return inst->result;
@@ -242,8 +242,8 @@ static ValueId emit_func_index(BumpAllocator& allocator, IRFunction* func, IRBlo
 // (constraint-reference counting — a `ref` promoted into the state struct is a
 // counted borrow held for the state's lifetime: RefInc at creation, RefDec in
 // $$delete), or AssertHeap.
-static void emit_unary_void_op(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
-                               IROp op, ValueId value, Type* void_type) {
+static void emit_unary_void_op(BumpAllocator& allocator, IRFunction* func, IRBlock* block, IROp op,
+                               ValueId value, Type* void_type) {
     IRInst* inst = make_inst(allocator, func, block, op, void_type);
     inst->unary = value;
 }
@@ -251,11 +251,11 @@ static void emit_unary_void_op(BumpAllocator& allocator, IRFunction* func, IRBlo
 // Generate the __coro_<func_name>$$delete destructor function.
 // This iterates promoted struct fields in reverse order (LIFO) and cleans up
 // any noncopyable pointer-type fields (uniq, List, Map, Coro).
-static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* struct_type,
-                                             StringView func_name, TypeCache& types,
-                                             IRModule* module,
-                                             const Vector<BlockParam>& original_params,
-                                             const tsl::robin_map<StringView, bool>& catch_field_names) {
+static IRFunction*
+generate_coro_destructor(BumpAllocator& allocator, Type* struct_type, StringView func_name,
+                         TypeCache& types, IRModule* module,
+                         const Vector<BlockParam>& original_params,
+                         const tsl::robin_map<StringView, bool>& catch_field_names) {
     IRFunction* dtor_func = allocator.emplace<IRFunction>();
     StringView dtor_name = alloc_string_fmt(allocator, "__coro_{}$$delete", func_name);
     dtor_func->name = dtor_name;
@@ -291,7 +291,8 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
     const auto& fields = struct_type->struct_info.fields;
     for (i32 i = static_cast<i32>(fields.size()) - 1; i >= 3; i--) {
         const FieldInfo& field = fields[i];
-        if (!field.type) continue;
+        if (!field.type)
+            continue;
 
         // A catch clause's exception variable owns the caught object: the
         // unwinder hands the pointer to the handler without freeing it, so the
@@ -318,7 +319,8 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
         // Coro", which silently skipped every other owning shape: once value
         // structs began living *inline* in the state struct, a promoted struct
         // owning a `uniq` was never destroyed at all.
-        if (!is_catch_field && !member_needs_drop(field.type)) continue;
+        if (!is_catch_field && !member_needs_drop(field.type))
+            continue;
 
         // A `ref` field is a counted borrow (ref param acquired at init, or ref
         // local acquired mid-body); release it here (RefDec the borrowed pointer,
@@ -331,31 +333,29 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
         // which lowers to its destructor in both backends (the same shape as
         // IRBuilder::emit_single_field_destroy's value-struct arm).
         if (field.type->is_struct()) {
-            ValueId field_addr = emit_get_field_addr(allocator, dtor_func, entry, self_val,
-                                                     field.name, field.slot_offset,
-                                                     field.slot_count, field.type);
-            emit_unary_void_op(allocator, dtor_func, entry, IROp::Delete,
-                               field_addr, field.type);
+            ValueId field_addr =
+                emit_get_field_addr(allocator, dtor_func, entry, self_val, field.name,
+                                    field.slot_offset, field.slot_count, field.type);
+            emit_unary_void_op(allocator, dtor_func, entry, IROp::Delete, field_addr, field.type);
             continue;
         }
 
         // GetField → null check → call inner destructor → Delete → skip
-        ValueId field_val = emit_get_field(allocator, dtor_func, entry, self_val,
-                                            field.name, field.slot_offset, field.slot_count,
-                                            field.type);
+        ValueId field_val = emit_get_field(allocator, dtor_func, entry, self_val, field.name,
+                                           field.slot_offset, field.slot_count, field.type);
         ValueId null_val = emit_const_null(allocator, dtor_func, entry, types.nil_type());
-        ValueId is_null = emit_eq_i(allocator, dtor_func, entry,
-                                     field_val, null_val, types.bool_type());
+        ValueId is_null =
+            emit_eq_i(allocator, dtor_func, entry, field_val, null_val, types.bool_type());
 
         char cleanup_name[64];
         format_to(cleanup_name, sizeof(cleanup_name), "field_cleanup_{}", i);
         char skip_name[64];
         format_to(skip_name, sizeof(skip_name), "field_skip_{}", i);
 
-        IRBlock* cleanup_block = create_block(allocator, dtor_func,
-                                               alloc_string(allocator, cleanup_name));
-        IRBlock* skip_block = create_block(allocator, dtor_func,
-                                            alloc_string(allocator, skip_name));
+        IRBlock* cleanup_block =
+            create_block(allocator, dtor_func, alloc_string(allocator, cleanup_name));
+        IRBlock* skip_block =
+            create_block(allocator, dtor_func, alloc_string(allocator, skip_name));
 
         finish_branch(entry, is_null, skip_block->id, cleanup_block->id);
 
@@ -368,15 +368,14 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
             // `uniq E`, so E's `fun delete` runs; a catch-all has no concrete
             // type at compile time and frees type-erased (a void-typed Delete),
             // the same limitation as the unhandled-exception path.
-            Type* caught_type = field.type->kind == TypeKind::Ref
-                ? field.type->ref_info.inner_type : nullptr;
-            Type* delete_type = caught_type ? types.uniq_type(caught_type)
-                                            : types.void_type();
-            emit_unary_void_op(allocator, dtor_func, cleanup_block, IROp::Delete,
-                               field_val, delete_type);
+            Type* caught_type =
+                field.type->kind == TypeKind::Ref ? field.type->ref_info.inner_type : nullptr;
+            Type* delete_type = caught_type ? types.uniq_type(caught_type) : types.void_type();
+            emit_unary_void_op(allocator, dtor_func, cleanup_block, IROp::Delete, field_val,
+                               delete_type);
         } else if (is_ref) {
-            emit_unary_void_op(allocator, dtor_func, cleanup_block, IROp::RefDec,
-                               field_val, types.void_type());
+            emit_unary_void_op(allocator, dtor_func, cleanup_block, IROp::RefDec, field_val,
+                               types.void_type());
         } else if (field.type->kind == TypeKind::Uniq) {
             Type* inner_type = field.type->ref_info.inner_type;
             if (inner_type && inner_type->is_struct()) {
@@ -385,48 +384,46 @@ static IRFunction* generate_coro_destructor(BumpAllocator& allocator, Type* stru
                         mangle_destructor(allocator, inner_type->struct_info.name);
                     Span<ValueId> call_args = alloc_span<ValueId>(allocator, 1);
                     call_args[0] = field_val;
-                    emit_call(allocator, dtor_func, cleanup_block,
-                              inner_dtor_sv, call_args, types.void_type());
+                    emit_call(allocator, dtor_func, cleanup_block, inner_dtor_sv, call_args,
+                              types.void_type());
                 }
             }
-            emit_unary_void_op(allocator, dtor_func, cleanup_block, IROp::Delete,
-                               field_val, types.void_type());
+            emit_unary_void_op(allocator, dtor_func, cleanup_block, IROp::Delete, field_val,
+                               types.void_type());
         } else if (field.type->is_coroutine()) {
             // Recursively call the coroutine's destructor
             StringView coro_func_name = field.type->coro_info.func_name;
-            StringView coro_dtor_name = alloc_string_fmt(allocator,
-                "__coro_{}$$delete", coro_func_name);
+            StringView coro_dtor_name =
+                alloc_string_fmt(allocator, "__coro_{}$$delete", coro_func_name);
             Span<ValueId> call_args = alloc_span<ValueId>(allocator, 1);
             call_args[0] = field_val;
-            emit_call(allocator, dtor_func, cleanup_block,
-                      coro_dtor_name, call_args, types.void_type());
-            emit_unary_void_op(allocator, dtor_func, cleanup_block, IROp::Delete,
-                               field_val, types.void_type());
-        }
-        else if (field.type->is_container()) {
+            emit_call(allocator, dtor_func, cleanup_block, coro_dtor_name, call_args,
+                      types.void_type());
+            emit_unary_void_op(allocator, dtor_func, cleanup_block, IROp::Delete, field_val,
+                               types.void_type());
+        } else if (field.type->is_container()) {
             auto wrapper_it = module->cleanup_wrappers.find(field.type);
             if (wrapper_it != module->cleanup_wrappers.end()) {
                 // Call the cleanup wrapper (handles element cleanup + buffer free + Delete)
                 Span<ValueId> call_args = alloc_span<ValueId>(allocator, 1);
                 call_args[0] = field_val;
-                emit_call(allocator, dtor_func, cleanup_block,
-                          wrapper_it->second, call_args, types.void_type());
+                emit_call(allocator, dtor_func, cleanup_block, wrapper_it->second, call_args,
+                          types.void_type());
             } else {
                 // Fallback: bare Delete (no element cleanup)
-                emit_unary_void_op(allocator, dtor_func, cleanup_block, IROp::Delete,
-                                   field_val, types.void_type());
+                emit_unary_void_op(allocator, dtor_func, cleanup_block, IROp::Delete, field_val,
+                                   types.void_type());
             }
-        }
-        else {
+        } else {
             // Any other owning pointer shape — today a closure (`fun(..) -> R`
             // owns its heap env). A typed Delete lets each backend's drop
             // derivation dispatch it, rather than needing an arm here.
-            emit_unary_void_op(allocator, dtor_func, cleanup_block, IROp::Delete,
-                               field_val, field.type);
+            emit_unary_void_op(allocator, dtor_func, cleanup_block, IROp::Delete, field_val,
+                               field.type);
         }
 
         finish_goto(allocator, cleanup_block, skip_block->id);
-        entry = skip_block;  // Continue from skip block for next field
+        entry = skip_block; // Continue from skip block for next field
     }
 
     // Return void from the last block
@@ -452,11 +449,17 @@ static void remap_jump_args(const tsl::robin_map<u32, ValueId>& value_map, JumpT
 
 static void remap_inst_values(const tsl::robin_map<u32, ValueId>& value_map, IRInst* inst) {
     switch (inst->op) {
-        case IROp::ConstNull: case IROp::ConstBool: case IROp::ConstInt:
-        case IROp::ConstF: case IROp::ConstD: case IROp::ConstString:
-        case IROp::StackAlloc: case IROp::BlockArg:
+        case IROp::ConstNull:
+        case IROp::ConstBool:
+        case IROp::ConstInt:
+        case IROp::ConstF:
+        case IROp::ConstD:
+        case IROp::ConstString:
+        case IROp::StackAlloc:
+        case IROp::BlockArg:
             break;
-        case IROp::GetField: case IROp::GetFieldAddr:
+        case IROp::GetField:
+        case IROp::GetFieldAddr:
             inst->field.object = remap_value(value_map, inst->field.object);
             break;
         case IROp::SetField:
@@ -467,7 +470,8 @@ static void remap_inst_values(const tsl::robin_map<u32, ValueId>& value_map, IRI
             for (u32 i = 0; i < inst->new_data.args.size(); i++)
                 inst->new_data.args[i] = remap_value(value_map, inst->new_data.args[i]);
             break;
-        case IROp::Call: case IROp::CallNative:
+        case IROp::Call:
+        case IROp::CallNative:
             for (u32 i = 0; i < inst->call.args.size(); i++)
                 inst->call.args[i] = remap_value(value_map, inst->call.args[i]);
             break;
@@ -513,7 +517,7 @@ static void remap_inst_values(const tsl::robin_map<u32, ValueId>& value_map, IRI
 }
 
 static void remap_terminator_values(const tsl::robin_map<u32, ValueId>& value_map,
-                                     Terminator& term) {
+                                    Terminator& term) {
     switch (term.kind) {
         case TerminatorKind::Goto:
             remap_jump_args(value_map, term.goto_target);
@@ -534,11 +538,10 @@ static void remap_terminator_values(const tsl::robin_map<u32, ValueId>& value_ma
 static void remap_all_block_ids(IRFunction* func, const tsl::robin_map<u32, u32>& block_map) {
     auto remap_id = [&](BlockId& bid) {
         auto it = block_map.find(bid.id);
-        if (it != block_map.end()) bid.id = it->second;
+        if (it != block_map.end())
+            bid.id = it->second;
     };
-    auto remap_target = [&](JumpTarget& target) {
-        remap_id(target.block);
-    };
+    auto remap_target = [&](JumpTarget& target) { remap_id(target.block); };
     for (auto* block : func->blocks) {
         switch (block->terminator.kind) {
             case TerminatorKind::Goto:
@@ -557,7 +560,8 @@ static void remap_all_block_ids(IRFunction* func, const tsl::robin_map<u32, u32>
         remap_id(handler.try_entry);
         remap_id(handler.try_exit);
         remap_id(handler.handler_block);
-        for (BlockId& bid : handler.try_body_blocks) remap_id(bid);
+        for (BlockId& bid : handler.try_body_blocks)
+            remap_id(bid);
     }
 }
 
@@ -569,9 +573,7 @@ static void remap_all_block_ids(IRFunction* func, const tsl::robin_map<u32, u32>
 // *is* the variable's storage: the body reads the field's address and mutates
 // it in place. Reference-shaped types (`uniq`/`ref`/`weak`, containers, `Coro`)
 // are single pointer values and keep the by-value GetField/SetField path.
-static bool is_inline_struct_var(Type* type) {
-    return type && type->is_struct();
-}
+static bool is_inline_struct_var(Type* type) { return type && type->is_struct(); }
 
 // ===== Phase 1: Promote variables to struct fields =====
 
@@ -582,9 +584,9 @@ struct BlockParamAnalysis {
 };
 
 static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
-                            const Vector<PromotedVar>& promoted_vars,
-                            const PromotedVarIndex& promoted_var_index,
-                            ValueId self_val, Type* ref_struct_type) {
+                           const Vector<PromotedVar>& promoted_vars,
+                           const PromotedVarIndex& promoted_var_index, ValueId self_val,
+                           Type* ref_struct_type) {
     auto promoted_of = [&](const BlockParam& param) -> u32 {
         return find_promoted(promoted_vars, promoted_var_index, param.name, param.type);
     };
@@ -607,7 +609,8 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
 
     auto is_exception_param = [&](u32 block_id, u32 param_index) -> bool {
         for (auto& ep : exception_params) {
-            if (ep.block_id == block_id && ep.param_index == param_index) return true;
+            if (ep.block_id == block_id && ep.param_index == param_index)
+                return true;
         }
         return false;
     };
@@ -631,12 +634,14 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
     Vector<Vector<u32>> all_promoted_value_ids(promoted_vars.size());
     for (auto& param : old_params) {
         u32 pv_idx = promoted_of(param);
-        if (pv_idx != UINT32_MAX) all_promoted_value_ids[pv_idx].push_back(param.value.id);
+        if (pv_idx != UINT32_MAX)
+            all_promoted_value_ids[pv_idx].push_back(param.value.id);
     }
     for (u32 block_idx = 0; block_idx < func->blocks.size(); block_idx++) {
         IRBlock* block = func->blocks[block_idx];
         for (u32 param_idx = 0; param_idx < block->params.size(); param_idx++) {
-            if (is_exception_param(block_idx, param_idx)) continue;
+            if (is_exception_param(block_idx, param_idx))
+                continue;
             u32 pv_idx = promoted_of(block->params[param_idx]);
             if (pv_idx != UINT32_MAX) {
                 all_promoted_value_ids[pv_idx].push_back(block->params[param_idx].value.id);
@@ -736,11 +741,14 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
         // Remap terminator
         remap_terminator_values(local_remap, block->terminator);
 
-        // Prepend GetField loads (and exception SetField if applicable) before original instructions
+        // Prepend GetField loads (and exception SetField if applicable) before original
+        // instructions
         Vector<IRInst*> new_insts;
         new_insts.reserve(prepend_insts.size() + block->instructions.size());
-        for (auto* inst : prepend_insts) new_insts.push_back(inst);
-        for (auto* inst : block->instructions) new_insts.push_back(inst);
+        for (auto* inst : prepend_insts)
+            new_insts.push_back(inst);
+        for (auto* inst : block->instructions)
+            new_insts.push_back(inst);
         block->instructions = std::move(new_insts);
     }
 
@@ -751,17 +759,20 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
         Terminator& term = block->terminator;
 
         auto process_jump = [&](JumpTarget& target) {
-            if (!target.block.is_valid()) return;
+            if (!target.block.is_valid())
+                return;
             u32 target_idx = target.block.id;
-            if (target_idx >= block_analyses.size()) return;
+            if (target_idx >= block_analyses.size())
+                return;
             BlockParamAnalysis& target_analysis = block_analyses[target_idx];
-            if (target_analysis.promoted_indices.empty()) return;
+            if (target_analysis.promoted_indices.empty())
+                return;
 
             // Insert SetField for each promoted arg (values already remapped in 5d)
             for (u32 pi : target_analysis.promoted_indices) {
                 const BlockParam& param = target_analysis.original_params[pi];
-                u32 pv_idx = find_promoted(promoted_vars, promoted_var_index,
-                                           param.name, param.type);
+                u32 pv_idx =
+                    find_promoted(promoted_vars, promoted_var_index, param.name, param.type);
                 assert(pv_idx != UINT32_MAX);
                 const PromotedVar& pv = promoted_vars[pv_idx];
                 ValueId arg_value = target.args[pi].value;
@@ -775,7 +786,8 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
                 ValueId block_accessor = block_idx < block_accessors.size()
                                              ? block_accessors[block_idx][pv_idx]
                                              : ValueId::invalid();
-                if (arg_value == block_accessor) continue;
+                if (arg_value == block_accessor)
+                    continue;
 
                 // An inline value struct is addressed, not held in a register,
                 // so the write-back is a struct copy rather than a SetField
@@ -784,9 +796,9 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
                 // the argument is still the variable's original stack storage,
                 // so the copy is what populates the state.
                 if (is_inline_struct_var(pv.type)) {
-                    emit_set_struct_field(allocator, func, block, self_val,
-                                          pv.field_name, pv.field_slot_offset,
-                                          pv.field_slot_count, arg_value, pv.type);
+                    emit_set_struct_field(allocator, func, block, self_val, pv.field_name,
+                                          pv.field_slot_offset, pv.field_slot_count, arg_value,
+                                          pv.type);
                     continue;
                 }
 
@@ -818,7 +830,8 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
     // 5f. Remove promoted params from all blocks
     for (u32 block_idx = 0; block_idx < func->blocks.size(); block_idx++) {
         BlockParamAnalysis& analysis = block_analyses[block_idx];
-        if (analysis.promoted_indices.empty()) continue;
+        if (analysis.promoted_indices.empty())
+            continue;
         IRBlock* block = func->blocks[block_idx];
         Vector<BlockParam> new_params;
         for (u32 npi : analysis.non_promoted_indices) {
@@ -843,36 +856,35 @@ static void phase1_promote(IRFunction* func, BumpAllocator& allocator,
 //
 // Owned fields inside a `when` clause are not reached: variant cleanup is
 // discriminant-guarded, so clearing it would need the live discriminant here.
-static void clear_owned_state_field(BumpAllocator& allocator, IRFunction* func,
-                                    IRBlock* block, ValueId object, TypeCache& types,
-                                    StringView field_name, Type* field_type,
-                                    u32 slot_offset, u32 slot_count) {
-    if (!field_type) return;
+static void clear_owned_state_field(BumpAllocator& allocator, IRFunction* func, IRBlock* block,
+                                    ValueId object, TypeCache& types, StringView field_name,
+                                    Type* field_type, u32 slot_offset, u32 slot_count) {
+    if (!field_type)
+        return;
     if (field_type->is_struct()) {
         // Address the inline struct and clear its members *through that address*
         // rather than by absolute slot offset in the state struct: the C backend
         // emits field access by name, so a member has to be named on the struct
         // that actually declares it.
-        ValueId struct_addr = emit_get_field_addr(allocator, func, block, object,
-                                                  field_name, slot_offset, slot_count,
-                                                  field_type);
+        ValueId struct_addr = emit_get_field_addr(allocator, func, block, object, field_name,
+                                                  slot_offset, slot_count, field_type);
         for (const auto& sub_field : field_type->struct_info.fields) {
-            if (!sub_field.type || sub_field.type->is_copy()) continue;
-            clear_owned_state_field(allocator, func, block, struct_addr, types,
-                                    sub_field.name, sub_field.type,
-                                    sub_field.slot_offset, sub_field.slot_count);
+            if (!sub_field.type || sub_field.type->is_copy())
+                continue;
+            clear_owned_state_field(allocator, func, block, struct_addr, types, sub_field.name,
+                                    sub_field.type, sub_field.slot_offset, sub_field.slot_count);
         }
         return;
     }
     ValueId null_val = emit_const_null(allocator, func, block, types.nil_type());
-    emit_set_field(allocator, func, block, object, field_name,
-                   slot_offset, slot_count, null_val, field_type);
+    emit_set_field(allocator, func, block, object, field_name, slot_offset, slot_count, null_val,
+                   field_type);
 }
 
-static void phase2_split(IRFunction* func, BumpAllocator& allocator,
-                          ValueId self_val, Type* coro_yield_type,
-                          const FieldInfo* state_field, const FieldInfo* yield_field,
-                          TypeCache& types, const Vector<PromotedVar>& promoted_vars) {
+static void phase2_split(IRFunction* func, BumpAllocator& allocator, ValueId self_val,
+                         Type* coro_yield_type, const FieldInfo* state_field,
+                         const FieldInfo* yield_field, TypeCache& types,
+                         const Vector<PromotedVar>& promoted_vars) {
     // Re-scan for yield points after Phase 1 (instruction indices changed)
     Vector<YieldPoint> yield_points;
     for (u32 block_idx = 0; block_idx < func->blocks.size(); block_idx++) {
@@ -891,7 +903,8 @@ static void phase2_split(IRFunction* func, BumpAllocator& allocator,
         }
     }
 
-    if (yield_points.empty()) return;
+    if (yield_points.empty())
+        return;
 
     // Build yield block lookup
     tsl::robin_map<u32, u32> block_to_yield_idx;
@@ -966,8 +979,10 @@ static void phase2_split(IRFunction* func, BumpAllocator& allocator,
 
     // 6b. Replace Return terminators with set-done + return-default
     for (auto* block : func->blocks) {
-        if (block->terminator.kind != TerminatorKind::Return) continue;
-        if (block_to_yield_idx.count(block->id.id)) continue;
+        if (block->terminator.kind != TerminatorKind::Return)
+            continue;
+        if (block_to_yield_idx.count(block->id.id))
+            continue;
 
         // Clear promoted owning fields before setting done state. The IR
         // builder's inline cleanup has already freed these objects on this path,
@@ -976,24 +991,26 @@ static void phase2_split(IRFunction* func, BumpAllocator& allocator,
         // Kind-agnostic: an inline value struct is cleared through its owning
         // members, since it has no pointer of its own to null.
         for (const auto& pv : promoted_vars) {
-            if (pv.type->is_copy()) continue;
-            clear_owned_state_field(allocator, func, block, self_val, types,
-                                    pv.field_name, pv.type,
+            if (pv.type->is_copy())
+                continue;
+            clear_owned_state_field(allocator, func, block, self_val, types, pv.field_name, pv.type,
                                     pv.field_slot_offset, pv.field_slot_count);
         }
 
-        ValueId done_val = emit_const_int(allocator, func, block, CORO_STATE_DONE, types.i32_type());
-        emit_set_field(allocator, func, block, self_val,
-                       state_field->name, state_field->slot_offset, state_field->slot_count,
-                       done_val, types.i32_type());
+        ValueId done_val =
+            emit_const_int(allocator, func, block, CORO_STATE_DONE, types.i32_type());
+        emit_set_field(allocator, func, block, self_val, state_field->name,
+                       state_field->slot_offset, state_field->slot_count, done_val,
+                       types.i32_type());
         // Return a default of the yield type. The value is never observed (done()
         // is true on this path). `ConstInt 0` is only valid C for scalar yield
         // types; for a struct yield, return the zero-initialized __yield_val field
         // (roxy_alloc zeroes the state struct) — a valid value of the right type.
-        ValueId default_val = coro_yield_type->is_struct()
-            ? emit_get_field(allocator, func, block, self_val, yield_field->name,
-                             yield_field->slot_offset, yield_field->slot_count, coro_yield_type)
-            : emit_const_int(allocator, func, block, 0, coro_yield_type);
+        ValueId default_val =
+            coro_yield_type->is_struct()
+                ? emit_get_field(allocator, func, block, self_val, yield_field->name,
+                                 yield_field->slot_offset, yield_field->slot_count, coro_yield_type)
+                : emit_const_int(allocator, func, block, 0, coro_yield_type);
         finish_return(block, default_val);
     }
 
@@ -1004,9 +1021,9 @@ static void phase2_split(IRFunction* func, BumpAllocator& allocator,
 
     // Create dispatch entry
     IRBlock* dispatch_entry = create_block(allocator, func, alloc_string(allocator, "dispatch"));
-    ValueId state_loaded = emit_get_field(allocator, func, dispatch_entry, self_val,
-                                           state_field->name, state_field->slot_offset,
-                                           state_field->slot_count, types.i32_type());
+    ValueId state_loaded =
+        emit_get_field(allocator, func, dispatch_entry, self_val, state_field->name,
+                       state_field->slot_offset, state_field->slot_count, types.i32_type());
 
     // Create trap block
     IRBlock* trap_block = create_block(allocator, func, alloc_string(allocator, "trap"));
@@ -1015,9 +1032,10 @@ static void phase2_split(IRFunction* func, BumpAllocator& allocator,
     // Build if-else chain
     IRBlock* current_dispatch = dispatch_entry;
     for (u32 i = 0; i < num_states; i++) {
-        ValueId state_const = emit_const_int(allocator, func, current_dispatch, i, types.i32_type());
-        ValueId is_match = emit_eq_i(allocator, func, current_dispatch,
-                                      state_loaded, state_const, types.bool_type());
+        ValueId state_const =
+            emit_const_int(allocator, func, current_dispatch, i, types.i32_type());
+        ValueId is_match = emit_eq_i(allocator, func, current_dispatch, state_loaded, state_const,
+                                     types.bool_type());
 
         BlockId target;
         if (i == 0) {
@@ -1031,7 +1049,8 @@ static void phase2_split(IRFunction* func, BumpAllocator& allocator,
         } else {
             char name_buf[64];
             format_to(name_buf, sizeof(name_buf), "dispatch_{}", i + 1);
-            IRBlock* next_dispatch = create_block(allocator, func, alloc_string(allocator, name_buf));
+            IRBlock* next_dispatch =
+                create_block(allocator, func, alloc_string(allocator, name_buf));
             finish_branch(current_dispatch, is_match, target, next_dispatch->id);
             current_dispatch = next_dispatch;
         }
@@ -1065,8 +1084,8 @@ static void phase2_split(IRFunction* func, BumpAllocator& allocator,
 
 // ===== Main lowering logic =====
 
-static void lower_coroutine(IRFunction* original, IRModule* module,
-                              BumpAllocator& allocator, TypeEnv& type_env) {
+static void lower_coroutine(IRFunction* original, IRModule* module, BumpAllocator& allocator,
+                            TypeEnv& type_env) {
     TypeCache& types = type_env.types();
     Type* coro_yield_type = original->coro_yield_type;
     Type* coro_type = original->coro_type;
@@ -1102,8 +1121,8 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
     for (auto& yp : yield_points) {
         IRBlock* resume_block = original->blocks[yp.resume_block_id.id];
         for (auto& param : resume_block->params) {
-            if (find_promoted(promoted_vars, promoted_var_index,
-                              param.name, param.type) != UINT32_MAX) {
+            if (find_promoted(promoted_vars, promoted_var_index, param.name, param.type) !=
+                UINT32_MAX) {
                 continue;
             }
             u32 pv_idx = static_cast<u32>(promoted_vars.size());
@@ -1111,8 +1130,8 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
             PromotedVar pv;
             pv.name = param.name;
             pv.field_name = same_name.empty()
-                ? param.name
-                : alloc_string_fmt(allocator, "__pv{}_{}", pv_idx, param.name);
+                                ? param.name
+                                : alloc_string_fmt(allocator, "__pv{}_{}", pv_idx, param.name);
             pv.type = param.type;
             pv.field_slot_offset = 0;
             pv.field_slot_count = get_type_slot_count(param.type);
@@ -1205,7 +1224,8 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
                 break;
             }
         }
-        if (is_param) continue;
+        if (is_param)
+            continue;
 
         promoted_vars[i].field_slot_offset = current_slot;
         FieldInfo field;
@@ -1231,7 +1251,7 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
     // its own account, so nothing ever tries to duplicate it.
     DestructorInfo* dtor_info = reinterpret_cast<DestructorInfo*>(
         allocator.alloc_bytes(sizeof(DestructorInfo), alignof(DestructorInfo)));
-    dtor_info->name = StringView();  // empty = default destructor
+    dtor_info->name = StringView(); // empty = default destructor
     dtor_info->param_types = Span<Type*>();
     dtor_info->decl = nullptr;
     struct_type->struct_info.destructors = Span<DestructorInfo>(dtor_info, 1);
@@ -1256,7 +1276,8 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
 
     auto find_field = [&](StringView name) -> const FieldInfo* {
         for (auto& field : struct_type->struct_info.fields) {
-            if (field.name == name) return &field;
+            if (field.name == name)
+                return &field;
         }
         return nullptr;
     };
@@ -1298,14 +1319,14 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
     ValueId obj = emit_new(allocator, init_func, init_entry, struct_name, uniq_struct_type);
     // Seed __resume_idx with the resume function's dispatch index so an erased
     // Coro<T> value can `.resume()` via CALL_INDIRECT (resolved at lowering).
-    ValueId resume_idx = emit_func_index(allocator, init_func, init_entry, resume_name, types.u32_type());
-    emit_set_field(allocator, init_func, init_entry, obj,
-                   resume_idx_field->name, resume_idx_field->slot_offset, resume_idx_field->slot_count,
-                   resume_idx, types.u32_type());
+    ValueId resume_idx =
+        emit_func_index(allocator, init_func, init_entry, resume_name, types.u32_type());
+    emit_set_field(allocator, init_func, init_entry, obj, resume_idx_field->name,
+                   resume_idx_field->slot_offset, resume_idx_field->slot_count, resume_idx,
+                   types.u32_type());
     ValueId zero = emit_const_int(allocator, init_func, init_entry, 0, types.i32_type());
-    emit_set_field(allocator, init_func, init_entry, obj,
-                   state_field->name, state_field->slot_offset, state_field->slot_count,
-                   zero, types.i32_type());
+    emit_set_field(allocator, init_func, init_entry, obj, state_field->name,
+                   state_field->slot_offset, state_field->slot_count, zero, types.i32_type());
     for (u32 i = 0; i < num_params; i++) {
         const FieldInfo* param_field = find_field(original->params[i].name);
         // A `ref` param stored into the state is a counted borrow held for the
@@ -1328,13 +1349,12 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
         }
         if (is_inline_struct_var(param_field->type)) {
             // By-value struct param: copy it into the inline state field.
-            emit_set_struct_field(allocator, init_func, init_entry, obj,
-                                  param_field->name, param_field->slot_offset,
-                                  param_field->slot_count,
+            emit_set_struct_field(allocator, init_func, init_entry, obj, param_field->name,
+                                  param_field->slot_offset, param_field->slot_count,
                                   init_func->params[i].value, param_field->type);
         } else {
-            emit_set_field(allocator, init_func, init_entry, obj,
-                           param_field->name, param_field->slot_offset, param_field->slot_count,
+            emit_set_field(allocator, init_func, init_entry, obj, param_field->name,
+                           param_field->slot_offset, param_field->slot_count,
                            init_func->params[i].value, param_field->type);
         }
         if (is_counted_borrow) {
@@ -1359,30 +1379,31 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
     // exception.
     tsl::robin_map<StringView, bool> catch_field_names;
     for (auto& handler : original->exception_handlers) {
-        if (handler.handler_block.id >= original->blocks.size()) continue;
+        if (handler.handler_block.id >= original->blocks.size())
+            continue;
         IRBlock* hb = original->blocks[handler.handler_block.id];
-        if (hb->params.empty()) continue;
-        u32 pv_idx = find_promoted(promoted_vars, promoted_var_index,
-                                   hb->params[0].name, hb->params[0].type);
+        if (hb->params.empty())
+            continue;
+        u32 pv_idx = find_promoted(promoted_vars, promoted_var_index, hb->params[0].name,
+                                   hb->params[0].type);
         catch_field_names[pv_idx != UINT32_MAX ? promoted_vars[pv_idx].field_name
                                                : hb->params[0].name] = true;
     }
 
     // ===== Generate destructor function =====
-    IRFunction* dtor_func = generate_coro_destructor(allocator, struct_type,
-                                                      original->name, types, module,
-                                                      original->params, catch_field_names);
+    IRFunction* dtor_func = generate_coro_destructor(allocator, struct_type, original->name, types,
+                                                     module, original->params, catch_field_names);
 
     // ===== Transform original into resume function =====
     ValueId self_val = original->new_value();
 
     // Phase 1: promote variables to struct fields (in-place)
-    phase1_promote(original, allocator, promoted_vars, promoted_var_index,
-                   self_val, ref_struct_type);
+    phase1_promote(original, allocator, promoted_vars, promoted_var_index, self_val,
+                   ref_struct_type);
 
     // Phase 2: split at yields, add dispatch
-    phase2_split(original, allocator, self_val, coro_yield_type,
-                 state_field, yield_field, types, promoted_vars);
+    phase2_split(original, allocator, self_val, coro_yield_type, state_field, yield_field, types,
+                 promoted_vars);
 
     // Two kinds of promoted field are released on the *resume* path as well as
     // in `$$delete`, and each needs its state field cleared right after that
@@ -1414,18 +1435,22 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
         if (!clear_after.empty()) {
             for (auto* block : original->blocks) {
                 tsl::robin_map<u32, IRInst*> defs;
-                for (auto* inst : block->instructions) defs[inst->result.id] = inst;
+                for (auto* inst : block->instructions)
+                    defs[inst->result.id] = inst;
 
                 Vector<IRInst*> rebuilt;
                 bool changed = false;
                 for (auto* inst : block->instructions) {
                     rebuilt.push_back(inst);
-                    if (inst->op != IROp::RefDec && inst->op != IROp::Delete) continue;
+                    if (inst->op != IROp::RefDec && inst->op != IROp::Delete)
+                        continue;
                     auto dit = defs.find(inst->unary.id);
-                    if (dit == defs.end() || dit->second->op != IROp::GetField) continue;
+                    if (dit == defs.end() || dit->second->op != IROp::GetField)
+                        continue;
                     IRInst* def = dit->second;
                     auto cit = clear_after.find(def->field.field_name);
-                    if (cit == clear_after.end() || cit->second != inst->op) continue;
+                    if (cit == clear_after.end() || cit->second != inst->op)
+                        continue;
                     // Clear the state field right after the release.
                     IRInst* null_c = allocator.emplace<IRInst>();
                     null_c->op = IROp::ConstNull;
@@ -1444,7 +1469,8 @@ static void lower_coroutine(IRFunction* original, IRModule* module,
                     rebuilt.push_back(clr);
                     changed = true;
                 }
-                if (changed) block->instructions = std::move(rebuilt);
+                if (changed)
+                    block->instructions = std::move(rebuilt);
             }
         }
     }
@@ -1499,4 +1525,4 @@ void coroutine_lower(IRModule* module, BumpAllocator& allocator, TypeEnv& type_e
     }
 }
 
-}
+} // namespace rx

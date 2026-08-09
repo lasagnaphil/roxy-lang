@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -507,4 +507,4 @@ TEST_SUITE("E2E Recursive Types") {
         CHECK(result.stdout_output == "499\n");
     }
 
-}  // TEST_SUITE("E2E Recursive Types")
+} // TEST_SUITE("E2E Recursive Types")

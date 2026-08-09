@@ -173,4 +173,4 @@ TEST_SUITE("StaticString") {
         CHECK(a == "hello"); // original unchanged
     }
 
-}  // TEST_SUITE("StaticString")
+} // TEST_SUITE("StaticString")

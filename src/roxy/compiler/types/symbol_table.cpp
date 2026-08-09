@@ -3,10 +3,7 @@
 namespace rx {
 
 SymbolTable::SymbolTable(BumpAllocator& allocator)
-    : m_allocator(allocator)
-    , m_global(nullptr)
-    , m_current(nullptr)
-{
+    : m_allocator(allocator), m_global(nullptr), m_current(nullptr) {
     // Create global scope
     m_global = create_scope(ScopeKind::Global);
     m_current = m_global;
@@ -67,7 +64,8 @@ void SymbolTable::pop_scope() {
     }
 }
 
-Symbol* SymbolTable::define(SymbolKind kind, StringView name, Type* type, SourceLocation loc, Decl* decl) {
+Symbol* SymbolTable::define(SymbolKind kind, StringView name, Type* type, SourceLocation loc,
+                            Decl* decl) {
     Symbol* sym = m_allocator.emplace<Symbol>();
     sym->kind = kind;
     sym->name = name;
@@ -86,21 +84,23 @@ Symbol* SymbolTable::define(SymbolKind kind, StringView name, Type* type, Source
 }
 
 Symbol* SymbolTable::define_parameter(StringView name, Type* type, SourceLocation loc, u32 index,
-                                     bool is_out_inout) {
+                                      bool is_out_inout) {
     Symbol* sym = define(SymbolKind::Parameter, name, type, loc, nullptr);
     sym->param.index = index;
     sym->is_out_inout = is_out_inout;
     return sym;
 }
 
-Symbol* SymbolTable::define_field(StringView name, Type* type, SourceLocation loc, u32 index, bool is_pub) {
+Symbol* SymbolTable::define_field(StringView name, Type* type, SourceLocation loc, u32 index,
+                                  bool is_pub) {
     Symbol* sym = define(SymbolKind::Field, name, type, loc, nullptr);
     sym->field.index = index;
     sym->is_pub = is_pub;
     return sym;
 }
 
-Symbol* SymbolTable::define_enum_variant(StringView name, Type* type, SourceLocation loc, i64 value) {
+Symbol* SymbolTable::define_enum_variant(StringView name, Type* type, SourceLocation loc,
+                                         i64 value) {
     Symbol* sym = define(SymbolKind::EnumVariant, name, type, loc, nullptr);
     sym->enum_variant.value = value;
     return sym;
@@ -123,8 +123,8 @@ Symbol* SymbolTable::define_imported_function(StringView name, Type* type, Sourc
     return sym;
 }
 
-Symbol* SymbolTable::append_overload(Symbol* head, SymbolKind kind, Type* type,
-                                     SourceLocation loc, Decl* decl) {
+Symbol* SymbolTable::append_overload(Symbol* head, SymbolKind kind, Type* type, SourceLocation loc,
+                                     Decl* decl) {
     Symbol* sym = m_allocator.emplace<Symbol>();
     sym->kind = kind;
     sym->name = head->name;
@@ -136,7 +136,8 @@ Symbol* SymbolTable::append_overload(Symbol* head, SymbolKind kind, Type* type,
     // NOT pushed into the scope's symbol vector or the lookup cache — the
     // chain is reachable only through the head (see Symbol::next_overload).
     Symbol* tail = head;
-    while (tail->next_overload) tail = tail->next_overload;
+    while (tail->next_overload)
+        tail = tail->next_overload;
     tail->next_overload = sym;
     return sym;
 }
@@ -164,7 +165,8 @@ Symbol* SymbolTable::lookup_local(StringView name) const {
 
 Symbol* SymbolTable::lookup_function_local(StringView name) const {
     Symbol* sym = lookup(name);
-    if (!sym) return nullptr;
+    if (!sym)
+        return nullptr;
     if (sym->kind != SymbolKind::Variable && sym->kind != SymbolKind::Parameter) {
         return nullptr;
     }
@@ -174,8 +176,10 @@ Symbol* SymbolTable::lookup_function_local(StringView name) const {
     // boundary scope belongs to a lambda, and the shadowing ban crosses lambda
     // boundaries (like C#), so the walk continues through it.
     for (Scope* scope = m_current; scope; scope = scope->parent) {
-        if (scope->kind == ScopeKind::Global) break;
-        if (scope == sym->defining_scope) return sym;
+        if (scope->kind == ScopeKind::Global)
+            break;
+        if (scope == sym->defining_scope)
+            return sym;
         if (scope->kind == ScopeKind::Function &&
             (!scope->parent || scope->parent->kind != ScopeKind::Lambda)) {
             break;
@@ -238,4 +242,4 @@ Scope* SymbolTable::current_struct_scope() const {
     return nullptr;
 }
 
-}
+} // namespace rx

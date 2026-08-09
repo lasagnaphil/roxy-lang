@@ -1,9 +1,9 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
-#include "roxy/vm/vm.hpp"
 #include "roxy/vm/interpreter.hpp"
+#include "roxy/vm/vm.hpp"
 
 using namespace rx;
 
@@ -160,7 +160,7 @@ TEST_SUITE("E2E Heap") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "30\n");  // 0 + 10 + 20
+        CHECK(result.stdout_output == "30\n"); // 0 + 10 + 20
     }
 
     // ============================================================================
@@ -399,10 +399,12 @@ TEST_SUITE("E2E Heap") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
-    TEST_CASE("Runtime error: delete with active borrow") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "Runtime error: delete with active borrow") { // VM-only: runtime-trap/abort behavior
+                                                      // differs on C backend (VM-only by nature)
         // Delete should fail at runtime when ref_count > 0
         // Pass same object as both ref (creates borrow) and uniq (for delete)
         const char* source = R"(
@@ -428,7 +430,7 @@ TEST_SUITE("E2E Heap") {
     )";
 
         auto result = VMBackend::run(source);
-        CHECK(result.success == false);  // Should fail - can't delete with active borrow
+        CHECK(result.success == false); // Should fail - can't delete with active borrow
     }
 
     // ============================================================================
@@ -450,7 +452,7 @@ TEST_SUITE("E2E Heap") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE("Compile error: weak to uniq assignment") {
@@ -468,7 +470,7 @@ TEST_SUITE("E2E Heap") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE("Compile error: weak to ref assignment") {
@@ -486,7 +488,7 @@ TEST_SUITE("E2E Heap") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE("Compile error: nil to value type") {
@@ -502,7 +504,7 @@ TEST_SUITE("E2E Heap") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
     TEST_CASE_TEMPLATE("Valid: uniq to ref conversion", Backend, RX_E2E_BACKENDS) {
@@ -605,7 +607,8 @@ TEST_SUITE("E2E Heap") {
         CHECK(result.value == 30);
     }
 
-    TEST_CASE_TEMPLATE("Weak loop-carried block param survives a call in the loop body", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Weak loop-carried block param survives a call in the loop body", Backend,
+                       RX_E2E_BACKENDS) {
         // Regression: a weak-typed block param at a loop header is
         // pre-allocated at the entry block's terminator
         // (pre_alloc_target_params). That path used to skip inserting the
@@ -643,7 +646,7 @@ TEST_SUITE("E2E Heap") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 21);  // bump: 1+2+3, w.val: 5*3
+        CHECK(result.value == 21); // bump: 1+2+3, w.val: 5*3
     }
 
     TEST_CASE_TEMPLATE("Weak nil assignment", Backend, RX_E2E_BACKENDS) {
@@ -805,7 +808,7 @@ TEST_SUITE("E2E Heap") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.value == 100);  // 10 + 20 + 30 + 40
+        CHECK(result.value == 100); // 10 + 20 + 30 + 40
     }
 
     TEST_CASE_TEMPLATE("Weak value in a Map", Backend, RX_E2E_BACKENDS) {
@@ -882,4 +885,4 @@ TEST_SUITE("E2E Heap") {
         CHECK(result.value == 13);
     }
 
-}  // TEST_SUITE("E2E Heap")
+} // TEST_SUITE("E2E Heap")

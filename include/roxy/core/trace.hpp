@@ -25,6 +25,10 @@
 // Frame boundary — segments the Tracy timeline (one per compile in --repeat).
 #define ROXY_FRAME_MARK FrameMark
 #else
-#define ROXY_ZONE(name) do {} while (0)
-#define ROXY_FRAME_MARK do {} while (0)
+#define ROXY_ZONE(name)                                                                            \
+    do {                                                                                           \
+    } while (0)
+#define ROXY_FRAME_MARK                                                                            \
+    do {                                                                                           \
+    } while (0)
 #endif

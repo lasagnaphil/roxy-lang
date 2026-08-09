@@ -8,7 +8,8 @@
 using namespace rx;
 
 // Helper to parse source and return program
-Program* parse_source(const char* source, BumpAllocator& allocator, ParseError* out_error = nullptr) {
+Program* parse_source(const char* source, BumpAllocator& allocator,
+                      ParseError* out_error = nullptr) {
     Lexer lexer(source, (u32)strlen(source));
     Parser parser(lexer, allocator);
     Program* program = parser.parse();
@@ -19,9 +20,7 @@ Program* parse_source(const char* source, BumpAllocator& allocator, ParseError* 
 }
 
 // Helper to check identifier name
-bool check_identifier(StringView sv, const char* expected) {
-    return sv == expected;
-}
+bool check_identifier(StringView sv, const char* expected) { return sv == expected; }
 
 TEST_SUITE("Parser") {
 
@@ -144,7 +143,8 @@ TEST_SUITE("Parser") {
 
         SUBCASE("Comparison operators") {
             const char* sources[] = {"a < b;", "a <= b;", "a > b;", "a >= b;"};
-            BinaryOp ops[] = {BinaryOp::Less, BinaryOp::LessEq, BinaryOp::Greater, BinaryOp::GreaterEq};
+            BinaryOp ops[] = {BinaryOp::Less, BinaryOp::LessEq, BinaryOp::Greater,
+                              BinaryOp::GreaterEq};
 
             for (int i = 0; i < 4; i++) {
                 BumpAllocator alloc(4096);
@@ -323,7 +323,7 @@ TEST_SUITE("Parser") {
         SUBCASE("Compound assignments") {
             const char* sources[] = {"x += 1;", "x -= 1;", "x *= 2;", "x /= 2;", "x %= 3;"};
             AssignOp ops[] = {AssignOp::AddAssign, AssignOp::SubAssign, AssignOp::MulAssign,
-                             AssignOp::DivAssign, AssignOp::ModAssign};
+                              AssignOp::DivAssign, AssignOp::ModAssign};
 
             for (int i = 0; i < 5; i++) {
                 BumpAllocator alloc(4096);
@@ -518,7 +518,8 @@ TEST_SUITE("Parser") {
         BumpAllocator allocator(4096);
 
         SUBCASE("Simple function") {
-            Program* program = parse_source("fun add(a: i32, b: i32): i32 { return a + b; }", allocator);
+            Program* program =
+                parse_source("fun add(a: i32, b: i32): i32 { return a + b; }", allocator);
             REQUIRE(program != nullptr);
             auto& decl = program->declarations[0];
             CHECK(decl->kind == AstKind::DeclFun);
@@ -562,11 +563,11 @@ TEST_SUITE("Parser") {
         BumpAllocator allocator(4096);
 
         SUBCASE("Simple struct") {
-            Program* program = parse_source(
-                "struct Point {\n"
-                "    x: f32;\n"
-                "    y: f32;\n"
-                "}", allocator);
+            Program* program = parse_source("struct Point {\n"
+                                            "    x: f32;\n"
+                                            "    y: f32;\n"
+                                            "}",
+                                            allocator);
             REQUIRE(program != nullptr);
             auto& decl = program->declarations[0];
             CHECK(decl->kind == AstKind::DeclStruct);
@@ -582,11 +583,11 @@ TEST_SUITE("Parser") {
         }
 
         SUBCASE("Struct with methods") {
-            Program* program = parse_source(
-                "struct Point {\n"
-                "    x: f32;\n"
-                "    fun length(): f32 { return 0.0; }\n"
-                "}", allocator);
+            Program* program = parse_source("struct Point {\n"
+                                            "    x: f32;\n"
+                                            "    fun length(): f32 { return 0.0; }\n"
+                                            "}",
+                                            allocator);
             REQUIRE(program != nullptr);
             auto& decl = program->declarations[0];
             CHECK(decl->struct_decl.fields.size() == 1);
@@ -601,11 +602,11 @@ TEST_SUITE("Parser") {
         }
 
         SUBCASE("Public struct and members") {
-            Program* program = parse_source(
-                "pub struct Foo {\n"
-                "    pub x: i32;\n"
-                "    pub fun bar() { }\n"
-                "}", allocator);
+            Program* program = parse_source("pub struct Foo {\n"
+                                            "    pub x: i32;\n"
+                                            "    pub fun bar() { }\n"
+                                            "}",
+                                            allocator);
             REQUIRE(program != nullptr);
             auto& decl = program->declarations[0];
             CHECK(decl->struct_decl.is_pub == true);
@@ -767,7 +768,8 @@ TEST_SUITE("Parser") {
         ParseError error;
         Program* program = parse_source(source, allocator, &error);
         if (program == nullptr) {
-            MESSAGE("Parse error at line " << error.loc.line << ", column " << error.loc.column << ": " << error.message);
+            MESSAGE("Parse error at line " << error.loc.line << ", column " << error.loc.column
+                                           << ": " << error.message);
         }
         REQUIRE(program != nullptr);
         CHECK(program->declarations.size() == 2);
@@ -775,4 +777,4 @@ TEST_SUITE("Parser") {
         CHECK(program->declarations[1]->kind == AstKind::DeclFun);
     }
 
-}  // TEST_SUITE("Parser")
+} // TEST_SUITE("Parser")

@@ -1,13 +1,13 @@
 #include "roxy/core/doctest/doctest.h"
 
-#include "roxy/lsp/global_index.hpp"
-#include "roxy/lsp/lsp_analysis_context.hpp"
-#include "roxy/lsp/cst_lowering.hpp"
-#include "roxy/lsp/lsp_parser.hpp"
-#include "roxy/lsp/indexer.hpp"
 #include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/tsl/robin_map.h"
 #include "roxy/core/tsl/robin_set.h"
+#include "roxy/lsp/cst_lowering.hpp"
+#include "roxy/lsp/global_index.hpp"
+#include "roxy/lsp/indexer.hpp"
+#include "roxy/lsp/lsp_analysis_context.hpp"
+#include "roxy/lsp/lsp_parser.hpp"
 
 #include <cstring>
 
@@ -52,7 +52,8 @@ static SyntaxNode* find_enclosing_function(SyntaxNode* node) {
 
 // Collect identifiers matching name
 static void collect_identifiers(SyntaxNode* root, StringView name, Vector<SyntaxNode*>& out) {
-    if (!root) return;
+    if (!root)
+        return;
     if (root->kind == SyntaxKind::TokenIdentifier && root->token.text() == name) {
         out.push_back(root);
     } else if (root->kind == SyntaxKind::TokenKwSelf && name == StringView("self")) {
@@ -66,7 +67,8 @@ static void collect_identifiers(SyntaxNode* root, StringView name, Vector<Syntax
 // Helper: check if identifier is a local variable in the enclosing function
 static bool is_local_variable(SyntaxNode* candidate, StringView candidate_text) {
     SyntaxNode* enclosing_fn = find_enclosing_function(candidate);
-    if (!enclosing_fn) return false;
+    if (!enclosing_fn)
+        return false;
     BumpAllocator ast_allocator(4096);
     CstLowering lowering(ast_allocator);
     Decl* ast_decl = lowering.lower_decl(enclosing_fn);
@@ -77,12 +79,14 @@ static bool is_local_variable(SyntaxNode* candidate, StringView candidate_text) 
 
 // Helper: resolve receiver type for a dot-access expression
 static String resolve_receiver_type(SyntaxNode* object_expr, SyntaxNode* enclosing_fn,
-                                     LspAnalysisContext* analysis_ctx) {
-    if (!analysis_ctx || !enclosing_fn) return String();
+                                    LspAnalysisContext* analysis_ctx) {
+    if (!analysis_ctx || !enclosing_fn)
+        return String();
     BumpAllocator ast_allocator(8192);
-    BodyAnalysisResult body_result = analysis_ctx->analyze_function_body(
-        enclosing_fn, ast_allocator);
-    if (!body_result.decl) return String();
+    BodyAnalysisResult body_result =
+        analysis_ctx->analyze_function_body(enclosing_fn, ast_allocator);
+    if (!body_result.decl)
+        return String();
     tsl::robin_map<String, Type*> local_vars;
     analysis_ctx->collect_local_variables(body_result.decl, local_vars);
     Type* recv_type = analysis_ctx->resolve_cst_expr_type(object_expr, local_vars);
@@ -93,23 +97,24 @@ static String resolve_receiver_type(SyntaxNode* object_expr, SyntaxNode* enclosi
 }
 
 // Forward declarations of functions mirroring server.cpp logic
-static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index,
-                                       StringView uri, SymbolIdentity& out_identity,
-                                       LspAnalysisContext* analysis_ctx = nullptr);
+static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index, StringView uri,
+                                      SymbolIdentity& out_identity,
+                                      LspAnalysisContext* analysis_ctx = nullptr);
 static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& target,
-                                    const GlobalIndex& index, SyntaxNode* file_root,
-                                    StringView file_uri,
-                                    LspAnalysisContext* analysis_ctx = nullptr);
+                                   const GlobalIndex& index, SyntaxNode* file_root,
+                                   StringView file_uri, LspAnalysisContext* analysis_ctx = nullptr);
 
 // --- identify_symbol_at_cursor ---
-static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index,
-                                       StringView uri, SymbolIdentity& out_identity,
-                                       LspAnalysisContext* analysis_ctx) {
-    if (!node) return false;
+static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index, StringView uri,
+                                      SymbolIdentity& out_identity,
+                                      LspAnalysisContext* analysis_ctx) {
+    if (!node)
+        return false;
 
     if (node->kind == SyntaxKind::TokenKwSelf) {
         SyntaxNode* enclosing_fn = find_enclosing_function(node);
-        if (!enclosing_fn) return false;
+        if (!enclosing_fn)
+            return false;
         for (u32 i = 0; i < enclosing_fn->children.size(); i++) {
             if (enclosing_fn->children[i]->kind == SyntaxKind::TokenIdentifier) {
                 out_identity.category = SymbolCategory::Struct;
@@ -120,7 +125,8 @@ static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index
         return false;
     }
 
-    if (node->kind != SyntaxKind::TokenIdentifier) return false;
+    if (node->kind != SyntaxKind::TokenIdentifier)
+        return false;
 
     StringView identifier = node->token.text();
     SyntaxNode* parent = node->parent;
@@ -128,11 +134,12 @@ static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index
     if (parent) {
         if (parent->kind == SyntaxKind::NodeGetExpr) {
             bool is_member_name = parent->children.size() >= 3 &&
-                parent->children[parent->children.size() - 1] == node;
+                                  parent->children[parent->children.size() - 1] == node;
             if (is_member_name) {
                 SyntaxNode* object_expr = parent->children[0];
                 SyntaxNode* enclosing_fn = find_enclosing_function(parent);
-                String receiver_type = resolve_receiver_type(object_expr, enclosing_fn, analysis_ctx);
+                String receiver_type =
+                    resolve_receiver_type(object_expr, enclosing_fn, analysis_ctx);
                 if (!receiver_type.empty()) {
                     StringView current_type(receiver_type.data(), receiver_type.size());
                     u32 depth = 0;
@@ -194,7 +201,7 @@ static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index
 
         if (parent->kind == SyntaxKind::NodeStaticGetExpr) {
             bool is_member_child = parent->children.size() >= 3 &&
-                parent->children[parent->children.size() - 1] == node;
+                                   parent->children[parent->children.size() - 1] == node;
             if (!is_member_child) {
                 if (index.find_enum(identifier)) {
                     out_identity.category = SymbolCategory::Enum;
@@ -289,7 +296,8 @@ static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index
             bool found_dot = false;
             StringView struct_name;
             for (u32 i = 0; i < parent->children.size(); i++) {
-                if (parent->children[i]->kind == SyntaxKind::TokenDot) found_dot = true;
+                if (parent->children[i]->kind == SyntaxKind::TokenDot)
+                    found_dot = true;
                 if (parent->children[i] == node) {
                     if (found_dot) {
                         for (u32 j = 0; j < i; j++) {
@@ -413,10 +421,10 @@ static bool identify_symbol_at_cursor(SyntaxNode* node, const GlobalIndex& index
 
 // --- is_reference_to_symbol ---
 static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& target,
-                                    const GlobalIndex& index, SyntaxNode* file_root,
-                                    StringView file_uri,
-                                    LspAnalysisContext* analysis_ctx) {
-    if (!candidate) return false;
+                                   const GlobalIndex& index, SyntaxNode* file_root,
+                                   StringView file_uri, LspAnalysisContext* analysis_ctx) {
+    if (!candidate)
+        return false;
 
     StringView candidate_text;
     if (candidate->kind == SyntaxKind::TokenIdentifier) {
@@ -430,196 +438,165 @@ static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& 
     SyntaxNode* parent = candidate->parent;
 
     switch (target.category) {
-    case SymbolCategory::Function: {
-        if (!parent) return false;
-        if (parent->kind == SyntaxKind::NodeGetExpr) {
-            bool is_member_name = parent->children.size() >= 3 &&
-                parent->children[parent->children.size() - 1] == candidate;
-            if (is_member_name) return false;
-        }
-        if (parent->kind == SyntaxKind::NodeTypeExpr) return false;
-        if (parent->kind == SyntaxKind::NodeFieldInit &&
-            parent->children.size() > 0 && parent->children[0] == candidate) return false;
-        if (parent->kind == SyntaxKind::NodeFieldDecl) return false;
-        if (parent->kind == SyntaxKind::NodeStructDecl ||
-            parent->kind == SyntaxKind::NodeEnumDecl ||
-            parent->kind == SyntaxKind::NodeTraitDecl) return false;
-
-        if (is_local_variable(candidate, candidate_text)) return false;
-
-        if (parent->kind == SyntaxKind::NodeFunDecl) return true;
-        return index.find_function(candidate_text) != nullptr;
-    }
-
-    case SymbolCategory::Struct: {
-        if (!parent) return false;
-        if (parent->kind == SyntaxKind::NodeGetExpr) {
-            bool is_member_name = parent->children.size() >= 3 &&
-                parent->children[parent->children.size() - 1] == candidate;
-            if (is_member_name) return false;
-        }
-        if (parent->kind == SyntaxKind::NodeFieldInit &&
-            parent->children.size() > 0 && parent->children[0] == candidate) return false;
-        if (parent->kind == SyntaxKind::NodeFieldDecl) return false;
-        if (parent->kind == SyntaxKind::NodeParam) {
-            for (u32 i = 0; i < parent->children.size(); i++) {
-                if (parent->children[i] == candidate) {
-                    if (i + 1 < parent->children.size() &&
-                        parent->children[i + 1]->kind == SyntaxKind::TokenColon) {
-                        return false;
-                    }
-                    break;
-                }
+        case SymbolCategory::Function: {
+            if (!parent)
+                return false;
+            if (parent->kind == SyntaxKind::NodeGetExpr) {
+                bool is_member_name = parent->children.size() >= 3 &&
+                                      parent->children[parent->children.size() - 1] == candidate;
+                if (is_member_name)
+                    return false;
             }
-        }
-        if (is_local_variable(candidate, candidate_text)) return false;
-        return true;
-    }
+            if (parent->kind == SyntaxKind::NodeTypeExpr)
+                return false;
+            if (parent->kind == SyntaxKind::NodeFieldInit && parent->children.size() > 0 &&
+                parent->children[0] == candidate)
+                return false;
+            if (parent->kind == SyntaxKind::NodeFieldDecl)
+                return false;
+            if (parent->kind == SyntaxKind::NodeStructDecl ||
+                parent->kind == SyntaxKind::NodeEnumDecl ||
+                parent->kind == SyntaxKind::NodeTraitDecl)
+                return false;
 
-    case SymbolCategory::Enum: {
-        if (!parent) return false;
-        if (parent->kind == SyntaxKind::NodeGetExpr) {
-            bool is_member_name = parent->children.size() >= 3 &&
-                parent->children[parent->children.size() - 1] == candidate;
-            if (is_member_name) return false;
-        }
-        if (parent->kind == SyntaxKind::NodeFieldInit &&
-            parent->children.size() > 0 && parent->children[0] == candidate) return false;
-        if (parent->kind == SyntaxKind::NodeFieldDecl) return false;
-        if (is_local_variable(candidate, candidate_text)) return false;
-        return true;
-    }
+            if (is_local_variable(candidate, candidate_text))
+                return false;
 
-    case SymbolCategory::Trait: {
-        if (!parent) return false;
-        if (parent->kind == SyntaxKind::NodeGetExpr) {
-            bool is_member_name = parent->children.size() >= 3 &&
-                parent->children[parent->children.size() - 1] == candidate;
-            if (is_member_name) return false;
+            if (parent->kind == SyntaxKind::NodeFunDecl)
+                return true;
+            return index.find_function(candidate_text) != nullptr;
         }
-        return true;
-    }
 
-    case SymbolCategory::Global: {
-        if (!parent) return false;
-        if (parent->kind == SyntaxKind::NodeGetExpr) {
-            bool is_member_name = parent->children.size() >= 3 &&
-                parent->children[parent->children.size() - 1] == candidate;
-            if (is_member_name) return false;
-        }
-        if (parent->kind == SyntaxKind::NodeTypeExpr) return false;
-        if (parent->kind == SyntaxKind::NodeFieldInit &&
-            parent->children.size() > 0 && parent->children[0] == candidate) return false;
-        if (parent->kind == SyntaxKind::NodeFieldDecl) return false;
-        if (parent->kind == SyntaxKind::NodeStructDecl ||
-            parent->kind == SyntaxKind::NodeEnumDecl ||
-            parent->kind == SyntaxKind::NodeTraitDecl ||
-            parent->kind == SyntaxKind::NodeFunDecl) return false;
-        if (is_local_variable(candidate, candidate_text)) return false;
-        return true;
-    }
-
-    case SymbolCategory::Method: {
-        if (!parent) return false;
-        if (parent->kind == SyntaxKind::NodeGetExpr) {
-            bool is_member_name = parent->children.size() >= 3 &&
-                parent->children[parent->children.size() - 1] == candidate;
-            if (!is_member_name) return false;
-            SyntaxNode* object_expr = parent->children[0];
-            SyntaxNode* enclosing_fn = find_enclosing_function(parent);
-            String receiver_type = resolve_receiver_type(object_expr, enclosing_fn, analysis_ctx);
-            if (receiver_type.empty()) return false;
-            StringView current_type(receiver_type.data(), receiver_type.size());
-            u32 depth = 0;
-            while (!current_type.empty() && depth < 16) {
-                if (current_type == StringView(target.qualifier.data(), target.qualifier.size()) &&
-                    index.find_method(current_type, candidate_text)) {
-                    return true;
-                }
-                current_type = index.find_struct_parent(current_type);
-                depth++;
+        case SymbolCategory::Struct: {
+            if (!parent)
+                return false;
+            if (parent->kind == SyntaxKind::NodeGetExpr) {
+                bool is_member_name = parent->children.size() >= 3 &&
+                                      parent->children[parent->children.size() - 1] == candidate;
+                if (is_member_name)
+                    return false;
             }
-            return false;
-        }
-        if (parent->kind == SyntaxKind::NodeMethodDecl) {
-            bool found_dot = false;
-            StringView struct_name;
-            for (u32 i = 0; i < parent->children.size(); i++) {
-                if (parent->children[i]->kind == SyntaxKind::TokenDot) found_dot = true;
-                if (parent->children[i] == candidate) {
-                    if (found_dot) {
-                        for (u32 j = 0; j < i; j++) {
-                            if (parent->children[j]->kind == SyntaxKind::TokenIdentifier) {
-                                struct_name = parent->children[j]->token.text();
-                                break;
-                            }
+            if (parent->kind == SyntaxKind::NodeFieldInit && parent->children.size() > 0 &&
+                parent->children[0] == candidate)
+                return false;
+            if (parent->kind == SyntaxKind::NodeFieldDecl)
+                return false;
+            if (parent->kind == SyntaxKind::NodeParam) {
+                for (u32 i = 0; i < parent->children.size(); i++) {
+                    if (parent->children[i] == candidate) {
+                        if (i + 1 < parent->children.size() &&
+                            parent->children[i + 1]->kind == SyntaxKind::TokenColon) {
+                            return false;
                         }
-                        return struct_name == StringView(target.qualifier.data(), target.qualifier.size());
+                        break;
                     }
-                    break;
                 }
             }
+            if (is_local_variable(candidate, candidate_text))
+                return false;
+            return true;
         }
-        return false;
-    }
 
-    case SymbolCategory::Field: {
-        if (!parent) return false;
-        if (parent->kind == SyntaxKind::NodeGetExpr) {
-            bool is_member_name = parent->children.size() >= 3 &&
-                parent->children[parent->children.size() - 1] == candidate;
-            if (!is_member_name) return false;
-            SyntaxNode* object_expr = parent->children[0];
-            SyntaxNode* enclosing_fn = find_enclosing_function(parent);
-            String receiver_type = resolve_receiver_type(object_expr, enclosing_fn, analysis_ctx);
-            if (receiver_type.empty()) return false;
-            StringView current_type(receiver_type.data(), receiver_type.size());
-            u32 depth = 0;
-            while (!current_type.empty() && depth < 16) {
-                if (current_type == StringView(target.qualifier.data(), target.qualifier.size()) &&
-                    index.find_field(current_type, candidate_text)) {
-                    return true;
-                }
-                current_type = index.find_struct_parent(current_type);
-                depth++;
+        case SymbolCategory::Enum: {
+            if (!parent)
+                return false;
+            if (parent->kind == SyntaxKind::NodeGetExpr) {
+                bool is_member_name = parent->children.size() >= 3 &&
+                                      parent->children[parent->children.size() - 1] == candidate;
+                if (is_member_name)
+                    return false;
             }
-            return false;
+            if (parent->kind == SyntaxKind::NodeFieldInit && parent->children.size() > 0 &&
+                parent->children[0] == candidate)
+                return false;
+            if (parent->kind == SyntaxKind::NodeFieldDecl)
+                return false;
+            if (is_local_variable(candidate, candidate_text))
+                return false;
+            return true;
         }
-        if (parent->kind == SyntaxKind::NodeFieldDecl) {
-            bool is_name = false;
-            for (u32 i = 0; i < parent->children.size(); i++) {
-                if (parent->children[i] == candidate) { is_name = true; break; }
-                if (parent->children[i]->kind == SyntaxKind::TokenColon) break;
+
+        case SymbolCategory::Trait: {
+            if (!parent)
+                return false;
+            if (parent->kind == SyntaxKind::NodeGetExpr) {
+                bool is_member_name = parent->children.size() >= 3 &&
+                                      parent->children[parent->children.size() - 1] == candidate;
+                if (is_member_name)
+                    return false;
             }
-            if (!is_name) return false;
-            SyntaxNode* struct_node = parent->parent;
-            if (struct_node && struct_node->kind == SyntaxKind::NodeStructDecl) {
-                for (u32 i = 0; i < struct_node->children.size(); i++) {
-                    if (struct_node->children[i]->kind == SyntaxKind::TokenIdentifier) {
-                        StringView struct_name = struct_node->children[i]->token.text();
-                        return struct_name == StringView(target.qualifier.data(), target.qualifier.size());
+            return true;
+        }
+
+        case SymbolCategory::Global: {
+            if (!parent)
+                return false;
+            if (parent->kind == SyntaxKind::NodeGetExpr) {
+                bool is_member_name = parent->children.size() >= 3 &&
+                                      parent->children[parent->children.size() - 1] == candidate;
+                if (is_member_name)
+                    return false;
+            }
+            if (parent->kind == SyntaxKind::NodeTypeExpr)
+                return false;
+            if (parent->kind == SyntaxKind::NodeFieldInit && parent->children.size() > 0 &&
+                parent->children[0] == candidate)
+                return false;
+            if (parent->kind == SyntaxKind::NodeFieldDecl)
+                return false;
+            if (parent->kind == SyntaxKind::NodeStructDecl ||
+                parent->kind == SyntaxKind::NodeEnumDecl ||
+                parent->kind == SyntaxKind::NodeTraitDecl ||
+                parent->kind == SyntaxKind::NodeFunDecl)
+                return false;
+            if (is_local_variable(candidate, candidate_text))
+                return false;
+            return true;
+        }
+
+        case SymbolCategory::Method: {
+            if (!parent)
+                return false;
+            if (parent->kind == SyntaxKind::NodeGetExpr) {
+                bool is_member_name = parent->children.size() >= 3 &&
+                                      parent->children[parent->children.size() - 1] == candidate;
+                if (!is_member_name)
+                    return false;
+                SyntaxNode* object_expr = parent->children[0];
+                SyntaxNode* enclosing_fn = find_enclosing_function(parent);
+                String receiver_type =
+                    resolve_receiver_type(object_expr, enclosing_fn, analysis_ctx);
+                if (receiver_type.empty())
+                    return false;
+                StringView current_type(receiver_type.data(), receiver_type.size());
+                u32 depth = 0;
+                while (!current_type.empty() && depth < 16) {
+                    if (current_type ==
+                            StringView(target.qualifier.data(), target.qualifier.size()) &&
+                        index.find_method(current_type, candidate_text)) {
+                        return true;
                     }
+                    current_type = index.find_struct_parent(current_type);
+                    depth++;
                 }
+                return false;
             }
-            return false;
-        }
-        if (parent->kind == SyntaxKind::NodeFieldInit) {
-            bool is_field_name = parent->children.size() > 0 && parent->children[0] == candidate;
-            if (!is_field_name) return false;
-            SyntaxNode* struct_literal = parent->parent;
-            if (struct_literal && struct_literal->kind == SyntaxKind::NodeStructLiteralExpr) {
-                for (u32 i = 0; i < struct_literal->children.size(); i++) {
-                    if (struct_literal->children[i]->kind == SyntaxKind::TokenIdentifier) {
-                        StringView struct_name = struct_literal->children[i]->token.text();
-                        StringView current_type = struct_name;
-                        u32 depth = 0;
-                        while (!current_type.empty() && depth < 16) {
-                            if (current_type == StringView(target.qualifier.data(), target.qualifier.size()) &&
-                                index.find_field(current_type, candidate_text)) {
-                                return true;
+            if (parent->kind == SyntaxKind::NodeMethodDecl) {
+                bool found_dot = false;
+                StringView struct_name;
+                for (u32 i = 0; i < parent->children.size(); i++) {
+                    if (parent->children[i]->kind == SyntaxKind::TokenDot)
+                        found_dot = true;
+                    if (parent->children[i] == candidate) {
+                        if (found_dot) {
+                            for (u32 j = 0; j < i; j++) {
+                                if (parent->children[j]->kind == SyntaxKind::TokenIdentifier) {
+                                    struct_name = parent->children[j]->token.text();
+                                    break;
+                                }
                             }
-                            current_type = index.find_struct_parent(current_type);
-                            depth++;
+                            return struct_name ==
+                                   StringView(target.qualifier.data(), target.qualifier.size());
                         }
                         break;
                     }
@@ -627,33 +604,117 @@ static bool is_reference_to_symbol(SyntaxNode* candidate, const SymbolIdentity& 
             }
             return false;
         }
-        return false;
-    }
 
-    case SymbolCategory::Local:
-    case SymbolCategory::Parameter: {
-        if (file_uri != StringView(target.enclosing_uri.data(), target.enclosing_uri.size())) {
+        case SymbolCategory::Field: {
+            if (!parent)
+                return false;
+            if (parent->kind == SyntaxKind::NodeGetExpr) {
+                bool is_member_name = parent->children.size() >= 3 &&
+                                      parent->children[parent->children.size() - 1] == candidate;
+                if (!is_member_name)
+                    return false;
+                SyntaxNode* object_expr = parent->children[0];
+                SyntaxNode* enclosing_fn = find_enclosing_function(parent);
+                String receiver_type =
+                    resolve_receiver_type(object_expr, enclosing_fn, analysis_ctx);
+                if (receiver_type.empty())
+                    return false;
+                StringView current_type(receiver_type.data(), receiver_type.size());
+                u32 depth = 0;
+                while (!current_type.empty() && depth < 16) {
+                    if (current_type ==
+                            StringView(target.qualifier.data(), target.qualifier.size()) &&
+                        index.find_field(current_type, candidate_text)) {
+                        return true;
+                    }
+                    current_type = index.find_struct_parent(current_type);
+                    depth++;
+                }
+                return false;
+            }
+            if (parent->kind == SyntaxKind::NodeFieldDecl) {
+                bool is_name = false;
+                for (u32 i = 0; i < parent->children.size(); i++) {
+                    if (parent->children[i] == candidate) {
+                        is_name = true;
+                        break;
+                    }
+                    if (parent->children[i]->kind == SyntaxKind::TokenColon)
+                        break;
+                }
+                if (!is_name)
+                    return false;
+                SyntaxNode* struct_node = parent->parent;
+                if (struct_node && struct_node->kind == SyntaxKind::NodeStructDecl) {
+                    for (u32 i = 0; i < struct_node->children.size(); i++) {
+                        if (struct_node->children[i]->kind == SyntaxKind::TokenIdentifier) {
+                            StringView struct_name = struct_node->children[i]->token.text();
+                            return struct_name ==
+                                   StringView(target.qualifier.data(), target.qualifier.size());
+                        }
+                    }
+                }
+                return false;
+            }
+            if (parent->kind == SyntaxKind::NodeFieldInit) {
+                bool is_field_name =
+                    parent->children.size() > 0 && parent->children[0] == candidate;
+                if (!is_field_name)
+                    return false;
+                SyntaxNode* struct_literal = parent->parent;
+                if (struct_literal && struct_literal->kind == SyntaxKind::NodeStructLiteralExpr) {
+                    for (u32 i = 0; i < struct_literal->children.size(); i++) {
+                        if (struct_literal->children[i]->kind == SyntaxKind::TokenIdentifier) {
+                            StringView struct_name = struct_literal->children[i]->token.text();
+                            StringView current_type = struct_name;
+                            u32 depth = 0;
+                            while (!current_type.empty() && depth < 16) {
+                                if (current_type == StringView(target.qualifier.data(),
+                                                               target.qualifier.size()) &&
+                                    index.find_field(current_type, candidate_text)) {
+                                    return true;
+                                }
+                                current_type = index.find_struct_parent(current_type);
+                                depth++;
+                            }
+                            break;
+                        }
+                    }
+                }
+                return false;
+            }
             return false;
         }
-        SyntaxNode* enclosing_fn = find_enclosing_function(candidate);
-        if (!enclosing_fn) return false;
-        if (enclosing_fn->range.start != target.enclosing_range.start ||
-            enclosing_fn->range.end != target.enclosing_range.end) {
-            return false;
-        }
-        if (parent && parent->kind == SyntaxKind::NodeTypeExpr) return false;
-        if (parent && parent->kind == SyntaxKind::NodeFieldInit &&
-            parent->children.size() > 0 && parent->children[0] == candidate) return false;
-        if (parent && parent->kind == SyntaxKind::NodeFieldDecl) return false;
-        if (parent && (parent->kind == SyntaxKind::NodeStructDecl ||
-                       parent->kind == SyntaxKind::NodeEnumDecl ||
-                       parent->kind == SyntaxKind::NodeTraitDecl ||
-                       parent->kind == SyntaxKind::NodeFunDecl)) return false;
-        return true;
-    }
 
-    case SymbolCategory::Constructor:
-        return false;
+        case SymbolCategory::Local:
+        case SymbolCategory::Parameter: {
+            if (file_uri != StringView(target.enclosing_uri.data(), target.enclosing_uri.size())) {
+                return false;
+            }
+            SyntaxNode* enclosing_fn = find_enclosing_function(candidate);
+            if (!enclosing_fn)
+                return false;
+            if (enclosing_fn->range.start != target.enclosing_range.start ||
+                enclosing_fn->range.end != target.enclosing_range.end) {
+                return false;
+            }
+            if (parent && parent->kind == SyntaxKind::NodeTypeExpr)
+                return false;
+            if (parent && parent->kind == SyntaxKind::NodeFieldInit &&
+                parent->children.size() > 0 && parent->children[0] == candidate)
+                return false;
+            if (parent && parent->kind == SyntaxKind::NodeFieldDecl)
+                return false;
+            if (parent && (parent->kind == SyntaxKind::NodeStructDecl ||
+                           parent->kind == SyntaxKind::NodeEnumDecl ||
+                           parent->kind == SyntaxKind::NodeTraitDecl ||
+                           parent->kind == SyntaxKind::NodeFunDecl))
+                return false;
+            return true;
+        }
+
+        case SymbolCategory::Constructor:
+            return false;
     }
 
     return false;
@@ -666,7 +727,7 @@ struct ReferenceResult {
 };
 
 static ReferenceResult find_references(const char* source, u32 cursor_offset,
-                                        bool include_declaration = true) {
+                                       bool include_declaration = true) {
     u32 length = static_cast<u32>(strlen(source));
     String uri("file:///test.roxy");
 
@@ -696,11 +757,12 @@ static ReferenceResult find_references(const char* source, u32 cursor_offset,
     SyntaxTree tree = parser.parse();
 
     SyntaxNode* node = find_node_at_offset(tree.root, cursor_offset);
-    if (!node) return {0, {}};
+    if (!node)
+        return {0, {}};
 
     SymbolIdentity identity;
     if (!identify_symbol_at_cursor(node, index, StringView(uri.data(), uri.size()), identity,
-                                    &analysis_ctx)) {
+                                   &analysis_ctx)) {
         return {0, {}};
     }
 
@@ -714,47 +776,48 @@ static ReferenceResult find_references(const char* source, u32 cursor_offset,
 
     for (u32 i = 0; i < candidates.size(); i++) {
         if (is_reference_to_symbol(candidates[i], identity, index, tree.root,
-                                    StringView(uri.data(), uri.size()), &analysis_ctx)) {
+                                   StringView(uri.data(), uri.size()), &analysis_ctx)) {
             // Check declaration filtering
             if (!include_declaration) {
                 SyntaxNode* parent = candidates[i]->parent;
                 bool is_decl = false;
                 if (parent) {
                     switch (identity.category) {
-                    case SymbolCategory::Function:
-                        is_decl = (parent->kind == SyntaxKind::NodeFunDecl);
-                        break;
-                    case SymbolCategory::Struct:
-                        is_decl = (parent->kind == SyntaxKind::NodeStructDecl);
-                        break;
-                    case SymbolCategory::Enum:
-                        is_decl = (parent->kind == SyntaxKind::NodeEnumDecl);
-                        break;
-                    case SymbolCategory::Trait:
-                        is_decl = (parent->kind == SyntaxKind::NodeTraitDecl);
-                        break;
-                    case SymbolCategory::Global:
-                        is_decl = (parent->kind == SyntaxKind::NodeVarDecl &&
-                                   find_enclosing_function(candidates[i]) == nullptr);
-                        break;
-                    case SymbolCategory::Method:
-                        is_decl = (parent->kind == SyntaxKind::NodeMethodDecl);
-                        break;
-                    case SymbolCategory::Field:
-                        is_decl = (parent->kind == SyntaxKind::NodeFieldDecl);
-                        break;
-                    case SymbolCategory::Local:
-                        is_decl = (parent->kind == SyntaxKind::NodeVarDecl);
-                        break;
-                    case SymbolCategory::Parameter:
-                        is_decl = (parent->kind == SyntaxKind::NodeParam);
-                        break;
-                    case SymbolCategory::Constructor:
-                        is_decl = (parent->kind == SyntaxKind::NodeConstructorDecl);
-                        break;
+                        case SymbolCategory::Function:
+                            is_decl = (parent->kind == SyntaxKind::NodeFunDecl);
+                            break;
+                        case SymbolCategory::Struct:
+                            is_decl = (parent->kind == SyntaxKind::NodeStructDecl);
+                            break;
+                        case SymbolCategory::Enum:
+                            is_decl = (parent->kind == SyntaxKind::NodeEnumDecl);
+                            break;
+                        case SymbolCategory::Trait:
+                            is_decl = (parent->kind == SyntaxKind::NodeTraitDecl);
+                            break;
+                        case SymbolCategory::Global:
+                            is_decl = (parent->kind == SyntaxKind::NodeVarDecl &&
+                                       find_enclosing_function(candidates[i]) == nullptr);
+                            break;
+                        case SymbolCategory::Method:
+                            is_decl = (parent->kind == SyntaxKind::NodeMethodDecl);
+                            break;
+                        case SymbolCategory::Field:
+                            is_decl = (parent->kind == SyntaxKind::NodeFieldDecl);
+                            break;
+                        case SymbolCategory::Local:
+                            is_decl = (parent->kind == SyntaxKind::NodeVarDecl);
+                            break;
+                        case SymbolCategory::Parameter:
+                            is_decl = (parent->kind == SyntaxKind::NodeParam);
+                            break;
+                        case SymbolCategory::Constructor:
+                            is_decl = (parent->kind == SyntaxKind::NodeConstructorDecl);
+                            break;
                     }
                 }
-                if (is_decl) continue;
+                if (is_decl)
+                    continue;
             }
 
             result.ranges.push_back(candidates[i]->range);
@@ -774,94 +837,87 @@ static ReferenceResult find_references(const char* source, u32 cursor_offset,
 TEST_SUITE("LSP References") {
 
     TEST_CASE("function: definition + 2 call sites") {
-        const char* source =
-            "fun add(a: i32, b: i32): i32 { return a + b; }\n"
-            "fun main() {\n"
-            "    var x = add(1, 2);\n"
-            "    var y = add(3, 4);\n"
-            "}\n";
+        const char* source = "fun add(a: i32, b: i32): i32 { return a + b; }\n"
+                             "fun main() {\n"
+                             "    var x = add(1, 2);\n"
+                             "    var y = add(3, 4);\n"
+                             "}\n";
 
         // Cursor on "add" in the function definition (offset 4)
         auto result = find_references(source, 4);
-        CHECK(result.count == 3);  // definition + 2 call sites
+        CHECK(result.count == 3); // definition + 2 call sites
     }
 
     TEST_CASE("function: no call sites (definition only)") {
-        const char* source =
-            "fun unused(): i32 { return 0; }\n"
-            "fun main() {\n"
-            "    var x = 1;\n"
-            "}\n";
+        const char* source = "fun unused(): i32 { return 0; }\n"
+                             "fun main() {\n"
+                             "    var x = 1;\n"
+                             "}\n";
 
         // Cursor on "unused" (offset 4)
         auto result = find_references(source, 4);
-        CHECK(result.count == 1);  // definition only
+        CHECK(result.count == 1); // definition only
     }
 
     TEST_CASE("function: rename add -> sum") {
-        const char* source =
-            "fun add(a: i32, b: i32): i32 { return a + b; }\n"
-            "fun main() {\n"
-            "    var x = add(1, 2);\n"
-            "    var y = add(3, 4);\n"
-            "}\n";
+        const char* source = "fun add(a: i32, b: i32): i32 { return a + b; }\n"
+                             "fun main() {\n"
+                             "    var x = add(1, 2);\n"
+                             "    var y = add(3, 4);\n"
+                             "}\n";
 
         // Rename from a call site
         u32 call_offset = static_cast<u32>(strstr(source, "add(1") - source);
         auto result = find_references(source, call_offset);
-        CHECK(result.count == 3);  // All occurrences should be found
+        CHECK(result.count == 3); // All occurrences should be found
     }
 
     // --- Type references ---
 
     TEST_CASE("struct: definition + type annotations + struct literal") {
-        const char* source =
-            "struct Point { x: f32; y: f32; }\n"
-            "fun make_point(): Point {\n"
-            "    return Point { x = 1.0, y = 2.0 };\n"
-            "}\n"
-            "fun use_point(p: Point) {\n"
-            "}\n";
+        const char* source = "struct Point { x: f32; y: f32; }\n"
+                             "fun make_point(): Point {\n"
+                             "    return Point { x = 1.0, y = 2.0 };\n"
+                             "}\n"
+                             "fun use_point(p: Point) {\n"
+                             "}\n";
 
         // Cursor on "Point" in struct definition (offset 7)
         auto result = find_references(source, 7);
-        CHECK(result.count == 4);  // definition + return type + struct literal + param type
+        CHECK(result.count == 4); // definition + return type + struct literal + param type
     }
 
     TEST_CASE("enum: definition + static access") {
-        const char* source =
-            "enum Color { Red, Green, Blue }\n"
-            "fun get_color(): Color {\n"
-            "    return Color::Red;\n"
-            "}\n";
+        const char* source = "enum Color { Red, Green, Blue }\n"
+                             "fun get_color(): Color {\n"
+                             "    return Color::Red;\n"
+                             "}\n";
 
         // Cursor on "Color" in enum definition (offset 5)
         auto result = find_references(source, 5);
-        CHECK(result.count == 3);  // definition + return type + Color::Red
+        CHECK(result.count == 3); // definition + return type + Color::Red
     }
 
     TEST_CASE("struct: rename Point -> Vec2") {
-        const char* source =
-            "struct Point { x: f32; y: f32; }\n"
-            "fun make(): Point {\n"
-            "    return Point { x = 1.0, y = 2.0 };\n"
-            "}\n";
+        const char* source = "struct Point { x: f32; y: f32; }\n"
+                             "fun make(): Point {\n"
+                             "    return Point { x = 1.0, y = 2.0 };\n"
+                             "}\n";
 
         // Cursor on "Point" in struct definition
         auto result = find_references(source, 7);
-        CHECK(result.count == 3);  // definition + return type + struct literal
+        CHECK(result.count == 3); // definition + return type + struct literal
     }
 
     // --- Field/method references ---
 
     TEST_CASE("field: definition + access sites") {
-        const char* source =
-            "struct Point { x: f32; y: f32; }\n"
-            "fun test() {\n"
-            "    var p: Point = Point { x = 1.0, y = 2.0 };\n"
-            "    var a = p.x;\n"
-            "    var b = p.x;\n"
-            "}\n";
+        const char* source = "struct Point { x: f32; y: f32; }\n"
+                             "fun test() {\n"
+                             "    var p: Point = Point { x = 1.0, y = 2.0 };\n"
+                             "    var a = p.x;\n"
+                             "    var b = p.x;\n"
+                             "}\n";
 
         // Cursor on "x" in field definition
         // "struct Point { x: f32" — "x" is at offset 15
@@ -871,31 +927,29 @@ TEST_SUITE("LSP References") {
     }
 
     TEST_CASE("method: definition + call sites") {
-        const char* source =
-            "struct Point { x: f32; }\n"
-            "fun Point.length(): f32 { return self.x; }\n"
-            "fun test() {\n"
-            "    var p: Point = Point { x = 1.0 };\n"
-            "    var a = p.length();\n"
-            "    var b = p.length();\n"
-            "}\n";
+        const char* source = "struct Point { x: f32; }\n"
+                             "fun Point.length(): f32 { return self.x; }\n"
+                             "fun test() {\n"
+                             "    var p: Point = Point { x = 1.0 };\n"
+                             "    var a = p.length();\n"
+                             "    var b = p.length();\n"
+                             "}\n";
 
         // Cursor on "length" in method definition
         u32 length_offset = static_cast<u32>(strstr(source, "length") - source);
         auto result = find_references(source, length_offset);
-        CHECK(result.count == 3);  // definition + 2 call sites
+        CHECK(result.count == 3); // definition + 2 call sites
     }
 
     TEST_CASE("field: same name on different structs") {
-        const char* source =
-            "struct Point { x: f32; y: f32; }\n"
-            "struct Size { x: f32; y: f32; }\n"
-            "fun test() {\n"
-            "    var p: Point = Point { x = 1.0, y = 2.0 };\n"
-            "    var s: Size = Size { x = 10.0, y = 20.0 };\n"
-            "    var a = p.x;\n"
-            "    var b = s.x;\n"
-            "}\n";
+        const char* source = "struct Point { x: f32; y: f32; }\n"
+                             "struct Size { x: f32; y: f32; }\n"
+                             "fun test() {\n"
+                             "    var p: Point = Point { x = 1.0, y = 2.0 };\n"
+                             "    var s: Size = Size { x = 10.0, y = 20.0 };\n"
+                             "    var a = p.x;\n"
+                             "    var b = s.x;\n"
+                             "}\n";
 
         // Cursor on "x" field of Point (offset 15)
         auto result = find_references(source, 15);
@@ -907,57 +961,53 @@ TEST_SUITE("LSP References") {
     // --- Local variable references ---
 
     TEST_CASE("local: var decl + usages within function") {
-        const char* source =
-            "fun test() {\n"
-            "    var x = 10;\n"
-            "    var y = x + 1;\n"
-            "    var z = x + 2;\n"
-            "}\n";
+        const char* source = "fun test() {\n"
+                             "    var x = 10;\n"
+                             "    var y = x + 1;\n"
+                             "    var z = x + 2;\n"
+                             "}\n";
 
         // Cursor on "x" in "var x = 10" — find "x"
         u32 x_offset = static_cast<u32>(strstr(source, "x = 10") - source);
         auto result = find_references(source, x_offset);
-        CHECK(result.count == 3);  // decl + 2 usages
+        CHECK(result.count == 3); // decl + 2 usages
     }
 
     TEST_CASE("local: same name in different functions") {
-        const char* source =
-            "fun foo() {\n"
-            "    var x = 10;\n"
-            "    var y = x + 1;\n"
-            "}\n"
-            "fun bar() {\n"
-            "    var x = 20;\n"
-            "    var z = x + 2;\n"
-            "}\n";
+        const char* source = "fun foo() {\n"
+                             "    var x = 10;\n"
+                             "    var y = x + 1;\n"
+                             "}\n"
+                             "fun bar() {\n"
+                             "    var x = 20;\n"
+                             "    var z = x + 2;\n"
+                             "}\n";
 
         // Cursor on "x" in foo
         u32 x_offset = static_cast<u32>(strstr(source, "x = 10") - source);
         auto result = find_references(source, x_offset);
-        CHECK(result.count == 2);  // Only "var x = 10" and "x + 1" in foo
+        CHECK(result.count == 2); // Only "var x = 10" and "x + 1" in foo
     }
 
     TEST_CASE("parameter: find all usages in function body") {
-        const char* source =
-            "fun add(a: i32, b: i32): i32 {\n"
-            "    return a + b;\n"
-            "}\n";
+        const char* source = "fun add(a: i32, b: i32): i32 {\n"
+                             "    return a + b;\n"
+                             "}\n";
 
         // Cursor on "a" in param list
         u32 a_offset = static_cast<u32>(strstr(source, "a: i32") - source);
         auto result = find_references(source, a_offset);
-        CHECK(result.count == 2);  // param decl + usage in return
+        CHECK(result.count == 2); // param decl + usage in return
     }
 
     // --- Edge cases ---
 
     TEST_CASE("cursor on definition vs usage gives same results") {
-        const char* source =
-            "fun greet() {}\n"
-            "fun main() { greet(); }\n";
+        const char* source = "fun greet() {}\n"
+                             "fun main() { greet(); }\n";
 
         // From definition
-        auto result_from_def = find_references(source, 4);  // "greet" in fun greet
+        auto result_from_def = find_references(source, 4); // "greet" in fun greet
         // From usage — the second "greet" occurrence (the call site)
         const char* second = strstr(source + 15, "greet");
         u32 call_offset = static_cast<u32>(second - source);
@@ -967,11 +1017,10 @@ TEST_SUITE("LSP References") {
     }
 
     TEST_CASE("includeDeclaration=false excludes definition") {
-        const char* source =
-            "fun add(a: i32, b: i32): i32 { return a + b; }\n"
-            "fun main() {\n"
-            "    var x = add(1, 2);\n"
-            "}\n";
+        const char* source = "fun add(a: i32, b: i32): i32 { return a + b; }\n"
+                             "fun main() {\n"
+                             "    var x = add(1, 2);\n"
+                             "}\n";
 
         auto result_with_decl = find_references(source, 4, true);
         auto result_without_decl = find_references(source, 4, false);
@@ -979,11 +1028,10 @@ TEST_SUITE("LSP References") {
     }
 
     TEST_CASE("rename with no references (definition only)") {
-        const char* source =
-            "fun standalone(): i32 { return 42; }\n";
+        const char* source = "fun standalone(): i32 { return 42; }\n";
 
         auto result = find_references(source, 4);
-        CHECK(result.count == 1);  // Only the definition
+        CHECK(result.count == 1); // Only the definition
     }
 
-}  // TEST_SUITE("LSP References")
+} // TEST_SUITE("LSP References")

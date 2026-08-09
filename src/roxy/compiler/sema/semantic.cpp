@@ -1,18 +1,18 @@
 #include "roxy/compiler/sema/semantic.hpp"
+#include "roxy/compiler/driver/module_registry.hpp"
 #include "roxy/compiler/support/mangling.hpp"
 #include "roxy/compiler/support/operator_traits.hpp"
-#include "roxy/compiler/driver/module_registry.hpp"
 #include "roxy/core/scoped_value.hpp"
-#include "roxy/vm/natives.hpp"
 #include "roxy/vm/binding/registry.hpp"
+#include "roxy/vm/natives.hpp"
 
 #include <cstring>
 
 namespace rx {
 
 // Build a MethodInfo with all fields set (native_name defaults to empty).
-static MethodInfo make_method(StringView name, Span<Type*> param_types,
-                              Type* return_type, StringView native_name = StringView()) {
+static MethodInfo make_method(StringView name, Span<Type*> param_types, Type* return_type,
+                              StringView native_name = StringView()) {
     MethodInfo method;
     method.name = name;
     method.param_types = param_types;
@@ -31,7 +31,8 @@ static MethodInfo make_method(StringView name, Span<Type*> param_types,
 static bool stmt_contains_yield(Stmt* stmt);
 
 static bool decl_contains_yield(Decl* decl) {
-    if (!decl) return false;
+    if (!decl)
+        return false;
     // A "declaration" that is actually a wrapped statement (block bodies hold
     // Span<Decl*>). Real declarations (nested var/fun/struct) never contribute
     // a yield to this function.
@@ -42,38 +43,44 @@ static bool decl_contains_yield(Decl* decl) {
 }
 
 static bool stmt_contains_yield(Stmt* stmt) {
-    if (!stmt) return false;
+    if (!stmt)
+        return false;
     switch (stmt->kind) {
         case AstKind::StmtYield:
             return true;
         case AstKind::StmtBlock:
             for (Decl* d : stmt->block.declarations) {
-                if (decl_contains_yield(d)) return true;
+                if (decl_contains_yield(d))
+                    return true;
             }
             return false;
         case AstKind::StmtIf:
-            return stmt_contains_yield(stmt->if_stmt.then_branch)
-                || stmt_contains_yield(stmt->if_stmt.else_branch);
+            return stmt_contains_yield(stmt->if_stmt.then_branch) ||
+                   stmt_contains_yield(stmt->if_stmt.else_branch);
         case AstKind::StmtWhile:
             return stmt_contains_yield(stmt->while_stmt.body);
         case AstKind::StmtFor:
-            return decl_contains_yield(stmt->for_stmt.initializer)
-                || stmt_contains_yield(stmt->for_stmt.body);
+            return decl_contains_yield(stmt->for_stmt.initializer) ||
+                   stmt_contains_yield(stmt->for_stmt.body);
         case AstKind::StmtWhen: {
             for (const WhenCase& c : stmt->when_stmt.cases) {
                 for (Decl* d : c.body) {
-                    if (decl_contains_yield(d)) return true;
+                    if (decl_contains_yield(d))
+                        return true;
                 }
             }
             for (Decl* d : stmt->when_stmt.else_body) {
-                if (decl_contains_yield(d)) return true;
+                if (decl_contains_yield(d))
+                    return true;
             }
             return false;
         }
         case AstKind::StmtTry: {
-            if (stmt_contains_yield(stmt->try_stmt.try_body)) return true;
+            if (stmt_contains_yield(stmt->try_stmt.try_body))
+                return true;
             for (const CatchClause& cc : stmt->try_stmt.catches) {
-                if (stmt_contains_yield(cc.body)) return true;
+                if (stmt_contains_yield(cc.body))
+                    return true;
             }
             return stmt_contains_yield(stmt->try_stmt.finally_body);
         }
@@ -86,15 +93,15 @@ static bool stmt_contains_yield(Stmt* stmt) {
 // recognized — constant-foldable expressions (e.g. `1 == 1`) are not, so a loop
 // with such a condition is treated as possibly-exiting.
 static bool is_const_true_condition(Expr* cond) {
-    return cond && cond->kind == AstKind::ExprLiteral
-        && cond->literal.literal_kind == LiteralKind::Bool
-        && cond->literal.bool_value;
+    return cond && cond->kind == AstKind::ExprLiteral &&
+           cond->literal.literal_kind == LiteralKind::Bool && cond->literal.bool_value;
 }
 
 static bool stmt_has_direct_break(Stmt* stmt);
 
 static bool decl_has_direct_break(Decl* decl) {
-    if (!decl) return false;
+    if (!decl)
+        return false;
     if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtYield) {
         return stmt_has_direct_break(&decl->stmt);
     }
@@ -106,7 +113,8 @@ static bool decl_has_direct_break(Decl* decl) {
 // to distinguish an infinite `while (true) { ... }` (control never falls past
 // it) from one that can exit via `break`.
 static bool stmt_has_direct_break(Stmt* stmt) {
-    if (!stmt) return false;
+    if (!stmt)
+        return false;
     switch (stmt->kind) {
         case AstKind::StmtBreak:
             return true;
@@ -116,27 +124,32 @@ static bool stmt_has_direct_break(Stmt* stmt) {
             return false;
         case AstKind::StmtBlock:
             for (Decl* d : stmt->block.declarations) {
-                if (decl_has_direct_break(d)) return true;
+                if (decl_has_direct_break(d))
+                    return true;
             }
             return false;
         case AstKind::StmtIf:
-            return stmt_has_direct_break(stmt->if_stmt.then_branch)
-                || stmt_has_direct_break(stmt->if_stmt.else_branch);
+            return stmt_has_direct_break(stmt->if_stmt.then_branch) ||
+                   stmt_has_direct_break(stmt->if_stmt.else_branch);
         case AstKind::StmtWhen: {
             for (const WhenCase& c : stmt->when_stmt.cases) {
                 for (Decl* d : c.body) {
-                    if (decl_has_direct_break(d)) return true;
+                    if (decl_has_direct_break(d))
+                        return true;
                 }
             }
             for (Decl* d : stmt->when_stmt.else_body) {
-                if (decl_has_direct_break(d)) return true;
+                if (decl_has_direct_break(d))
+                    return true;
             }
             return false;
         }
         case AstKind::StmtTry: {
-            if (stmt_has_direct_break(stmt->try_stmt.try_body)) return true;
+            if (stmt_has_direct_break(stmt->try_stmt.try_body))
+                return true;
             for (const CatchClause& cc : stmt->try_stmt.catches) {
-                if (stmt_has_direct_break(cc.body)) return true;
+                if (stmt_has_direct_break(cc.body))
+                    return true;
             }
             return stmt_has_direct_break(stmt->try_stmt.finally_body);
         }
@@ -145,7 +158,8 @@ static bool stmt_has_direct_break(Stmt* stmt) {
     }
 }
 
-static const ConstructorInfo* find_constructor(Span<ConstructorInfo> constructors, StringView name) {
+static const ConstructorInfo* find_constructor(Span<ConstructorInfo> constructors,
+                                               StringView name) {
     for (const auto& constructor : constructors) {
         if (constructor.name == name) {
             return &constructor;
@@ -167,43 +181,39 @@ static const DestructorInfo* find_destructor(Span<DestructorInfo> destructors, S
 
 // ===== Initialization & Passes =====
 
-SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, ModuleRegistry& modules,
-                                   NativeRegistry* registry)
+SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env,
+                                   ModuleRegistry& modules, NativeRegistry* registry)
     : SemanticAnalyzer(allocator, type_env, modules,
                        /*owned_symbols=*/new SymbolTable(allocator),
-                       /*external_symbols=*/nullptr, registry)
-{
-}
+                       /*external_symbols=*/nullptr, registry) {}
 
-SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, ModuleRegistry& modules,
-                                   SymbolTable& external_symbols, NativeRegistry* registry)
+SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env,
+                                   ModuleRegistry& modules, SymbolTable& external_symbols,
+                                   NativeRegistry* registry)
     : SemanticAnalyzer(allocator, type_env, modules,
                        /*owned_symbols=*/nullptr,
-                       /*external_symbols=*/&external_symbols, registry)
-{
-}
+                       /*external_symbols=*/&external_symbols, registry) {}
 
-SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env, ModuleRegistry& modules,
-                                   SymbolTable* owned_symbols, SymbolTable* external_symbols,
-                                   NativeRegistry* registry)
-    : m_allocator(allocator)
-    , m_type_env(type_env)
-    , m_types(type_env.types())
-    , m_modules(modules)
-    , m_registry(registry)
-    , m_owned_symbols(owned_symbols)
-    , m_symbols(external_symbols ? *external_symbols : *m_owned_symbols)
-    , m_reporter(allocator)
-    , m_checker(m_reporter)
-    , m_context{m_allocator, m_type_env, m_types, m_modules, m_symbols, m_reporter, m_checker,
-                this, &SemanticAnalyzer::resolve_type_expr_thunk,
-                &SemanticAnalyzer::analyze_expr_thunk, &SemanticAnalyzer::analyze_stmt_thunk}
-    , m_lifetimes(m_context)
-    , m_traits(m_context, m_synthetic_decls)
-    , m_generic_calls(m_context, m_lifetimes, m_function_context, m_synthetic_decls)
-    , m_lambdas(m_context, m_lifetimes, m_function_context, m_synthetic_decls)
-    , m_program(nullptr)
-{
+SemanticAnalyzer::SemanticAnalyzer(BumpAllocator& allocator, TypeEnv& type_env,
+                                   ModuleRegistry& modules, SymbolTable* owned_symbols,
+                                   SymbolTable* external_symbols, NativeRegistry* registry)
+    : m_allocator(allocator), m_type_env(type_env), m_types(type_env.types()), m_modules(modules),
+      m_registry(registry), m_owned_symbols(owned_symbols),
+      m_symbols(external_symbols ? *external_symbols : *m_owned_symbols), m_reporter(allocator),
+      m_checker(m_reporter), m_context{m_allocator,
+                                       m_type_env,
+                                       m_types,
+                                       m_modules,
+                                       m_symbols,
+                                       m_reporter,
+                                       m_checker,
+                                       this,
+                                       &SemanticAnalyzer::resolve_type_expr_thunk,
+                                       &SemanticAnalyzer::analyze_expr_thunk,
+                                       &SemanticAnalyzer::analyze_stmt_thunk},
+      m_lifetimes(m_context), m_traits(m_context, m_synthetic_decls),
+      m_generic_calls(m_context, m_lifetimes, m_function_context, m_synthetic_decls),
+      m_lambdas(m_context, m_lifetimes, m_function_context, m_synthetic_decls), m_program(nullptr) {
 }
 
 void SemanticAnalyzer::set_lsp_mode(bool enable) { m_reporter.set_lsp_mode(enable); }
@@ -263,21 +273,19 @@ void SemanticAnalyzer::run_body_analysis(Program* program) {
     analyze_function_bodies(program);
 }
 
-void SemanticAnalyzer::set_program(Program* program) {
-    m_program = program;
-}
+void SemanticAnalyzer::set_program(Program* program) { m_program = program; }
 
 bool SemanticAnalyzer::drain_pending_fun_instance(GenericFunInstance* inst) {
     // Abstract Phase-B artifacts (e.g. identity$$T) exist only so a bounded
     // template body's call type-checks; their body names the bare type param
     // and can't be analyzed outside the bounds context — drop them (the IR
     // builder skips them too), mirroring the abstract-struct-instance handling.
-    if (inst->is_abstract) return false;
+    if (inst->is_abstract)
+        return false;
 
     StringView this_module = m_program ? m_program->module_name : StringView{};
-    bool owns_template = inst->template_module.empty()
-                      || this_module.empty()
-                      || inst->template_module == this_module;
+    bool owns_template = inst->template_module.empty() || this_module.empty() ||
+                         inst->template_module == this_module;
     if (owns_template) {
         analyze_fun_body(inst->instantiated_decl);
         inst->is_analyzed = true;
@@ -293,17 +301,20 @@ u32 SemanticAnalyzer::analyze_owned_pending_fun_instances() {
     // for the next compiler-level pass; new instances triggered by analysis
     // (which land back in m_pending_funs) get drained on the next iteration
     // of the compiler's outer loop.
-    if (!m_type_env.generics().has_pending_funs()) return 0;
+    if (!m_type_env.generics().has_pending_funs())
+        return 0;
     auto pending = m_type_env.generics().take_pending_funs();
     u32 drained = 0;
     for (auto* inst : pending) {
-        if (drain_pending_fun_instance(inst)) drained++;
+        if (drain_pending_fun_instance(inst))
+            drained++;
     }
     return drained;
 }
 
 void SemanticAnalyzer::analyze_single_function(Decl* decl) {
-    if (!decl) return;
+    if (!decl)
+        return;
 
     // Import builtin prelude so symbols are available
     import_builtin_prelude();
@@ -350,7 +361,8 @@ void SemanticAnalyzer::analyze_single_function(Decl* decl) {
 void SemanticAnalyzer::import_builtin_prelude() {
     // Auto-import all exports from the "builtin" module if available
     ModuleInfo* builtin_module = m_modules.find_module(BUILTIN_MODULE_NAME);
-    if (!builtin_module) return;
+    if (!builtin_module)
+        return;
 
     // Import all exports from the builtin module into global scope
     for (const ModuleExport& exp : builtin_module->exports) {
@@ -363,9 +375,9 @@ void SemanticAnalyzer::import_builtin_prelude() {
             // Overloaded natives export one entry per signature under the
             // same source name — chain the rest onto the head.
             if (exp.kind == ExportKind::Function && is_function_symbol_kind(existing->kind)) {
-                Symbol* sym = m_symbols.append_overload(
-                    existing, SymbolKind::ImportedFunction, exp.type,
-                    SourceLocation{0, 0, 0, 0}, nullptr);
+                Symbol* sym =
+                    m_symbols.append_overload(existing, SymbolKind::ImportedFunction, exp.type,
+                                              SourceLocation{0, 0, 0, 0}, nullptr);
                 sym->imported_func.module_name = BUILTIN_MODULE_NAME;
                 sym->imported_func.original_name = original_name;
                 sym->imported_func.native_index = exp.index;
@@ -376,15 +388,15 @@ void SemanticAnalyzer::import_builtin_prelude() {
 
         // Register the imported symbol based on its kind
         if (exp.kind == ExportKind::Function) {
-            m_symbols.define_imported_function(
-                exp.name, exp.type, SourceLocation{0, 0, 0, 0},
-                BUILTIN_MODULE_NAME,
-                original_name, exp.index, exp.is_native);
+            m_symbols.define_imported_function(exp.name, exp.type, SourceLocation{0, 0, 0, 0},
+                                               BUILTIN_MODULE_NAME, original_name, exp.index,
+                                               exp.is_native);
         } else {
             // For structs/enums, define as regular types
-            m_symbols.define(static_cast<SymbolKind>(
-                exp.kind == ExportKind::Struct ? SymbolKind::Struct : SymbolKind::Enum),
-                exp.name, exp.type, SourceLocation{0, 0, 0, 0}, exp.decl);
+            m_symbols.define(static_cast<SymbolKind>(exp.kind == ExportKind::Struct
+                                                         ? SymbolKind::Struct
+                                                         : SymbolKind::Enum),
+                             exp.name, exp.type, SourceLocation{0, 0, 0, 0}, exp.decl);
         }
     }
 }
@@ -392,7 +404,8 @@ void SemanticAnalyzer::import_builtin_prelude() {
 bool SemanticAnalyzer::analyze(Program* program) {
     // Run declaration passes (0-2)
     run_declaration_passes(program);
-    if (too_many_errors()) return false;
+    if (too_many_errors())
+        return false;
 
     // Pass 3: Analyze function bodies (full type checking)
     run_body_analysis(program);
@@ -404,7 +417,8 @@ bool SemanticAnalyzer::analyze(Program* program) {
 
 void SemanticAnalyzer::collect_type_declarations(Program* program) {
     for (auto* decl : program->declarations) {
-        if (!decl) continue;
+        if (!decl)
+            continue;
 
         // Register generic functions as templates (not concrete functions)
         if (decl->kind == AstKind::DeclFun && decl->fun_decl.type_params.size() > 0) {
@@ -413,8 +427,9 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
             Symbol* existing = m_symbols.lookup(decl->fun_decl.name);
             if (existing && is_function_symbol_kind(existing->kind)) {
                 error_fmt(decl->loc,
-                         "'{}' is already a concrete function; a name cannot have both generic and concrete definitions",
-                         decl->fun_decl.name);
+                          "'{}' is already a concrete function; a name cannot have both generic "
+                          "and concrete definitions",
+                          decl->fun_decl.name);
                 continue;
             }
             m_type_env.generics().register_generic_fun(
@@ -444,8 +459,7 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
 
             // Define in global scope
             m_symbols.define(SymbolKind::Struct, name, type, decl->loc, decl);
-        }
-        else if (decl->kind == AstKind::DeclEnum) {
+        } else if (decl->kind == AstKind::DeclEnum) {
             StringView name = decl->enum_decl.name;
 
             // Check for duplicate type names
@@ -461,8 +475,7 @@ void SemanticAnalyzer::collect_type_declarations(Program* program) {
 
             // Define in global scope
             m_symbols.define(SymbolKind::Enum, name, type, decl->loc, decl);
-        }
-        else if (decl->kind == AstKind::DeclTrait) {
+        } else if (decl->kind == AstKind::DeclTrait) {
             m_traits.collect_trait_declaration(decl);
         }
     }
@@ -474,12 +487,20 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
     // Phase A — type shape. Field layout and user-written destructors, which are
     // the only two inputs the move-only derivation reads.
     for (auto* decl : program->declarations) {
-        if (!decl) continue;
+        if (!decl)
+            continue;
         switch (decl->kind) {
-            case AstKind::DeclStruct:      resolve_struct_members(decl); break;
-            case AstKind::DeclEnum:        resolve_enum_members(decl); break;
-            case AstKind::DeclDestructor:  resolve_destructor_member(decl); break;
-            default: break;
+            case AstKind::DeclStruct:
+                resolve_struct_members(decl);
+                break;
+            case AstKind::DeclEnum:
+                resolve_enum_members(decl);
+                break;
+            case AstKind::DeclDestructor:
+                resolve_destructor_member(decl);
+                break;
+            default:
+                break;
         }
     }
 
@@ -494,14 +515,26 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
 
     // Phase C — everything that may ask whether a type is copyable.
     for (auto* decl : program->declarations) {
-        if (!decl) continue;
+        if (!decl)
+            continue;
         switch (decl->kind) {
-            case AstKind::DeclFun:         register_fun_signature(decl); break;
-            case AstKind::DeclVar:         resolve_global_var(decl); break;
-            case AstKind::DeclConstructor: resolve_constructor_member(decl); break;
-            case AstKind::DeclMethod:      resolve_method_member(decl); break;
-            case AstKind::DeclTrait:       m_traits.resolve_trait_parent(decl); break;
-            default: break;
+            case AstKind::DeclFun:
+                register_fun_signature(decl);
+                break;
+            case AstKind::DeclVar:
+                resolve_global_var(decl);
+                break;
+            case AstKind::DeclConstructor:
+                resolve_constructor_member(decl);
+                break;
+            case AstKind::DeclMethod:
+                resolve_method_member(decl);
+                break;
+            case AstKind::DeclTrait:
+                m_traits.resolve_trait_parent(decl);
+                break;
+            default:
+                break;
         }
     }
 
@@ -512,9 +545,11 @@ void SemanticAnalyzer::resolve_type_members(Program* program) {
 }
 
 bool SemanticAnalyzer::ensure_struct_members_resolved(Type* struct_type, SourceLocation loc) {
-    if (!struct_type || struct_type->kind != TypeKind::Struct) return true;
+    if (!struct_type || struct_type->kind != TypeKind::Struct)
+        return true;
     StructTypeInfo& info = struct_type->struct_info;
-    if (info.members_resolved) return true;
+    if (info.members_resolved)
+        return true;
 
     // A struct currently being resolved higher up this recursion is a genuine
     // value-type cycle: its layout depends (directly or transitively) on ours
@@ -524,15 +559,16 @@ bool SemanticAnalyzer::ensure_struct_members_resolved(Type* struct_type, SourceL
     // resolve).
     if (m_resolving_structs.count(struct_type)) {
         error_fmt(loc,
-            "recursive struct type '{}' has infinite size; "
-            "use 'uniq {}' for indirection",
-            info.name, info.name);
+                  "recursive struct type '{}' has infinite size; "
+                  "use 'uniq {}' for indirection",
+                  info.name, info.name);
         return false;
     }
 
     // No AST decl (registry-built native structs, synthesized lambda envs):
     // the layout is owned elsewhere; nothing to resolve here.
-    if (!info.decl) return true;
+    if (!info.decl)
+        return true;
 
     resolve_struct_members(info.decl);
     return true;
@@ -542,14 +578,17 @@ void SemanticAnalyzer::resolve_struct_members(Decl* decl) {
     StructDecl& struct_decl = decl->struct_decl;
 
     // Skip generic struct templates - they have unresolved type params
-    if (struct_decl.type_params.size() > 0) return;
+    if (struct_decl.type_params.size() > 0)
+        return;
 
     Type* type = m_type_env.named_type_by_name(struct_decl.name);
-    if (!type || !type->is_struct()) return;
+    if (!type || !type->is_struct())
+        return;
 
     // Memoized: a dependent struct's field may have pulled this in already,
     // ahead of its source position (declaration order doesn't matter).
-    if (type->struct_info.members_resolved) return;
+    if (type->struct_info.members_resolved)
+        return;
     m_resolving_structs.insert(type);
     bool has_cycle = false;
 
@@ -563,7 +602,8 @@ void SemanticAnalyzer::resolve_struct_members(Decl* decl) {
         } else {
             // The parent's fields are embedded below, so its members must be
             // resolved first (it may be declared later in the file).
-            if (!ensure_struct_members_resolved(parent, decl->loc)) has_cycle = true;
+            if (!ensure_struct_members_resolved(parent, decl->loc))
+                has_cycle = true;
             type->struct_info.parent = parent;
         }
     }
@@ -589,7 +629,8 @@ void SemanticAnalyzer::resolve_struct_members(Decl* decl) {
         // (uniq/ref/weak) are pointer-sized and impose no layout dependency —
         // that's exactly what makes recursive types via `uniq` legal.
         if (field_type->kind == TypeKind::Struct) {
-            if (!ensure_struct_members_resolved(field_type, field.loc)) has_cycle = true;
+            if (!ensure_struct_members_resolved(field_type, field.loc))
+                has_cycle = true;
         }
 
         // A `ref` field is a counted borrow: the struct is move-only (noncopyable)
@@ -603,8 +644,8 @@ void SemanticAnalyzer::resolve_struct_members(Decl* decl) {
         info.type = field_type;
         info.is_pub = field.is_pub;
         info.index = static_cast<u32>(fields.size());
-        info.slot_offset = 0;  // Will be computed below
-        info.slot_count = 0;   // Will be computed below
+        info.slot_offset = 0; // Will be computed below
+        info.slot_count = 0;  // Will be computed below
         fields.push_back(info);
     }
 
@@ -650,13 +691,16 @@ namespace {
 // returns false (out untouched) for anything non-constant, a division by zero,
 // an overflowing INT64_MIN / -1, or an out-of-range shift.
 bool eval_const_int(Expr* e, i64& out) {
-    if (!e) return false;
+    if (!e)
+        return false;
     switch (e->kind) {
         case AstKind::ExprLiteral: {
             LiteralExpr& lit = e->literal;
             switch (lit.literal_kind) {
-                case LiteralKind::I32: case LiteralKind::I64:
-                case LiteralKind::U32: case LiteralKind::U64:
+                case LiteralKind::I32:
+                case LiteralKind::I64:
+                case LiteralKind::U32:
+                case LiteralKind::U64:
                     out = lit.int_value;
                     return true;
                 default:
@@ -667,11 +711,17 @@ bool eval_const_int(Expr* e, i64& out) {
             return eval_const_int(e->grouping.expr, out);
         case AstKind::ExprUnary: {
             i64 v;
-            if (!eval_const_int(e->unary.operand, v)) return false;
+            if (!eval_const_int(e->unary.operand, v))
+                return false;
             switch (e->unary.op) {
-                case UnaryOp::Negate: out = -v; return true;
-                case UnaryOp::BitNot: out = ~v; return true;
-                default: return false;
+                case UnaryOp::Negate:
+                    out = -v;
+                    return true;
+                case UnaryOp::BitNot:
+                    out = ~v;
+                    return true;
+                default:
+                    return false;
             }
         }
         case AstKind::ExprBinary: {
@@ -680,30 +730,55 @@ bool eval_const_int(Expr* e, i64& out) {
                 return false;
             }
             switch (e->binary.op) {
-                case BinaryOp::Add: out = l + r; return true;
-                case BinaryOp::Sub: out = l - r; return true;
-                case BinaryOp::Mul: out = l * r; return true;
+                case BinaryOp::Add:
+                    out = l + r;
+                    return true;
+                case BinaryOp::Sub:
+                    out = l - r;
+                    return true;
+                case BinaryOp::Mul:
+                    out = l * r;
+                    return true;
                 // INT64_MIN / -1 (and % -1) overflows i64 — UB and a hardware
                 // trap on x86 — so treat it as non-constant like division by zero.
                 case BinaryOp::Div:
-                    if (r == 0 || (l == INT64_MIN && r == -1)) return false;
-                    out = l / r; return true;
+                    if (r == 0 || (l == INT64_MIN && r == -1))
+                        return false;
+                    out = l / r;
+                    return true;
                 case BinaryOp::Mod:
-                    if (r == 0 || (l == INT64_MIN && r == -1)) return false;
-                    out = l % r; return true;
-                case BinaryOp::BitAnd: out = l & r; return true;
-                case BinaryOp::BitOr:  out = l | r; return true;
-                case BinaryOp::BitXor: out = l ^ r; return true;
-                case BinaryOp::Shl: if (r < 0 || r >= 64) return false; out = l << r; return true;
-                case BinaryOp::Shr: if (r < 0 || r >= 64) return false; out = l >> r; return true;
-                default: return false;  // comparisons / logical ops aren't integer-valued
+                    if (r == 0 || (l == INT64_MIN && r == -1))
+                        return false;
+                    out = l % r;
+                    return true;
+                case BinaryOp::BitAnd:
+                    out = l & r;
+                    return true;
+                case BinaryOp::BitOr:
+                    out = l | r;
+                    return true;
+                case BinaryOp::BitXor:
+                    out = l ^ r;
+                    return true;
+                case BinaryOp::Shl:
+                    if (r < 0 || r >= 64)
+                        return false;
+                    out = l << r;
+                    return true;
+                case BinaryOp::Shr:
+                    if (r < 0 || r >= 64)
+                        return false;
+                    out = l >> r;
+                    return true;
+                default:
+                    return false; // comparisons / logical ops aren't integer-valued
             }
         }
         default:
             return false;
     }
 }
-}
+} // namespace
 
 void SemanticAnalyzer::resolve_enum_members(Decl* decl) {
     EnumDecl& ed = decl->enum_decl;
@@ -713,7 +788,8 @@ void SemanticAnalyzer::resolve_enum_members(Decl* decl) {
     // (error already reported), so this lookup can return the OTHER
     // declaration's type — possibly a struct. Type's info members share a
     // union, so writing enum_info through it would corrupt that type.
-    if (!type || !type->is_enum()) return;
+    if (!type || !type->is_enum())
+        return;
 
     Vector<EnumVariantInfo> variants;
     i64 next_value = 0;
@@ -754,13 +830,15 @@ void SemanticAnalyzer::resolve_enum_members(Decl* decl) {
 void SemanticAnalyzer::register_fun_signature(Decl* decl) {
     // Skip generic function templates - they have unresolved type params
     FunDecl& fun_decl = decl->fun_decl;
-    if (fun_decl.type_params.size() > 0) return;
+    if (fun_decl.type_params.size() > 0)
+        return;
 
     // Register function in global scope (for forward references)
     Span<Type*> param_types = resolve_param_types(fun_decl.params);
 
     // Resolve return type
-    Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
+    Type* return_type =
+        fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
 
     // A Coro<T>-returning function is a real coroutine only if its body yields.
     // A non-yielding one merely produces/forwards a first-class coroutine value
@@ -772,8 +850,8 @@ void SemanticAnalyzer::register_fun_signature(Decl* decl) {
         fun_decl.is_coroutine = stmt_contains_yield(fun_decl.body);
         if (fun_decl.is_coroutine) {
             reject_second_class_coroutine_params(fun_decl.params);
-            return_type = m_types.coroutine_type_for_func(
-                return_type->coro_info.yield_type, fun_decl.name);
+            return_type =
+                m_types.coroutine_type_for_func(return_type->coro_info.yield_type, fun_decl.name);
             populate_coro_methods(return_type);
         }
     }
@@ -794,21 +872,26 @@ void SemanticAnalyzer::register_fun_signature(Decl* decl) {
         // param types are interned, so element-wise pointer equality is exact.
         for (Symbol* member = existing; member; member = member->next_overload) {
             Type* member_type = member->type;
-            if (!member_type || !member_type->is_function()) continue;
+            if (!member_type || !member_type->is_function())
+                continue;
             Span<Type*> member_params = member_type->func_info.param_types;
-            if (member_params.size() != param_types.size()) continue;
+            if (member_params.size() != param_types.size())
+                continue;
             bool same = true;
             for (u32 i = 0; i < param_types.size(); i++) {
-                if (member_params[i] != param_types[i]) { same = false; break; }
+                if (member_params[i] != param_types[i]) {
+                    same = false;
+                    break;
+                }
             }
             if (same) {
                 error_fmt(decl->loc, "redefinition of '{}' with the same parameter types",
-                         fun_decl.name);
+                          fun_decl.name);
                 return;
             }
         }
-        Symbol* sym = m_symbols.append_overload(existing, SymbolKind::Function,
-                                                func_type, decl->loc, decl);
+        Symbol* sym =
+            m_symbols.append_overload(existing, SymbolKind::Function, func_type, decl->loc, decl);
         sym->is_pub = fun_decl.is_pub;
         // The set now has 2+ members: back-fill the signature-suffixed flat
         // name on every script member (the head may have been a plain single
@@ -817,8 +900,8 @@ void SemanticAnalyzer::register_fun_signature(Decl* decl) {
         for (Symbol* member = existing; member; member = member->next_overload) {
             if (member->kind == SymbolKind::Function && member->decl &&
                 member->decl->kind == AstKind::DeclFun &&
-                member->decl->fun_decl.overload_mangled_name.empty() &&
-                member->type && member->type->is_function()) {
+                member->decl->fun_decl.overload_mangled_name.empty() && member->type &&
+                member->type->is_function()) {
                 member->decl->fun_decl.overload_mangled_name = mangle_overload(
                     m_allocator, fun_decl.name, member->type->func_info.param_types);
             }
@@ -827,9 +910,10 @@ void SemanticAnalyzer::register_fun_signature(Decl* decl) {
     }
     // A name is either generic or overloaded/concrete, never both.
     if (m_type_env.generics().is_generic_fun(fun_decl.name)) {
-        error_fmt(decl->loc,
-                 "'{}' is a generic function; a name cannot have both generic and concrete definitions",
-                 fun_decl.name);
+        error_fmt(
+            decl->loc,
+            "'{}' is a generic function; a name cannot have both generic and concrete definitions",
+            fun_decl.name);
         return;
     }
 
@@ -888,34 +972,33 @@ void SemanticAnalyzer::resolve_method_member(Decl* decl) {
     // trait-impl validator doesn't handle a Coro<T> return and misbehaves.
     // (`Coro` is a reserved builtin type name, so a cheap name check suffices;
     // a yielding body is what makes it a coroutine vs. a forwarding method.)
-    bool is_coro_method = method_decl.return_type
-        && method_decl.return_type->name == "Coro"_sv
-        && stmt_contains_yield(method_decl.body);
+    bool is_coro_method = method_decl.return_type && method_decl.return_type->name == "Coro"_sv &&
+                          stmt_contains_yield(method_decl.body);
 
     // Check if struct_name is actually a trait name
     Type* trait_lookup = m_type_env.trait_type_by_name(method_decl.struct_name);
     if (trait_lookup && method_decl.trait_name.empty()) {
         // This is a trait method declaration (fun TraitName.method(...))
         if (is_coro_method) {
-            error(decl->loc, "coroutine methods are not yet supported on generic structs or in traits");
+            error(decl->loc,
+                  "coroutine methods are not yet supported on generic structs or in traits");
             return;
         }
         m_traits.register_trait_method_signature(decl, trait_lookup);
-    }
-    else if (!method_decl.trait_name.empty()) {
+    } else if (!method_decl.trait_name.empty()) {
         // This is a trait implementation (fun Type.method(...) for Trait<Args>)
         if (is_coro_method) {
-            error(decl->loc, "coroutine methods are not yet supported on generic structs or in traits");
+            error(decl->loc,
+                  "coroutine methods are not yet supported on generic structs or in traits");
             return;
         }
         m_traits.resolve_trait_impl_member(decl);
-    }
-    else {
+    } else {
         // Regular method (no trait involvement)
         // Check if struct_name is a generic struct template
         if (generics().is_generic_struct(method_decl.struct_name)) {
             generics().register_generic_struct_method(method_decl.struct_name, decl);
-            return;  // Skip normal method analysis; handled in worklist
+            return; // Skip normal method analysis; handled in worklist
         }
         register_method_signature(decl);
     }
@@ -933,13 +1016,17 @@ void SemanticAnalyzer::derive_move_only_flags(Program* program) {
     while (changed) {
         changed = false;
         for (auto* decl : program->declarations) {
-            if (!decl || decl->kind != AstKind::DeclStruct) continue;
-            if (decl->struct_decl.type_params.size() > 0) continue;
+            if (!decl || decl->kind != AstKind::DeclStruct)
+                continue;
+            if (decl->struct_decl.type_params.size() > 0)
+                continue;
 
             Type* struct_type = m_type_env.named_type_by_name(decl->struct_decl.name);
-            if (!struct_type || !struct_type->is_struct()) continue;
+            if (!struct_type || !struct_type->is_struct())
+                continue;
 
-            if (derive_struct_move_only(struct_type->struct_info)) changed = true;
+            if (derive_struct_move_only(struct_type->struct_info))
+                changed = true;
         }
     }
 }
@@ -956,19 +1043,24 @@ void SemanticAnalyzer::generate_synthetic_destructors(Program* program) {
     while (changed) {
         changed = false;
         for (auto* decl : program->declarations) {
-            if (!decl || decl->kind != AstKind::DeclStruct) continue;
-            if (decl->struct_decl.type_params.size() > 0) continue;
+            if (!decl || decl->kind != AstKind::DeclStruct)
+                continue;
+            if (decl->struct_decl.type_params.size() > 0)
+                continue;
 
             Type* struct_type = m_type_env.named_type_by_name(decl->struct_decl.name);
-            if (!struct_type || !struct_type->is_struct()) continue;
+            if (!struct_type || !struct_type->is_struct())
+                continue;
 
             StructTypeInfo& struct_info = struct_type->struct_info;
 
             // Check if struct already has a default destructor
-            if (struct_has_default_dtor(struct_type)) continue;
+            if (struct_has_default_dtor(struct_type))
+                continue;
 
             // Check if any field needs cleanup (regular fields or variant fields)
-            if (!struct_needs_synthetic_dtor(struct_info)) continue;
+            if (!struct_needs_synthetic_dtor(struct_info))
+                continue;
 
             add_synthetic_default_dtor(m_allocator, struct_info);
             changed = true;
@@ -992,7 +1084,7 @@ void SemanticAnalyzer::resolve_when_clauses(Span<WhenFieldDecl> when_decls,
         FieldInfo disc_field;
         disc_field.name = wfd.discriminant_name;
         disc_field.type = disc_type;
-        disc_field.is_pub = true;  // Discriminant is accessible
+        disc_field.is_pub = true; // Discriminant is accessible
         disc_field.index = static_cast<u32>(fields.size());
         disc_field.slot_offset = current_slot;
         disc_field.slot_count = get_type_slot_count(disc_type);
@@ -1014,8 +1106,8 @@ void SemanticAnalyzer::resolve_when_clauses(Span<WhenFieldDecl> when_decls,
             if (disc_type->is_enum()) {
                 for (const auto& case_name : case_decl.case_names) {
                     if (!disc_type->enum_info.find_variant(case_name)) {
-                        error_fmt(case_decl.loc, "'{}' is not a variant of enum '{}'",
-                                  case_name, disc_type->enum_info.name);
+                        error_fmt(case_decl.loc, "'{}' is not a variant of enum '{}'", case_name,
+                                  disc_type->enum_info.name);
                     }
                 }
             }
@@ -1048,9 +1140,8 @@ void SemanticAnalyzer::resolve_when_clauses(Span<WhenFieldDecl> when_decls,
             // already reported above and compilation will fail; give them a
             // placeholder value of 0.
             for (const auto& case_name : case_decl.case_names) {
-                const EnumVariantInfo* variant = disc_type->is_enum()
-                    ? disc_type->enum_info.find_variant(case_name)
-                    : nullptr;
+                const EnumVariantInfo* variant =
+                    disc_type->is_enum() ? disc_type->enum_info.find_variant(case_name) : nullptr;
                 i64 value = variant ? variant->value : 0;
 
                 VariantInfo vi;
@@ -1082,7 +1173,8 @@ void SemanticAnalyzer::resolve_when_clauses(Span<WhenFieldDecl> when_decls,
 
 void SemanticAnalyzer::analyze_function_bodies(Program* program) {
     for (auto* decl : program->declarations) {
-        if (!decl) continue;
+        if (!decl)
+            continue;
 
         if (decl->kind == AstKind::DeclFun) {
             if (decl->fun_decl.type_params.size() > 0) {
@@ -1091,10 +1183,10 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
                 continue;
             }
             analyze_fun_body(decl);
-        }
-        else if (decl->kind == AstKind::DeclStruct) {
+        } else if (decl->kind == AstKind::DeclStruct) {
             // Skip generic struct templates
-            if (decl->struct_decl.type_params.size() > 0) continue;
+            if (decl->struct_decl.type_params.size() > 0)
+                continue;
 
             // Analyze struct methods
             StructDecl& struct_decl = decl->struct_decl;
@@ -1104,12 +1196,14 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
 
             // Define fields in struct scope
             for (auto& field_info : struct_type->struct_info.fields) {
-                m_symbols.define_field(field_info.name, field_info.type, decl->loc, field_info.index, field_info.is_pub);
+                m_symbols.define_field(field_info.name, field_info.type, decl->loc,
+                                       field_info.index, field_info.is_pub);
             }
 
             // Analyze methods
             for (auto* method : struct_decl.methods) {
-                if (!method) continue;
+                if (!method)
+                    continue;
 
                 // Create a temporary Decl wrapper for the method
                 Decl* method_decl = m_allocator.emplace<Decl>();
@@ -1121,29 +1215,29 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
             }
 
             m_symbols.pop_scope();
-        }
-        else if (decl->kind == AstKind::DeclConstructor) {
+        } else if (decl->kind == AstKind::DeclConstructor) {
             ConstructorDecl& constructor_decl = decl->constructor_decl;
             // Skip generic struct constructor templates (handled in worklist)
-            if (generics().is_generic_struct(constructor_decl.struct_name)) continue;
+            if (generics().is_generic_struct(constructor_decl.struct_name))
+                continue;
             Type* ctor_struct = m_type_env.named_type_by_name(constructor_decl.struct_name);
             if (ctor_struct) {
                 analyze_constructor_body(decl, ctor_struct);
             }
-        }
-        else if (decl->kind == AstKind::DeclDestructor) {
+        } else if (decl->kind == AstKind::DeclDestructor) {
             DestructorDecl& destructor_decl = decl->destructor_decl;
             // Skip generic struct destructor templates (handled in worklist)
-            if (generics().is_generic_struct(destructor_decl.struct_name)) continue;
+            if (generics().is_generic_struct(destructor_decl.struct_name))
+                continue;
             Type* dtor_struct = m_type_env.named_type_by_name(destructor_decl.struct_name);
             if (dtor_struct) {
                 analyze_destructor_body(decl, dtor_struct);
             }
-        }
-        else if (decl->kind == AstKind::DeclMethod) {
+        } else if (decl->kind == AstKind::DeclMethod) {
             MethodDecl& method_decl = decl->method_decl;
             // Skip trait method declarations (struct_name is a trait)
-            if (m_type_env.trait_type_by_name(method_decl.struct_name) && method_decl.trait_name.empty()) {
+            if (m_type_env.trait_type_by_name(method_decl.struct_name) &&
+                method_decl.trait_name.empty()) {
                 continue;
             }
             // Skip generic struct method templates (handled in worklist)
@@ -1169,8 +1263,10 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
     }
 
     // Process pending generic instances (worklist loop)
-    while (m_type_env.generics().has_pending_structs() || m_type_env.generics().has_pending_funs()) {
-        if (too_many_errors()) return;
+    while (m_type_env.generics().has_pending_structs() ||
+           m_type_env.generics().has_pending_funs()) {
+        if (too_many_errors())
+            return;
 
         // Process pending struct instances first (they create types that functions may use)
         if (m_type_env.generics().has_pending_structs()) {
@@ -1190,7 +1286,8 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
                 // their member bodies reference bare type params that don't
                 // resolve outside the Phase B bounds context, and they are
                 // never codegen'd (the IR builder skips them too).
-                if (inst->is_abstract) continue;
+                if (inst->is_abstract)
+                    continue;
 
                 // Analyze external method bodies
                 for (Decl* method_decl : inst->instantiated_methods) {
@@ -1235,7 +1332,8 @@ void SemanticAnalyzer::analyze_function_bodies(Program* program) {
 // ===== Type Expression Resolution =====
 
 void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst) {
-    if (inst->is_analyzed) return;
+    if (inst->is_analyzed)
+        return;
 
     m_type_env.register_named_type(inst->mangled_name, inst->concrete_type);
 
@@ -1320,8 +1418,8 @@ void SemanticAnalyzer::resolve_generic_struct_fields(GenericStructInstance* inst
         MethodInfo method_info;
         method_info.name = method.name;
         method_info.param_types = resolve_param_types(method.params);
-        method_info.return_type = method.return_type
-            ? resolve_type_expr(method.return_type) : m_types.void_type();
+        method_info.return_type =
+            method.return_type ? resolve_type_expr(method.return_type) : m_types.void_type();
         method_info.decl = method_decl;
         append_method(m_allocator, struct_type_info, method_info);
     }
@@ -1343,27 +1441,36 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
     // and every resolution failure yield error_type. Callers that treat "no
     // annotation" as a signal (e.g. var-decl inference) must branch on the
     // TypeExpr itself, not on the result.
-    if (!type_expr) return m_types.error_type();
+    if (!type_expr)
+        return m_types.error_type();
 
     // Function type: fun(T1, T2) -> R
     if (type_expr->kind == TypeExprKind::Function) {
         Vector<Type*> params;
         for (auto* param_expr : type_expr->type_args) {
             Type* pt = resolve_type_expr(param_expr);
-            if (pt->is_error()) return m_types.error_type();
+            if (pt->is_error())
+                return m_types.error_type();
             params.push_back(pt);
         }
-        Type* ret = type_expr->return_type
-            ? resolve_type_expr(type_expr->return_type)
-            : m_types.void_type();
-        if (ret->is_error()) return m_types.error_type();
+        Type* ret = type_expr->return_type ? resolve_type_expr(type_expr->return_type)
+                                           : m_types.void_type();
+        if (ret->is_error())
+            return m_types.error_type();
         Type* base_type = m_types.function_type(m_allocator.alloc_span(params), ret);
 
         switch (type_expr->ref_kind) {
-            case RefKind::Uniq: base_type = m_types.uniq_type(base_type); break;
-            case RefKind::Ref:  base_type = m_types.ref_type(base_type); break;
-            case RefKind::Weak: base_type = m_types.weak_type(base_type); break;
-            case RefKind::None: break;
+            case RefKind::Uniq:
+                base_type = m_types.uniq_type(base_type);
+                break;
+            case RefKind::Ref:
+                base_type = m_types.ref_type(base_type);
+                break;
+            case RefKind::Weak:
+                base_type = m_types.weak_type(base_type);
+                break;
+            case RefKind::None:
+                break;
         }
         if (type_expr->is_borrowed) {
             base_type = m_types.borrowed(base_type);
@@ -1397,7 +1504,8 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
                 return m_types.error_type();
             }
             Type* elem = resolve_type_expr(type_expr->type_args[0]);
-            if (elem->is_error()) return m_types.error_type();
+            if (elem->is_error())
+                return m_types.error_type();
             base_type = m_types.list_type(elem);
             populate_list_methods(base_type);
         }
@@ -1409,7 +1517,8 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
                 return m_types.error_type();
             }
             Type* yield_type = resolve_type_expr(type_expr->type_args[0]);
-            if (yield_type->is_error()) return m_types.error_type();
+            if (yield_type->is_error())
+                return m_types.error_type();
             base_type = m_types.coroutine_type(yield_type);
             populate_coro_methods(base_type);
         }
@@ -1422,8 +1531,10 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
             }
             Type* key_type = resolve_type_expr(type_expr->type_args[0]);
             Type* val_type = resolve_type_expr(type_expr->type_args[1]);
-            if (key_type->is_error()) return m_types.error_type();
-            if (val_type->is_error()) return m_types.error_type();
+            if (key_type->is_error())
+                return m_types.error_type();
+            if (val_type->is_error())
+                return m_types.error_type();
             if (!is_hashable_key_type(key_type)) {
                 error(type_expr->loc, "Map key type must be a primitive, enum, or struct");
                 return m_types.error_type();
@@ -1439,23 +1550,25 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
             Vector<Type*> type_arg_types;
             for (auto* type_arg : type_expr->type_args) {
                 Type* arg_type = resolve_type_expr(type_arg);
-                if (arg_type->is_error()) return m_types.error_type();
+                if (arg_type->is_error())
+                    return m_types.error_type();
                 type_arg_types.push_back(arg_type);
             }
 
             // Validate arg count
             Decl* template_decl = m_type_env.generics().get_generic_struct_decl(type_expr->name);
             if (template_decl->struct_decl.type_params.size() != type_arg_types.size()) {
-                error_fmt(type_expr->loc, "generic struct '{}' expects {} type argument(s) but got {}",
-                         type_expr->name,
-                         template_decl->struct_decl.type_params.size(),
-                         type_arg_types.size());
+                error_fmt(type_expr->loc,
+                          "generic struct '{}' expects {} type argument(s) but got {}",
+                          type_expr->name, template_decl->struct_decl.type_params.size(),
+                          type_arg_types.size());
                 return m_types.error_type();
             }
 
             // Instantiate the generic struct
             Span<Type*> type_args = m_allocator.alloc_span(type_arg_types);
-            StringView mangled = m_type_env.generics().instantiate_struct(type_expr->name, type_args);
+            StringView mangled =
+                m_type_env.generics().instantiate_struct(type_expr->name, type_args);
             GenericStructInstance* inst = m_type_env.generics().find_struct_instance(mangled);
             base_type = inst->concrete_type;
 
@@ -1484,10 +1597,17 @@ Type* SemanticAnalyzer::resolve_type_expr(TypeExpr* type_expr) {
 
     // Apply reference modifiers
     switch (type_expr->ref_kind) {
-        case RefKind::Uniq: base_type = m_types.uniq_type(base_type); break;
-        case RefKind::Ref:  base_type = m_types.ref_type(base_type); break;
-        case RefKind::Weak: base_type = m_types.weak_type(base_type); break;
-        case RefKind::None: break;
+        case RefKind::Uniq:
+            base_type = m_types.uniq_type(base_type);
+            break;
+        case RefKind::Ref:
+            base_type = m_types.ref_type(base_type);
+            break;
+        case RefKind::Weak:
+            base_type = m_types.weak_type(base_type);
+            break;
+        case RefKind::None:
+            break;
     }
 
     // `borrowed`: demote the resolved type to a borrow (uniq T -> ref T,
@@ -1506,7 +1626,8 @@ Type* SemanticAnalyzer::analyze_var_initializer(VarDecl& var_decl, Decl* decl, T
         Type* init_type = analyze_expr(var_decl.initializer);
         // Resolve generic-template-ref initializers against the declared type
         // before assignability checking; updates init_type via resolved_type.
-        if (var_type && m_generic_calls.coerce_generic_template_ref(var_decl.initializer, var_type)) {
+        if (var_type &&
+            m_generic_calls.coerce_generic_template_ref(var_decl.initializer, var_type)) {
             init_type = var_decl.initializer->resolved_type;
         }
         // Deliberately NOT gated on var_type: `var g = f;` with f overloaded
@@ -1551,12 +1672,13 @@ Type* SemanticAnalyzer::analyze_var_initializer(VarDecl& var_decl, Decl* decl, T
 // site enforce the same ban, and the check only needs symbols + reporter.
 bool SemaContext::check_no_local_shadowing(StringView name, SourceLocation loc) const {
     Symbol* shadowed = symbols.lookup_function_local(name);
-    if (!shadowed) return true;
+    if (!shadowed)
+        return true;
     const char* what = shadowed->kind == SymbolKind::Parameter ? "parameter" : "variable";
     reporter.error_fmt(loc,
-              "declaration of '{}' shadows the {} declared at line {}; "
-              "shadowing is not allowed within a function",
-              name, what, shadowed->loc.line);
+                       "declaration of '{}' shadows the {} declared at line {}; "
+                       "shadowing is not allowed within a function",
+                       name, what, shadowed->loc.line);
     return false;
 }
 
@@ -1576,7 +1698,8 @@ void SemanticAnalyzer::analyze_var_decl(Decl* decl) {
     var_type = analyze_var_initializer(var_decl, decl, var_type);
 
     var_decl.resolved_type = var_type;
-    Symbol* var_sym = m_symbols.define(SymbolKind::Variable, var_decl.name, var_type, decl->loc, decl);
+    Symbol* var_sym =
+        m_symbols.define(SymbolKind::Variable, var_decl.name, var_type, decl->loc, decl);
 
     // Track owned variables for move semantics (uniq refs and value structs with destructors)
     if (var_type && var_type->noncopyable()) {
@@ -1588,8 +1711,10 @@ void SemanticAnalyzer::analyze_fun_body(Decl* decl) {
     FunDecl& fun_decl = decl->fun_decl;
 
     // Native functions don't have bodies
-    if (fun_decl.is_native) return;
-    if (!fun_decl.body) return;
+    if (fun_decl.is_native)
+        return;
+    if (!fun_decl.body)
+        return;
 
     // Single-shot rule: analysis mutates the AST it walks (see the annotation
     // contract in ast.hpp) — re-lower or clone a fresh tree instead of
@@ -1598,7 +1723,8 @@ void SemanticAnalyzer::analyze_fun_body(Decl* decl) {
     decl->body_analyzed = true;
 
     // Resolve return type
-    Type* return_type = fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
+    Type* return_type =
+        fun_decl.return_type ? resolve_type_expr(fun_decl.return_type) : m_types.void_type();
 
     // Fresh per-function context (coroutine/destructor/finally slots) and
     // lifetime state for this body, restored as one unit on exit. `is_coroutine`
@@ -1625,8 +1751,7 @@ void SemanticAnalyzer::analyze_fun_body(Decl* decl) {
         if (m_symbols.lookup_local(p.name)) {
             error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
         } else {
-            m_symbols.define_parameter(p.name, ptype, p.loc, i,
-                                       p.modifier != ParamModifier::None);
+            m_symbols.define_parameter(p.name, ptype, p.loc, i, p.modifier != ParamModifier::None);
         }
 
         // Track owned parameters as Live (uniq refs and value structs with destructors)
@@ -1646,9 +1771,8 @@ void SemanticAnalyzer::analyze_fun_body(Decl* decl) {
     // so neither reaches here as a non-void case. Lambdas analyze via
     // analyze_lambda_expr and are not covered by this check.
     Type* ret_type = m_symbols.current_return_type();
-    if (ret_type && !ret_type->is_void()
-            && !decl->fun_decl.is_coroutine
-            && !m_lifetimes.branch_terminates()) {
+    if (ret_type && !ret_type->is_void() && !decl->fun_decl.is_coroutine &&
+        !m_lifetimes.branch_terminates()) {
         error_fmt(decl->loc, "not all code paths return a value in function '{}'",
                   decl->fun_decl.name);
     }
@@ -1668,10 +1792,9 @@ static StringView get_last_path_component(StringView path) {
         }
     }
     if (last_dot) {
-        return StringView(last_dot + 1,
-            static_cast<u32>(path.data() + path.size() - last_dot - 1));
+        return StringView(last_dot + 1, static_cast<u32>(path.data() + path.size() - last_dot - 1));
     }
-    return path;  // No dot - return whole path
+    return path; // No dot - return whole path
 }
 
 void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
@@ -1691,15 +1814,14 @@ void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
             // Find the export in the module
             const ModuleExport* exp = m_modules.find_export(module, name.name);
             if (!exp) {
-                error_fmt(name.loc, "module '{}' has no export '{}'",
-                         imp.module_path, name.name);
+                error_fmt(name.loc, "module '{}' has no export '{}'", imp.module_path, name.name);
                 continue;
             }
 
             // Check visibility
             if (!exp->is_pub) {
-                error_fmt(name.loc, "'{}' is not public in module '{}'",
-                         name.name, imp.module_path);
+                error_fmt(name.loc, "'{}' is not public in module '{}'", name.name,
+                          imp.module_path);
                 continue;
             }
 
@@ -1708,8 +1830,7 @@ void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
 
             // Check for duplicate symbol
             if (m_symbols.lookup_local(local_name)) {
-                error_fmt(name.loc, "redefinition of '{}'",
-                         local_name);
+                error_fmt(name.loc, "redefinition of '{}'", local_name);
                 continue;
             }
 
@@ -1719,18 +1840,19 @@ void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
                 // whole set: the first defines the head, the rest chain.
                 Symbol* head = nullptr;
                 for (const ModuleExport& member : module->exports) {
-                    if (member.kind != ExportKind::Function || member.name != name.name) continue;
-                    if (!member.is_pub) continue;
+                    if (member.kind != ExportKind::Function || member.name != name.name)
+                        continue;
+                    if (!member.is_pub)
+                        continue;
                     StringView original_name =
                         member.symbol_name.empty() ? member.name : member.symbol_name;
                     if (!head) {
-                        head = m_symbols.define_imported_function(
-                            local_name, member.type, name.loc,
-                            imp.module_path, original_name, member.index, member.is_native);
+                        head = m_symbols.define_imported_function(local_name, member.type, name.loc,
+                                                                  imp.module_path, original_name,
+                                                                  member.index, member.is_native);
                     } else {
-                        Symbol* sym = m_symbols.append_overload(
-                            head, SymbolKind::ImportedFunction, member.type,
-                            name.loc, nullptr);
+                        Symbol* sym = m_symbols.append_overload(head, SymbolKind::ImportedFunction,
+                                                                member.type, name.loc, nullptr);
                         sym->imported_func.module_name = imp.module_path;
                         sym->imported_func.original_name = original_name;
                         sym->imported_func.native_index = member.index;
@@ -1746,7 +1868,8 @@ void SemanticAnalyzer::analyze_import_decl(Decl* decl) {
                 // table (the authoritative source — no value recomputation).
                 if (exp->type && exp->type->kind == TypeKind::Enum) {
                     for (const auto& variant : exp->type->enum_info.variants) {
-                        m_symbols.define_enum_variant(variant.name, exp->type, name.loc, variant.value);
+                        m_symbols.define_enum_variant(variant.name, exp->type, name.loc,
+                                                      variant.value);
                     }
                 }
             } else {
@@ -1785,7 +1908,7 @@ Type* SemanticAnalyzer::resolve_member_struct(SourceLocation loc, StringView str
     return struct_type;
 }
 
-template<typename InfoT>
+template <typename InfoT>
 bool SemanticAnalyzer::report_duplicate_member(SourceLocation loc, Span<InfoT> existing,
                                                StringView name, StringView struct_name,
                                                const char* noun) {
@@ -1805,10 +1928,13 @@ bool SemanticAnalyzer::report_duplicate_member(SourceLocation loc, Span<InfoT> e
 void SemanticAnalyzer::register_constructor_signature(Decl* decl) {
     ConstructorDecl& constructor_decl = decl->constructor_decl;
 
-    Type* struct_type = resolve_member_struct(decl->loc, constructor_decl.struct_name, "constructor");
-    if (!struct_type) return;
+    Type* struct_type =
+        resolve_member_struct(decl->loc, constructor_decl.struct_name, "constructor");
+    if (!struct_type)
+        return;
     if (report_duplicate_member(decl->loc, struct_type->struct_info.constructors,
-                                constructor_decl.name, constructor_decl.struct_name, "constructor")) {
+                                constructor_decl.name, constructor_decl.struct_name,
+                                "constructor")) {
         return;
     }
 
@@ -1823,7 +1949,8 @@ void SemanticAnalyzer::register_destructor_signature(Decl* decl) {
     DestructorDecl& destructor_decl = decl->destructor_decl;
 
     Type* struct_type = resolve_member_struct(decl->loc, destructor_decl.struct_name, "destructor");
-    if (!struct_type) return;
+    if (!struct_type)
+        return;
     if (report_duplicate_member(decl->loc, struct_type->struct_info.destructors,
                                 destructor_decl.name, destructor_decl.struct_name, "destructor")) {
         return;
@@ -1840,17 +1967,18 @@ void SemanticAnalyzer::register_method_signature(Decl* decl) {
     MethodDecl& method_decl = decl->method_decl;
 
     Type* struct_type = resolve_member_struct(decl->loc, method_decl.struct_name, "method");
-    if (!struct_type) return;
-    if (report_duplicate_member(decl->loc, struct_type->struct_info.methods,
-                                method_decl.name, method_decl.struct_name, "method")) {
+    if (!struct_type)
+        return;
+    if (report_duplicate_member(decl->loc, struct_type->struct_info.methods, method_decl.name,
+                                method_decl.struct_name, "method")) {
         return;
     }
 
     MethodInfo method_info;
     method_info.name = method_decl.name;
     method_info.param_types = resolve_param_types(method_decl.params);
-    method_info.return_type = method_decl.return_type
-        ? resolve_type_expr(method_decl.return_type) : m_types.void_type();
+    method_info.return_type =
+        method_decl.return_type ? resolve_type_expr(method_decl.return_type) : m_types.void_type();
     method_info.decl = decl;
 
     // A Coro<T>-returning method is a real coroutine only if its body yields
@@ -1866,8 +1994,8 @@ void SemanticAnalyzer::register_method_signature(Decl* decl) {
         method_decl.is_coroutine = stmt_contains_yield(method_decl.body);
         if (method_decl.is_coroutine) {
             reject_second_class_coroutine_params(method_decl.params);
-            StringView mangled = mangle_method(m_allocator,
-                                               method_decl.struct_name, method_decl.name);
+            StringView mangled =
+                mangle_method(m_allocator, method_decl.struct_name, method_decl.name);
             method_info.return_type = m_types.coroutine_type_for_func(
                 method_info.return_type->coro_info.yield_type, mangled);
             populate_coro_methods(method_info.return_type);
@@ -1877,11 +2005,11 @@ void SemanticAnalyzer::register_method_signature(Decl* decl) {
     append_method(m_allocator, struct_type->struct_info, method_info);
 }
 
-void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
-                                            Span<Param> params, Stmt* body,
-                                            Type* return_type,
-                                            bool is_delete_destructor) {
-    if (!body) return;
+void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type, Span<Param> params,
+                                           Stmt* body, Type* return_type,
+                                           bool is_delete_destructor) {
+    if (!body)
+        return;
 
     // Single-shot rule: analysis mutates the AST it walks (see the annotation
     // contract in ast.hpp) — re-lower or clone a fresh tree instead of
@@ -1921,7 +2049,8 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
 
     // Define fields in scope
     for (auto& field_info : struct_type->struct_info.fields) {
-        m_symbols.define_field(field_info.name, field_info.type, decl->loc, field_info.index, field_info.is_pub);
+        m_symbols.define_field(field_info.name, field_info.type, decl->loc, field_info.index,
+                               field_info.is_pub);
     }
 
     // Push function scope with return type
@@ -1945,8 +2074,7 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
         if (m_symbols.lookup_local(p.name)) {
             error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
         } else {
-            m_symbols.define_parameter(p.name, ptype, p.loc, i,
-                                       p.modifier != ParamModifier::None);
+            m_symbols.define_parameter(p.name, ptype, p.loc, i, p.modifier != ParamModifier::None);
         }
 
         // Track owned parameters as Live (uniq refs and value structs with destructors)
@@ -1959,8 +2087,8 @@ void SemanticAnalyzer::analyze_member_body(Decl* decl, Type* struct_type,
     analyze_stmt(body);
 
     m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), decl->loc);
-    m_symbols.pop_scope();  // function scope
-    m_symbols.pop_scope();  // struct scope
+    m_symbols.pop_scope(); // function scope
+    m_symbols.pop_scope(); // struct scope
     // context_scope restores the outer function's context on return.
 }
 
@@ -1979,7 +2107,8 @@ void SemanticAnalyzer::analyze_destructor_body(Decl* decl, Type* struct_type) {
 
 void SemanticAnalyzer::analyze_method_body(Decl* decl, Type* struct_type) {
     MethodDecl& method_decl = decl->method_decl;
-    Type* return_type = method_decl.return_type ? resolve_type_expr(method_decl.return_type) : m_types.void_type();
+    Type* return_type =
+        method_decl.return_type ? resolve_type_expr(method_decl.return_type) : m_types.void_type();
     analyze_member_body(decl, struct_type, method_decl.params, method_decl.body, return_type);
 }
 
@@ -1987,12 +2116,12 @@ void SemanticAnalyzer::analyze_method_body(Decl* decl, Type* struct_type) {
 
 Type* SemanticAnalyzer::try_resolve_binary_op(BinaryOp op, Type* left, Type* right) {
     StringView name = binary_op_to_trait_method(op);
-    if (name.empty()) return nullptr;
+    if (name.empty())
+        return nullptr;
     // Primitive operands resolve through a dense (kind, op) table instead of the
     // name-keyed hash + linear scan in lookup_primitive_method (§3.5).
-    const MethodInfo* mi = left->is_primitive()
-        ? m_types.lookup_primitive_binary_op(left->kind, op)
-        : m_types.lookup_method(left, name);
+    const MethodInfo* mi = left->is_primitive() ? m_types.lookup_primitive_binary_op(left->kind, op)
+                                                : m_types.lookup_method(left, name);
     if (mi && mi->param_types.size() == 1) {
         if (mi->param_types[0] == right) {
             return mi->return_type;
@@ -2006,10 +2135,13 @@ Type* SemanticAnalyzer::try_resolve_binary_op(BinaryOp op, Type* left, Type* rig
     // Phase B: TypeParam path — look up through trait bounds
     if (left->is_type_param() && m_generic_calls.has_active_bounds()) {
         Type* found_in_trait = nullptr;
-        const TraitMethodInfo* trait_method = m_generic_calls.lookup_type_param_method(left, name, &found_in_trait);
+        const TraitMethodInfo* trait_method =
+            m_generic_calls.lookup_type_param_method(left, name, &found_in_trait);
         if (trait_method && trait_method->param_types.size() == 1) {
-            Type* return_type = m_generic_calls.substitute_trait_types(trait_method->return_type, left, found_in_trait);
-            Type* param_type = m_generic_calls.substitute_trait_types(trait_method->param_types[0], left, found_in_trait);
+            Type* return_type = m_generic_calls.substitute_trait_types(trait_method->return_type,
+                                                                       left, found_in_trait);
+            Type* param_type = m_generic_calls.substitute_trait_types(trait_method->param_types[0],
+                                                                      left, found_in_trait);
             // Check right operand compatibility
             if (param_type == right || m_checker.is_assignable(param_type, right)) {
                 return return_type;
@@ -2021,10 +2153,11 @@ Type* SemanticAnalyzer::try_resolve_binary_op(BinaryOp op, Type* left, Type* rig
 
 Type* SemanticAnalyzer::try_resolve_unary_op(UnaryOp op, Type* operand) {
     StringView name = unary_op_to_trait_method(op);
-    if (name.empty()) return nullptr;
+    if (name.empty())
+        return nullptr;
     const MethodInfo* mi = operand->is_primitive()
-        ? m_types.lookup_primitive_unary_op(operand->kind, op)
-        : m_types.lookup_method(operand, name);
+                               ? m_types.lookup_primitive_unary_op(operand->kind, op)
+                               : m_types.lookup_method(operand, name);
     if (mi && mi->param_types.size() == 0 && mi->return_type) {
         return mi->return_type;
     }
@@ -2032,9 +2165,11 @@ Type* SemanticAnalyzer::try_resolve_unary_op(UnaryOp op, Type* operand) {
     // Phase B: TypeParam path — look up through trait bounds
     if (operand->is_type_param() && m_generic_calls.has_active_bounds()) {
         Type* found_in_trait = nullptr;
-        const TraitMethodInfo* trait_method = m_generic_calls.lookup_type_param_method(operand, name, &found_in_trait);
+        const TraitMethodInfo* trait_method =
+            m_generic_calls.lookup_type_param_method(operand, name, &found_in_trait);
         if (trait_method && trait_method->param_types.size() == 0 && trait_method->return_type) {
-            return m_generic_calls.substitute_trait_types(trait_method->return_type, operand, found_in_trait);
+            return m_generic_calls.substitute_trait_types(trait_method->return_type, operand,
+                                                          found_in_trait);
         }
     }
     return nullptr;
@@ -2043,7 +2178,8 @@ Type* SemanticAnalyzer::try_resolve_unary_op(UnaryOp op, Type* operand) {
 // ===== Statement Analysis =====
 
 void SemanticAnalyzer::analyze_stmt(Stmt* stmt) {
-    if (!stmt) return;
+    if (!stmt)
+        return;
 
     switch (stmt->kind) {
         case AstKind::StmtExpr:
@@ -2090,9 +2226,7 @@ void SemanticAnalyzer::analyze_stmt(Stmt* stmt) {
     }
 }
 
-void SemanticAnalyzer::analyze_expr_stmt(Stmt* stmt) {
-    analyze_expr(stmt->expr_stmt.expr);
-}
+void SemanticAnalyzer::analyze_expr_stmt(Stmt* stmt) { analyze_expr(stmt->expr_stmt.expr); }
 
 void SemanticAnalyzer::analyze_block_stmt(Stmt* stmt) {
     analyze_decl_list_in_scope(stmt->block.declarations, stmt->loc);
@@ -2102,12 +2236,14 @@ void SemanticAnalyzer::analyze_decl_list_in_scope(Span<Decl*> decls, SourceLocat
     m_symbols.push_scope(ScopeKind::Block);
 
     for (auto* decl : decls) {
-        if (!decl) continue;
+        if (!decl)
+            continue;
 
         if (decl->kind == AstKind::DeclVar) {
             analyze_var_decl(decl);
         } else if (decl->kind == AstKind::DeclFun) {
-            error(decl->loc, "local function declarations are not supported; move this function to module scope");
+            error(decl->loc, "local function declarations are not supported; move this function to "
+                             "module scope");
         } else {
             // Statement wrapped in a Decl
             analyze_stmt(&decl->stmt);
@@ -2144,15 +2280,15 @@ void SemanticAnalyzer::analyze_if_stmt(Stmt* stmt) {
         MoveStateSnapshot else_states = m_lifetimes.save_move_states();
         bool else_terminates = m_lifetimes.branch_terminates();
 
-        m_lifetimes.merge_two_branches(pre_branch_states, then_states, else_states,
-                           then_terminates, else_terminates);
+        m_lifetimes.merge_two_branches(pre_branch_states, then_states, else_states, then_terminates,
+                                       else_terminates);
     } else {
         // No else branch — the implicit else is the pre-branch state (no moves)
         // and can never terminate. merge_two_branches therefore leaves the
         // branch-terminates flag false: a no-else if never proves termination
         // because the condition may be false.
         m_lifetimes.merge_two_branches(pre_branch_states, then_states, pre_branch_states,
-                           then_terminates, /*else_terminates=*/false);
+                                       then_terminates, /*else_terminates=*/false);
     }
 }
 
@@ -2190,7 +2326,8 @@ void SemanticAnalyzer::analyze_while_stmt(Stmt* stmt) {
 
     MoveStateSnapshot post_body_states = m_lifetimes.save_move_states();
 
-    m_lifetimes.check_loop_cross_iteration_moves(ws.body, pre_loop_states, post_body_states, stmt->loc);
+    m_lifetimes.check_loop_cross_iteration_moves(ws.body, pre_loop_states, post_body_states,
+                                                 stmt->loc);
 
     // After loop: merge pre-loop with post-body (loop may execute 0 times)
     m_lifetimes.restore_move_states(pre_loop_states);
@@ -2242,7 +2379,8 @@ void SemanticAnalyzer::analyze_for_stmt(Stmt* stmt) {
 
     MoveStateSnapshot post_body_states = m_lifetimes.save_move_states();
 
-    m_lifetimes.check_loop_cross_iteration_moves(fs.body, pre_loop_states, post_body_states, stmt->loc);
+    m_lifetimes.check_loop_cross_iteration_moves(fs.body, pre_loop_states, post_body_states,
+                                                 stmt->loc);
 
     // After loop: merge pre-loop with post-body (loop may execute 0 times)
     m_lifetimes.restore_move_states(pre_loop_states);
@@ -2320,7 +2458,8 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
     DeleteStmt& ds = stmt->delete_stmt;
 
     Type* type = analyze_expr(ds.expr);
-    if (!type || type->is_error()) return;
+    if (!type || type->is_error())
+        return;
 
     // delete only works on uniq types
     if (type->kind != TypeKind::Uniq) {
@@ -2332,7 +2471,8 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
     // permits it for a uniq *pointer* field (the IR builder nulls the slot in
     // the root so its destructor won't double-free) but rejects value-struct
     // fields and moves through a reference chain. See check_not_field_move.
-    if (!m_lifetimes.check_not_field_move(ds.expr, stmt->loc)) return;
+    if (!m_lifetimes.check_not_field_move(ds.expr, stmt->loc))
+        return;
 
     // Get the inner struct type
     Type* inner_type = type->ref_info.inner_type;
@@ -2340,12 +2480,13 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
         StructTypeInfo& struct_type_info = inner_type->struct_info;
 
         // Look up destructor by name
-        const DestructorInfo* dtor = find_destructor(struct_type_info.destructors, ds.destructor_name);
+        const DestructorInfo* dtor =
+            find_destructor(struct_type_info.destructors, ds.destructor_name);
 
         // If a destructor name was specified but not found
         if (!ds.destructor_name.empty() && !dtor) {
-            error_fmt(stmt->loc, "struct '{}' has no destructor '{}'",
-                     struct_type_info.name, ds.destructor_name);
+            error_fmt(stmt->loc, "struct '{}' has no destructor '{}'", struct_type_info.name,
+                      ds.destructor_name);
             return;
         }
 
@@ -2354,7 +2495,7 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
             // Check argument count
             if (ds.arguments.size() != dtor->param_types.size()) {
                 error_fmt(stmt->loc, "destructor expects {} argument(s) but got {}",
-                         dtor->param_types.size(), ds.arguments.size());
+                          dtor->param_types.size(), ds.arguments.size());
                 return;
             }
 
@@ -2368,7 +2509,7 @@ void SemanticAnalyzer::analyze_delete_stmt(Stmt* stmt) {
             // case already errored above); arguments without one is an error.
             if (ds.arguments.size() > 0) {
                 error_fmt(stmt->loc, "struct '{}' has no destructor to call",
-                         struct_type_info.name);
+                          struct_type_info.name);
                 return;
             }
         }
@@ -2383,7 +2524,8 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
 
     // Analyze the discriminant expression
     Type* discrim_type = analyze_expr(ws.discriminant);
-    if (!discrim_type || discrim_type->is_error()) return;
+    if (!discrim_type || discrim_type->is_error())
+        return;
 
     // Check that discriminant is an enum type
     if (discrim_type->kind != TypeKind::Enum) {
@@ -2409,15 +2551,13 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
         // Validate case names are valid enum variants
         for (const auto& case_name : wc.case_names) {
             if (!eti.find_variant(case_name)) {
-                error_fmt(wc.loc, "'{}' is not a variant of enum '{}'",
-                         case_name, eti.name);
+                error_fmt(wc.loc, "'{}' is not a variant of enum '{}'", case_name, eti.name);
                 continue;
             }
 
             // Check for duplicate case
             if (covered_variants.count(case_name)) {
-                error_fmt(wc.loc, "duplicate case '{}' in when statement",
-                         case_name);
+                error_fmt(wc.loc, "duplicate case '{}' in when statement", case_name);
                 continue;
             }
 
@@ -2465,7 +2605,8 @@ void SemanticAnalyzer::analyze_when_stmt(Stmt* stmt) {
     // terminates, the code after the when is unreachable and termination
     // propagates upward. For a non-exhaustive no-else `when` the injected
     // fall-through path is always non-terminating, so this stays false.
-    m_lifetimes.set_branch_terminates(m_lifetimes.merge_branch_snapshots(case_snapshots, case_terminates));
+    m_lifetimes.set_branch_terminates(
+        m_lifetimes.merge_branch_snapshots(case_snapshots, case_terminates));
 }
 
 void SemanticAnalyzer::analyze_throw_stmt(Stmt* stmt) {
@@ -2485,7 +2626,8 @@ void SemanticAnalyzer::analyze_throw_stmt(Stmt* stmt) {
     // The thrown expression must be a struct type that implements Exception trait
     Type* base = expr_type->base_type();
     if (!base->is_struct()) {
-        error(stmt->loc, "throw expression must be a struct type that implements the Exception trait");
+        error(stmt->loc,
+              "throw expression must be a struct type that implements the Exception trait");
         m_lifetimes.set_branch_terminates(true);
         return;
     }
@@ -2554,11 +2696,13 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
             if (!catch_type->is_error()) {
                 Type* base = catch_type->base_type();
                 if (!base->is_struct()) {
-                    error(clause.loc, "catch type must be a struct type that implements the Exception trait");
+                    error(clause.loc,
+                          "catch type must be a struct type that implements the Exception trait");
                 } else {
                     Type* exception_trait = m_type_env.exception_type();
                     if (!m_types.implements_trait(base, exception_trait)) {
-                        error_fmt(clause.loc, "catch type '{}' does not implement the Exception trait",
+                        error_fmt(clause.loc,
+                                  "catch type '{}' does not implement the Exception trait",
                                   base->struct_info.name);
                     }
                 }
@@ -2581,7 +2725,7 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
             }
         }
 
-        analyze_stmt(clause.body);  // yield is allowed in catch bodies
+        analyze_stmt(clause.body); // yield is allowed in catch bodies
         m_symbols.pop_scope();
 
         exit_paths.push_back(m_lifetimes.save_move_states());
@@ -2633,8 +2777,8 @@ void SemanticAnalyzer::analyze_try_stmt(Stmt* stmt) {
         for (auto it = normal_continuation.begin(); it != normal_continuation.end(); ++it) {
             auto post_it = finally_post.find(it->first);
             auto entry_it = finally_entry.find(it->first);
-            if (post_it != finally_post.end() && entry_it != finally_entry.end()
-                && post_it->second != entry_it->second) {
+            if (post_it != finally_post.end() && entry_it != finally_entry.end() &&
+                post_it->second != entry_it->second) {
                 it.value() = post_it->second;
             }
         }
@@ -2654,7 +2798,8 @@ void SemanticAnalyzer::analyze_yield_stmt(Stmt* stmt) {
     YieldStmt& ys = stmt->yield_stmt;
 
     if (!m_function_context.in_coroutine) {
-        error(stmt->loc, "'yield' can only appear inside a coroutine function (one returning Coro<T>)");
+        error(stmt->loc,
+              "'yield' can only appear inside a coroutine function (one returning Coro<T>)");
         return;
     }
 
@@ -2664,7 +2809,8 @@ void SemanticAnalyzer::analyze_yield_stmt(Stmt* stmt) {
     }
 
     Type* actual = analyze_expr(ys.value);
-    if (!actual || actual->is_error()) return;
+    if (!actual || actual->is_error())
+        return;
 
     if (!m_checker.check_assignable(m_function_context.coro_yield_type, actual, stmt->loc)) {
         // Error already reported
@@ -2676,7 +2822,8 @@ void SemanticAnalyzer::analyze_yield_stmt(Stmt* stmt) {
 // ===== Expression Analysis =====
 
 Type* SemanticAnalyzer::analyze_expr(Expr* expr) {
-    if (!expr) return m_types.error_type();
+    if (!expr)
+        return m_types.error_type();
 
     Type* result = nullptr;
     switch (expr->kind) {
@@ -2742,7 +2889,8 @@ Type* SemanticAnalyzer::analyze_string_interp_expr(Expr* expr) {
     auto& string_interp = expr->string_interp;
     for (auto& expression : string_interp.expressions) {
         Type* etype = analyze_expr(expression);
-        if (!etype || etype->is_error()) continue;
+        if (!etype || etype->is_error())
+            continue;
         if (etype->is_void()) {
             error(expression->loc, "cannot interpolate void expression in f-string");
             continue;
@@ -2757,15 +2905,16 @@ Type* SemanticAnalyzer::analyze_string_interp_expr(Expr* expr) {
         // and bounded type params).
         if (!type_implements_printable(etype)) {
             error_fmt(expression->loc,
-                     "type '{}' does not implement Printable (no to_string method)",
-                     m_checker.type_string(etype).data());
+                      "type '{}' does not implement Printable (no to_string method)",
+                      m_checker.type_string(etype).data());
         }
     }
     return m_types.string_type();
 }
 
 bool SemanticAnalyzer::type_implements_printable(Type* type) {
-    if (!type) return false;
+    if (!type)
+        return false;
     // A bounded type parameter (Phase B template-body walk) is printable when
     // its bound set includes Printable — the concrete per-instantiation
     // re-analysis still checks the real type.
@@ -2791,16 +2940,19 @@ bool SemanticAnalyzer::type_implements_printable(Type* type) {
         return type_implements_printable(type->list_info.element_type);
     }
     if (type->is_map()) {
-        return type_implements_printable(type->map_info.key_type)
-            && type_implements_printable(type->map_info.value_type);
+        return type_implements_printable(type->map_info.key_type) &&
+               type_implements_printable(type->map_info.value_type);
     }
     return m_types.implements_trait(type, m_type_env.printable_type());
 }
 
 Type* SemanticAnalyzer::default_literal_type(Type* type) {
-    if (!type) return type;
-    if (type->is_int_literal()) return m_types.i32_type();
-    if (type->is_float_literal()) return m_types.f64_type();
+    if (!type)
+        return type;
+    if (type->is_int_literal())
+        return m_types.i32_type();
+    if (type->is_float_literal())
+        return m_types.f64_type();
     return type;
 }
 
@@ -2855,11 +3007,11 @@ Type* SemanticAnalyzer::analyze_identifier_expr(Expr* expr) {
     Symbol* sym = m_symbols.lookup(id.name);
     if (!sym) {
         // Helpful error for type names parsed as value-position generic refs.
-        if (id.generic_args.size() > 0
-            && m_type_env.generics().is_generic_struct(id.name)) {
+        if (id.generic_args.size() > 0 && m_type_env.generics().is_generic_struct(id.name)) {
             error_fmt(expr->loc,
-                "'{}' is a struct type, not a value; cannot reference it with "
-                "type arguments in expression position", id.name);
+                      "'{}' is a struct type, not a value; cannot reference it with "
+                      "type arguments in expression position",
+                      id.name);
             return m_types.error_type();
         }
         error_fmt(expr->loc, "undefined identifier '{}'", id.name);
@@ -2902,7 +3054,8 @@ Type* SemanticAnalyzer::analyze_unary_expr(Expr* expr) {
     UnaryExpr& unary_expr = expr->unary;
 
     Type* operand_type = analyze_expr(unary_expr.operand);
-    if (operand_type->is_error()) return m_types.error_type();
+    if (operand_type->is_error())
+        return m_types.error_type();
 
     // Handle ref expression: borrow a reference from an lvalue
     if (unary_expr.op == UnaryOp::Ref) {
@@ -2955,8 +3108,7 @@ Type* SemanticAnalyzer::analyze_binary_expr(Expr* expr) {
         // keeps `var x: f32 = 1 + 2.0;` open to the annotation.
         bool is_float = left_type->is_float_literal() || right_type->is_float_literal();
         Type* fallback = is_float ? m_types.f64_type() : m_types.i32_type();
-        Type* literal_type = is_float ? m_types.float_literal_type()
-                                      : m_types.int_literal_type();
+        Type* literal_type = is_float ? m_types.float_literal_type() : m_types.int_literal_type();
 
         // Resolve against the default to validate the operator and learn the
         // result shape, but hand back the literal type so an enclosing context
@@ -3023,8 +3175,10 @@ Type* SemanticAnalyzer::analyze_ternary_expr(Expr* expr) {
     m_lifetimes.restore_move_states(pre_branch_states);
     m_lifetimes.merge_move_states(then_states, else_states);
 
-    if (then_type->is_error()) return else_type;
-    if (else_type->is_error()) return then_type;
+    if (then_type->is_error())
+        return else_type;
+    if (else_type->is_error())
+        return then_type;
 
     // Coerce unsuffixed literals in ternary branches, mirroring analyze_binary_expr:
     // match the concrete branch, or keep both polymorphic so an enclosing context
@@ -3037,7 +3191,7 @@ Type* SemanticAnalyzer::analyze_ternary_expr(Expr* expr) {
         else_type = ternary_expr.else_expr->resolved_type;
     } else if (then_type->is_numeric_literal() && else_type->is_numeric_literal()) {
         if (then_type == else_type) {
-            return then_type;  // both int literals, or both float literals
+            return then_type; // both int literals, or both float literals
         }
         // One of each (`c ? 1 : 2.0`): the int side adapts to float.
         m_checker.coerce_numeric_literal(ternary_expr.then_expr, m_types.f64_type());
@@ -3053,12 +3207,10 @@ Type* SemanticAnalyzer::analyze_ternary_expr(Expr* expr) {
     // and selecting an owned *variable* never nullifies it the way a real move
     // does. The cleanup model can't conditionally null a ternary operand, so
     // reject the construct rather than miscompile it.
-    if ((then_type && then_type->noncopyable()) ||
-        (else_type && else_type->noncopyable())) {
-        error(expr->loc,
-            "conditional expression cannot select a noncopyable value; it would move "
-            "an operand without nullifying it (double-free). Use an if/else statement "
-            "with an explicit move in each branch instead");
+    if ((then_type && then_type->noncopyable()) || (else_type && else_type->noncopyable())) {
+        error(expr->loc, "conditional expression cannot select a noncopyable value; it would move "
+                         "an operand without nullifying it (double-free). Use an if/else statement "
+                         "with an explicit move in each branch instead");
         return m_types.error_type();
     }
 
@@ -3083,14 +3235,18 @@ void SemanticAnalyzer::retype_out_inout_index_arg(CallArg& arg, Type*& arg_type)
     // See the header comment: an `out`/`inout` container subscript is an
     // lvalue on the element *slot*, so it carries the raw element/value type,
     // not the `borrowed` view the `index` method returns for reads.
-    if (arg.modifier != ParamModifier::Inout && arg.modifier != ParamModifier::Out) return;
-    if (arg.expr->kind != AstKind::ExprIndex) return;
+    if (arg.modifier != ParamModifier::Inout && arg.modifier != ParamModifier::Out)
+        return;
+    if (arg.expr->kind != AstKind::ExprIndex)
+        return;
 
     Type* cont = arg.expr->index.object->resolved_type;
     Type* base = cont ? cont->base_type() : nullptr;
     Type* elem = nullptr;
-    if (base && base->is_list()) elem = base->list_info.element_type;
-    else if (base && base->is_map()) elem = base->map_info.value_type;
+    if (base && base->is_list())
+        elem = base->list_info.element_type;
+    else if (base && base->is_map())
+        elem = base->map_info.value_type;
     if (elem && !elem->is_error()) {
         arg.expr->resolved_type = elem;
         arg_type = elem;
@@ -3161,8 +3317,8 @@ void SemanticAnalyzer::check_call_args(Span<CallArg> args, Span<Type*> param_typ
         // treating them as a move falsely rejects loops like
         // `while (...) { fn(inout xs); }` with "moved in loop body without
         // reassignment", even though `xs` stays live across iterations.
-        if (param_types[i] && param_types[i]->noncopyable()
-            && arg.modifier == ParamModifier::None) {
+        if (param_types[i] && param_types[i]->noncopyable() &&
+            arg.modifier == ParamModifier::None) {
             m_lifetimes.consume_noncopyable(arg.expr, arg.expr->loc);
         }
     }
@@ -3200,13 +3356,15 @@ void SemanticAnalyzer::populate_enum_methods(Type* type) {
 NativeRegistry* SemanticAnalyzer::get_builtin_registry() {
     ModuleInfo* builtin = m_modules.find_module(BUILTIN_MODULE_NAME);
     NativeRegistry* registry = builtin ? builtin->natives : nullptr;
-    if (!registry) registry = m_registry;
+    if (!registry)
+        registry = m_registry;
     return registry;
 }
 
 void SemanticAnalyzer::reject_second_class_coroutine_params(Span<Param> params) {
     for (const Param& param : params) {
-        if (param.modifier == ParamModifier::None) continue;
+        if (param.modifier == ParamModifier::None)
+            continue;
         const char* modifier = param.modifier == ParamModifier::Out ? "out" : "inout";
         error_fmt(param.loc,
                   "cannot use an '{}' parameter in a coroutine: '{}' is a second-class "
@@ -3218,7 +3376,8 @@ void SemanticAnalyzer::reject_second_class_coroutine_params(Span<Param> params) 
 
 void SemanticAnalyzer::populate_coro_methods(Type* type) {
     assert(type && type->is_coroutine());
-    if (type->coro_info.methods.size() > 0) return;
+    if (type->coro_info.methods.size() > 0)
+        return;
 
     Type* yield_type = type->coro_info.yield_type;
     StringView func_name = type->coro_info.func_name;
@@ -3235,16 +3394,20 @@ void SemanticAnalyzer::populate_coro_methods(Type* type) {
     type->coro_info.methods = m_allocator.alloc_span(methods);
 }
 
-void SemanticAnalyzer::populate_container_methods(
-        const char* registry_name, Span<Type*> type_args, Type* container_type,
-        Span<MethodInfo>& out_methods,
-        StringView& out_alloc_name, StringView& out_copy_name) {
-    if (out_methods.size() > 0) return;
+void SemanticAnalyzer::populate_container_methods(const char* registry_name, Span<Type*> type_args,
+                                                  Type* container_type,
+                                                  Span<MethodInfo>& out_methods,
+                                                  StringView& out_alloc_name,
+                                                  StringView& out_copy_name) {
+    if (out_methods.size() > 0)
+        return;
 
     NativeRegistry* registry = get_builtin_registry();
-    if (!registry) return;
+    if (!registry)
+        return;
 
-    out_methods = registry->instantiate_generic_methods(registry_name, type_args, m_allocator, m_types);
+    out_methods =
+        registry->instantiate_generic_methods(registry_name, type_args, m_allocator, m_types);
     out_alloc_name = registry->get_generic_alloc_name(registry_name);
     out_copy_name = registry->get_generic_copy_name(registry_name);
 
@@ -3255,21 +3418,20 @@ void SemanticAnalyzer::populate_container_methods(
     // mints the (module-local-wrapped) synthesized function itself — this
     // native_name records the unwrapped canonical spelling.
     Vector<MethodInfo> methods;
-    for (const MethodInfo& method : out_methods) methods.push_back(method);
+    for (const MethodInfo& method : out_methods)
+        methods.push_back(method);
     StringView to_string_name = rx::mangle_method(
         m_allocator, mangle_type_name(m_allocator, container_type), "to_string"_sv);
-    methods.push_back(make_method("to_string"_sv, Span<Type*>(), m_types.string_type(),
-                                  to_string_name));
+    methods.push_back(
+        make_method("to_string"_sv, Span<Type*>(), m_types.string_type(), to_string_name));
     out_methods = m_allocator.alloc_span(methods);
 }
 
 void SemanticAnalyzer::populate_list_methods(Type* type) {
     assert(type && type->is_list());
-    Type* type_args[] = { type->list_info.element_type };
-    populate_container_methods("List", Span<Type*>(type_args, 1), type,
-                               type->list_info.methods,
-                               type->list_info.alloc_native_name,
-                               type->list_info.copy_native_name);
+    Type* type_args[] = {type->list_info.element_type};
+    populate_container_methods("List", Span<Type*>(type_args, 1), type, type->list_info.methods,
+                               type->list_info.alloc_native_name, type->list_info.copy_native_name);
 }
 
 Type* SemanticAnalyzer::analyze_list_constructor_call(Expr* expr, CallExpr& ce) {
@@ -3278,7 +3440,8 @@ Type* SemanticAnalyzer::analyze_list_constructor_call(Expr* expr, CallExpr& ce) 
         return m_types.error_type();
     }
     Type* elem_type = resolve_type_expr(ce.type_args[0]);
-    if (elem_type->is_error()) return m_types.error_type();
+    if (elem_type->is_error())
+        return m_types.error_type();
 
     Type* list_type = m_types.list_type(elem_type);
     populate_list_methods(list_type);
@@ -3289,7 +3452,7 @@ Type* SemanticAnalyzer::analyze_list_constructor_call(Expr* expr, CallExpr& ce) 
         return m_types.error_type();
     }
 
-    Type* type_args[] = { elem_type };
+    Type* type_args[] = {elem_type};
     ResolvedConstructor ctor = registry->instantiate_generic_constructor(
         "List", Span<Type*>(type_args, 1), m_allocator, m_types);
 
@@ -3298,8 +3461,7 @@ Type* SemanticAnalyzer::analyze_list_constructor_call(Expr* expr, CallExpr& ce) 
         return m_types.error_type();
     }
 
-    if (ce.arguments.size() < ctor.min_args ||
-        ce.arguments.size() > ctor.param_types.size()) {
+    if (ce.arguments.size() < ctor.min_args || ce.arguments.size() > ctor.param_types.size()) {
         error_fmt(expr->loc, "List constructor expects {} to {} argument(s) but got {}",
                   ctor.min_args, ctor.param_types.size(), ce.arguments.size());
         return m_types.error_type();
@@ -3318,11 +3480,14 @@ Type* SemanticAnalyzer::analyze_list_constructor_call(Expr* expr, CallExpr& ce) 
 }
 
 bool SemanticAnalyzer::is_hashable_key_type(Type* type) {
-    if (!type) return false;
+    if (!type)
+        return false;
     // Primitives with Hash trait
-    if (type->is_primitive()) return true;
+    if (type->is_primitive())
+        return true;
     // Enums use i32 underlying, always hashable
-    if (type->is_enum()) return true;
+    if (type->is_enum())
+        return true;
     // Struct keys: allowed via bytewise hash + memcmp at the runtime level
     // (MapKeyKind::Struct). Custom Hash/Eq trait impls on structs are not yet
     // dispatched by the map runtime — bytewise is the only behavior. This is
@@ -3330,16 +3495,19 @@ bool SemanticAnalyzer::is_hashable_key_type(Type* type) {
     // compiler padding); structs containing pointers (e.g. embedded String)
     // hash by pointer identity, not content, so users wanting content-based
     // keys should normalise into a primitive key (e.g. interned String).
-    if (type->is_struct()) return true;
+    if (type->is_struct())
+        return true;
     return false;
 }
 
 void SemanticAnalyzer::register_builtin_exception_types() {
     // Guard: the TypeEnv persists across modules, so register only once.
-    if (m_type_env.named_type_by_name("KeyError"_sv)) return;
+    if (m_type_env.named_type_by_name("KeyError"_sv))
+        return;
 
     Type* exception_trait = m_type_env.exception_type();
-    if (!exception_trait) return;  // Exception trait not registered yet
+    if (!exception_trait)
+        return; // Exception trait not registered yet
 
     // Both are fieldless structs (slot_count 0) whose sole method is a
     // `message(): string`. The message body is synthesized on demand by the IR
@@ -3350,7 +3518,7 @@ void SemanticAnalyzer::register_builtin_exception_types() {
         type->struct_info.slot_count = 0;
         type->struct_info.fields = Span<FieldInfo>();
         type->struct_info.members_resolved = true;
-        derive_struct_move_only(type->struct_info);   // fieldless: copyable
+        derive_struct_move_only(type->struct_info); // fieldless: copyable
 
         Vector<TraitImplRecord> impls;
         impls.push_back(TraitImplRecord{exception_trait, Span<Type*>()});
@@ -3369,11 +3537,9 @@ void SemanticAnalyzer::register_builtin_exception_types() {
 
 void SemanticAnalyzer::populate_map_methods(Type* type) {
     assert(type && type->is_map());
-    Type* type_args[] = { type->map_info.key_type, type->map_info.value_type };
-    populate_container_methods("Map", Span<Type*>(type_args, 2), type,
-                               type->map_info.methods,
-                               type->map_info.alloc_native_name,
-                               type->map_info.copy_native_name);
+    Type* type_args[] = {type->map_info.key_type, type->map_info.value_type};
+    populate_container_methods("Map", Span<Type*>(type_args, 2), type, type->map_info.methods,
+                               type->map_info.alloc_native_name, type->map_info.copy_native_name);
 }
 
 Type* SemanticAnalyzer::analyze_map_constructor_call(Expr* expr, CallExpr& ce) {
@@ -3383,8 +3549,10 @@ Type* SemanticAnalyzer::analyze_map_constructor_call(Expr* expr, CallExpr& ce) {
     }
     Type* key_type = resolve_type_expr(ce.type_args[0]);
     Type* val_type = resolve_type_expr(ce.type_args[1]);
-    if (key_type->is_error()) return m_types.error_type();
-    if (val_type->is_error()) return m_types.error_type();
+    if (key_type->is_error())
+        return m_types.error_type();
+    if (val_type->is_error())
+        return m_types.error_type();
 
     if (!is_hashable_key_type(key_type)) {
         error(expr->loc, "Map key type must be a primitive, enum, or struct");
@@ -3400,7 +3568,7 @@ Type* SemanticAnalyzer::analyze_map_constructor_call(Expr* expr, CallExpr& ce) {
         return m_types.error_type();
     }
 
-    Type* type_arg_array[] = { key_type, val_type };
+    Type* type_arg_array[] = {key_type, val_type};
     ResolvedConstructor ctor = registry->instantiate_generic_constructor(
         "Map", Span<Type*>(type_arg_array, 2), m_allocator, m_types);
 
@@ -3430,12 +3598,14 @@ Type* SemanticAnalyzer::analyze_map_constructor_call(Expr* expr, CallExpr& ce) {
     return map_type;
 }
 
-Type* SemanticAnalyzer::analyze_generic_struct_constructor_call(Expr* expr, CallExpr& ce, StringView func_name) {
+Type* SemanticAnalyzer::analyze_generic_struct_constructor_call(Expr* expr, CallExpr& ce,
+                                                                StringView func_name) {
     // Resolve type args
     Vector<Type*> type_arg_types;
     for (auto& type_arg : ce.type_args) {
         Type* arg_type = resolve_type_expr(type_arg);
-        if (arg_type->is_error()) return m_types.error_type();
+        if (arg_type->is_error())
+            return m_types.error_type();
         type_arg_types.push_back(arg_type);
     }
 
@@ -3493,7 +3663,7 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
         // If no default constructor but there are args, error
         if (!ctor && ce.arguments.size() > 0) {
             error_fmt(expr->loc, "parent struct '{}' has no constructor that takes arguments",
-                     parent_struct_type_info.name);
+                      parent_struct_type_info.name);
             return m_types.void_type();
         }
 
@@ -3501,7 +3671,7 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
         if (ctor) {
             if (ce.arguments.size() != ctor->param_types.size()) {
                 error_fmt(expr->loc, "parent constructor expects {} argument(s) but got {}",
-                         ctor->param_types.size(), ce.arguments.size());
+                          ctor->param_types.size(), ce.arguments.size());
                 return m_types.void_type();
             }
             check_super_call_arg_types(ce, ctor->param_types);
@@ -3514,13 +3684,14 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
 
     // method_name is not empty - this is super.name()
     // First try to find it as a constructor, then as a method
-    const ConstructorInfo* ctor = find_constructor(parent_struct_type_info.constructors, super_expr.method_name);
+    const ConstructorInfo* ctor =
+        find_constructor(parent_struct_type_info.constructors, super_expr.method_name);
 
     if (ctor) {
         // It's a named constructor call
         if (ce.arguments.size() != ctor->param_types.size()) {
             error_fmt(expr->loc, "parent constructor expects {} argument(s) but got {}",
-                     ctor->param_types.size(), ce.arguments.size());
+                      ctor->param_types.size(), ce.arguments.size());
             return m_types.void_type();
         }
         check_super_call_arg_types(ce, ctor->param_types);
@@ -3535,14 +3706,15 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
 
     // Not a constructor - try method
     Type* found_in_type = nullptr;
-    const MethodInfo* mi = lookup_method_in_hierarchy(parent_type, super_expr.method_name, &found_in_type);
+    const MethodInfo* mi =
+        lookup_method_in_hierarchy(parent_type, super_expr.method_name, &found_in_type);
 
     if (mi) {
         // It's a super method call
         // Type-check arguments
         if (ce.arguments.size() != mi->param_types.size()) {
             error_fmt(expr->loc, "method '{}' expects {} argument(s) but got {}",
-                     super_expr.method_name, mi->param_types.size(), ce.arguments.size());
+                      super_expr.method_name, mi->param_types.size(), ce.arguments.size());
             return mi->return_type;
         }
         check_super_call_arg_types(ce, mi->param_types);
@@ -3554,30 +3726,30 @@ Type* SemanticAnalyzer::analyze_super_call(Expr* expr, CallExpr& ce) {
 
     // Neither constructor nor method
     error_fmt(expr->loc, "parent struct '{}' has no constructor or method '{}'",
-             parent_struct_type_info.name, super_expr.method_name);
+              parent_struct_type_info.name, super_expr.method_name);
     return m_types.error_type();
 }
 
 bool SemanticAnalyzer::check_container_copy_method(Expr* expr, Type* base_type,
                                                    StringView method_name) {
-    if (method_name != "copy"_sv || !base_type) return true;
+    if (method_name != "copy"_sv || !base_type)
+        return true;
 
     if (base_type->is_list()) {
         Type* et = base_type->list_info.element_type;
         if (et && !et->is_copy()) {
             error_fmt(expr->loc,
-                "cannot '.copy()' a List with a non-copyable element type '{}' "
-                "(its elements own resources that can't be duplicated)",
-                m_checker.type_string(et).data());
+                      "cannot '.copy()' a List with a non-copyable element type '{}' "
+                      "(its elements own resources that can't be duplicated)",
+                      m_checker.type_string(et).data());
             return false;
         }
     } else if (base_type->is_map()) {
         Type* kt = base_type->map_info.key_type;
         Type* vt = base_type->map_info.value_type;
         if ((kt && !kt->is_copy()) || (vt && !vt->is_copy())) {
-            error_fmt(expr->loc,
-                "cannot '.copy()' a Map with a non-copyable key or value type "
-                "(its entries own resources that can't be duplicated)");
+            error_fmt(expr->loc, "cannot '.copy()' a Map with a non-copyable key or value type "
+                                 "(its entries own resources that can't be duplicated)");
             return false;
         }
     }
@@ -3585,16 +3757,15 @@ bool SemanticAnalyzer::check_container_copy_method(Expr* expr, Type* base_type,
 }
 
 Type* SemanticAnalyzer::analyze_builtin_method_call(Expr* expr, CallExpr& ce, GetExpr& ge,
-                                                     Type* obj_type, const MethodInfo* mi) {
+                                                    Type* obj_type, const MethodInfo* mi) {
     Type* base_type = obj_type->base_type();
     if (!check_container_copy_method(expr, base_type, mi->name)) {
         return m_types.error_type();
     }
 
     if (ce.arguments.size() != mi->param_types.size()) {
-        error_fmt(expr->loc, "{}() expects {} argument(s) but got {}",
-                 mi->name, mi->param_types.size(),
-                 ce.arguments.size());
+        error_fmt(expr->loc, "{}() expects {} argument(s) but got {}", mi->name,
+                  mi->param_types.size(), ce.arguments.size());
         return mi->return_type;
     }
     check_call_args(ce.arguments, mi->param_types, Span<Param>(), expr->loc);
@@ -3608,16 +3779,17 @@ Type* SemanticAnalyzer::analyze_builtin_method_call(Expr* expr, CallExpr& ce, Ge
 }
 
 Type* SemanticAnalyzer::analyze_struct_method_call(Expr* expr, CallExpr& ce, GetExpr& ge,
-                                                    Type* obj_type, Type* base_type) {
+                                                   Type* obj_type, Type* base_type) {
     // Look for a method with this name (walks inheritance hierarchy)
     Type* found_in_type = nullptr;
     const MethodInfo* mi = lookup_method_in_hierarchy(base_type, ge.name, &found_in_type);
-    if (!mi) return nullptr;  // Not a method - caller will fall through
+    if (!mi)
+        return nullptr; // Not a method - caller will fall through
 
     // Check argument count (NOT including implicit self)
     if (ce.arguments.size() != mi->param_types.size()) {
-        error_fmt(expr->loc, "method expects {} argument(s) but got {}",
-                 mi->param_types.size(), ce.arguments.size());
+        error_fmt(expr->loc, "method expects {} argument(s) but got {}", mi->param_types.size(),
+                  ce.arguments.size());
         return mi->return_type;
     }
 
@@ -3631,7 +3803,7 @@ Type* SemanticAnalyzer::analyze_struct_method_call(Expr* expr, CallExpr& ce, Get
 
     // Store the struct type where method was found in the GetExpr
     // IR builder will use this for correct method name mangling
-    ge.object->resolved_type = obj_type;  // Keep original object type
+    ge.object->resolved_type = obj_type; // Keep original object type
 
     return mi->return_type;
 }
@@ -3649,22 +3821,25 @@ static StringView overload_member_flat_name(Symbol* member) {
 }
 
 bool SemanticAnalyzer::coerce_overloaded_fun_ref(Expr* expr, Type* expected) {
-    if (!expr || expr->kind != AstKind::ExprIdentifier) return true;
+    if (!expr || expr->kind != AstKind::ExprIdentifier)
+        return true;
     IdentifierExpr& id = expr->identifier;
-    if (!id.is_overloaded_ref) return true;
+    if (!id.is_overloaded_ref)
+        return true;
 
     Type* expected_fn = expected ? expected->base_type() : nullptr;
     if (!expected_fn || !expected_fn->is_function()) {
         error_fmt(expr->loc,
-            "reference to overloaded function '{}' is ambiguous; a fun(...)-typed "
-            "context (e.g. a typed variable or parameter) is needed to pick the overload",
-            id.name);
+                  "reference to overloaded function '{}' is ambiguous; a fun(...)-typed "
+                  "context (e.g. a typed variable or parameter) is needed to pick the overload",
+                  id.name);
         return false;
     }
 
     // Function types are interned — pointer equality is an exact signature match.
     for (Symbol* member = id.resolved_sym; member; member = member->next_overload) {
-        if (member->type != expected_fn) continue;
+        if (member->type != expected_fn)
+            continue;
         id.mangled_name = overload_member_flat_name(member);
         id.resolved_sym = member;
         id.is_overloaded_ref = false;
@@ -3672,16 +3847,19 @@ bool SemanticAnalyzer::coerce_overloaded_fun_ref(Expr* expr, Type* expected) {
         return true;
     }
     auto expected_str = m_checker.type_string(expected_fn);
-    error_fmt(expr->loc, "no overload of '{}' matches the expected type '{}'",
-             id.name, expected_str.data());
+    error_fmt(expr->loc, "no overload of '{}' matches the expected type '{}'", id.name,
+              expected_str.data());
     return false;
 }
 
 bool SemanticAnalyzer::try_print_printable_fallback(Expr* expr, CallExpr& ce, Symbol* head,
                                                     const Vector<Type*>& arg_types) {
-    if (head->name != "print"_sv) return false;
-    if (ce.arguments.size() != 1 || arg_types.size() != 1) return false;
-    if (ce.arguments[0].modifier != ParamModifier::None) return false;
+    if (head->name != "print"_sv)
+        return false;
+    if (ce.arguments.size() != 1 || arg_types.size() != 1)
+        return false;
+    if (ce.arguments[0].modifier != ParamModifier::None)
+        return false;
 
     // Settle an unsuffixed literal on its default (can only be reached with a
     // literal if no numeric print overload exists — settle defensively).
@@ -3690,19 +3868,22 @@ bool SemanticAnalyzer::try_print_printable_fallback(Expr* expr, CallExpr& ce, Sy
         m_checker.coerce_numeric_literal(ce.arguments[0].expr, default_literal_type(arg_type));
         arg_type = ce.arguments[0].expr->resolved_type;
     }
-    if (!arg_type || !type_implements_printable(arg_type)) return false;
+    if (!arg_type || !type_implements_printable(arg_type))
+        return false;
 
     // The rewrite target: the print(string) member.
     Symbol* string_member = nullptr;
     for (Symbol* member = head; member; member = member->next_overload) {
-        if (!member->type || !member->type->is_function()) continue;
+        if (!member->type || !member->type->is_function())
+            continue;
         Span<Type*> params = member->type->func_info.param_types;
         if (params.size() == 1 && params[0] == m_types.string_type()) {
             string_member = member;
             break;
         }
     }
-    if (!string_member) return false;
+    if (!string_member)
+        return false;
 
     // Synthesize `arg.to_string()` around the ALREADY-analyzed argument —
     // hand-annotated exactly as the method-call analyzers would have, never
@@ -3744,9 +3925,10 @@ bool SemanticAnalyzer::try_print_printable_fallback(Expr* expr, CallExpr& ce, Sy
         Type* found_in_type = nullptr;
         const MethodInfo* struct_method =
             lookup_method_in_hierarchy(base_type, "to_string"_sv, &found_in_type);
-        if (!struct_method) return false;  // Printable said yes, so shouldn't happen
-        getter->resolved_type = build_method_function_type(
-            found_in_type ? found_in_type : base_type, struct_method);
+        if (!struct_method)
+            return false; // Printable said yes, so shouldn't happen
+        getter->resolved_type =
+            build_method_function_type(found_in_type ? found_in_type : base_type, struct_method);
     } else {
         return false;
     }
@@ -3790,14 +3972,17 @@ Type* SemanticAnalyzer::analyze_overloaded_call(Expr* expr, CallExpr& ce, Symbol
             i < member->decl->fun_decl.params.size()) {
             return member->decl->fun_decl.params[i].modifier;
         }
-        return ParamModifier::None;  // natives: no out/inout params
+        return ParamModifier::None; // natives: no out/inout params
     };
     auto shape_matches = [&](Symbol* member) -> bool {
-        if (!member->type || !member->type->is_function()) return false;
+        if (!member->type || !member->type->is_function())
+            return false;
         Span<Type*> param_types = member->type->func_info.param_types;
-        if (param_types.size() != args.size()) return false;
+        if (param_types.size() != args.size())
+            return false;
         for (u32 i = 0; i < args.size(); i++) {
-            if (member_param_modifier(member, i) != args[i].modifier) return false;
+            if (member_param_modifier(member, i) != args[i].modifier)
+                return false;
         }
         return true;
     };
@@ -3805,8 +3990,8 @@ Type* SemanticAnalyzer::analyze_overloaded_call(Expr* expr, CallExpr& ce, Symbol
     // any function-typed param position; the winner's commit coerces it.
     auto arg_is_deferred_ref = [&](u32 i) -> bool {
         return args[i].expr->kind == AstKind::ExprIdentifier &&
-            (args[i].expr->identifier.is_generic_template_ref ||
-             args[i].expr->identifier.is_overloaded_ref);
+               (args[i].expr->identifier.is_generic_template_ref ||
+                args[i].expr->identifier.is_overloaded_ref);
     };
 
     bool any_shape = false;
@@ -3816,7 +4001,8 @@ Type* SemanticAnalyzer::analyze_overloaded_call(Expr* expr, CallExpr& ce, Symbol
     // type equality per position (duplicate signatures are definition errors,
     // so at most one member can match).
     for (Symbol* member = head; member; member = member->next_overload) {
-        if (!shape_matches(member)) continue;
+        if (!shape_matches(member))
+            continue;
         any_shape = true;
         Span<Type*> param_types = member->type->func_info.param_types;
         bool exact = true;
@@ -3828,9 +4014,15 @@ Type* SemanticAnalyzer::analyze_overloaded_call(Expr* expr, CallExpr& ce, Symbol
                 }
                 continue;
             }
-            if (default_literal_type(arg_types[i]) != param_types[i]) { exact = false; break; }
+            if (default_literal_type(arg_types[i]) != param_types[i]) {
+                exact = false;
+                break;
+            }
         }
-        if (exact) { winner = member; break; }
+        if (exact) {
+            winner = member;
+            break;
+        }
     }
 
     // Assignable pass (original, unsettled arg types — literal polymorphism
@@ -3838,7 +4030,8 @@ Type* SemanticAnalyzer::analyze_overloaded_call(Expr* expr, CallExpr& ce, Symbol
     Symbol* ambiguous_with = nullptr;
     if (!winner) {
         for (Symbol* member = head; member; member = member->next_overload) {
-            if (!shape_matches(member)) continue;
+            if (!shape_matches(member))
+                continue;
             Span<Type*> param_types = member->type->func_info.param_types;
             bool ok = true;
             for (u32 i = 0; i < args.size(); i++) {
@@ -3851,13 +4044,23 @@ Type* SemanticAnalyzer::analyze_overloaded_call(Expr* expr, CallExpr& ce, Symbol
                 }
                 if (args[i].modifier == ParamModifier::Out) {
                     // Write-only: the variable's declared type must match.
-                    if (arg_types[i] != param_types[i]) { ok = false; break; }
+                    if (arg_types[i] != param_types[i]) {
+                        ok = false;
+                        break;
+                    }
                     continue;
                 }
-                if (!m_checker.is_assignable(param_types[i], arg_types[i])) { ok = false; break; }
+                if (!m_checker.is_assignable(param_types[i], arg_types[i])) {
+                    ok = false;
+                    break;
+                }
             }
-            if (!ok) continue;
-            if (winner) { ambiguous_with = member; break; }
+            if (!ok)
+                continue;
+            if (winner) {
+                ambiguous_with = member;
+                break;
+            }
             winner = member;
         }
     }
@@ -3866,20 +4069,21 @@ Type* SemanticAnalyzer::analyze_overloaded_call(Expr* expr, CallExpr& ce, Symbol
         if (ambiguous_with) {
             error_fmt(expr->loc, "ambiguous call to overloaded function '{}'", head->name);
         } else if (!any_shape) {
-            error_fmt(expr->loc, "no overload of '{}' takes {} argument(s)",
-                     head->name, args.size());
+            error_fmt(expr->loc, "no overload of '{}' takes {} argument(s)", head->name,
+                      args.size());
         } else if (!try_print_printable_fallback(expr, ce, head, arg_types)) {
             error_fmt(expr->loc, "no matching overload of '{}' for the given argument types",
-                     head->name);
+                      head->name);
         } else {
-            return m_types.void_type();  // rewritten to print(arg.to_string())
+            return m_types.void_type(); // rewritten to print(arg.to_string())
         }
         // List the candidate signatures to make the failure actionable.
         for (Symbol* member = head; member; member = member->next_overload) {
-            if (!member->type || !member->type->is_function()) continue;
+            if (!member->type || !member->type->is_function())
+                continue;
             auto sig_str = m_checker.type_string(member->type);
-            error_fmt(member->loc.line ? member->loc : expr->loc,
-                     "  candidate: {} {}", head->name, sig_str.data());
+            error_fmt(member->loc.line ? member->loc : expr->loc, "  candidate: {} {}", head->name,
+                      sig_str.data());
         }
         return m_types.error_type();
     }
@@ -3892,11 +4096,11 @@ Type* SemanticAnalyzer::analyze_overloaded_call(Expr* expr, CallExpr& ce, Symbol
         // 'out' args are write-only (no type check). No modifier re-check
         // here: the shape filter already guaranteed per-position modifier
         // equality for the winner.
-        arg_types[i] = coerce_and_check_value(arg.expr, param_types[i], arg_types[i],
-                                              arg.expr->loc,
-                                              /*skip_type_check=*/arg.modifier == ParamModifier::Out);
-        if (param_types[i] && param_types[i]->noncopyable()
-            && arg.modifier == ParamModifier::None) {
+        arg_types[i] =
+            coerce_and_check_value(arg.expr, param_types[i], arg_types[i], arg.expr->loc,
+                                   /*skip_type_check=*/arg.modifier == ParamModifier::Out);
+        if (param_types[i] && param_types[i]->noncopyable() &&
+            arg.modifier == ParamModifier::None) {
             m_lifetimes.consume_noncopyable(arg.expr, arg.expr->loc);
         }
     }
@@ -3912,7 +4116,8 @@ Type* SemanticAnalyzer::analyze_overloaded_call(Expr* expr, CallExpr& ce, Symbol
 
 Type* SemanticAnalyzer::analyze_regular_fun_call(Expr* expr, CallExpr& ce) {
     Type* callee_type = analyze_expr(ce.callee);
-    if (callee_type->is_error()) return m_types.error_type();
+    if (callee_type->is_error())
+        return m_types.error_type();
 
     // A borrowed function value (`ref fun` / `weak fun`) is the same env-pointer
     // representation as a `fun` value, so it is callable too — unwrap the borrow.
@@ -3926,8 +4131,8 @@ Type* SemanticAnalyzer::analyze_regular_fun_call(Expr* expr, CallExpr& ce) {
 
     // Check argument count
     if (ce.arguments.size() != fti.param_types.size()) {
-        error_fmt(expr->loc, "call expects {} argument(s) but got {}",
-                 fti.param_types.size(), ce.arguments.size());
+        error_fmt(expr->loc, "call expects {} argument(s) but got {}", fti.param_types.size(),
+                  ce.arguments.size());
         return fti.return_type;
     }
 
@@ -3949,7 +4154,8 @@ Type* SemanticAnalyzer::analyze_regular_fun_call(Expr* expr, CallExpr& ce) {
 Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
     CallExpr& call_expr = expr->call;
 
-    if (!call_expr.callee) return m_types.error_type();
+    if (!call_expr.callee)
+        return m_types.error_type();
 
     // Primitive type cast: i32(x), f64(x), bool(x)
     if (call_expr.callee->kind == AstKind::ExprIdentifier) {
@@ -3992,7 +4198,8 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
         Type* ctor_type = m_type_env.named_type_by_name(type_name);
         if (ctor_type && ctor_type->is_struct()) {
             call_expr.callee->resolved_type = ctor_type;
-            return analyze_constructor_call(expr, ctor_type, call_expr.constructor_name, call_expr.is_heap);
+            return analyze_constructor_call(expr, ctor_type, call_expr.constructor_name,
+                                            call_expr.is_heap);
         }
     }
 
@@ -4005,7 +4212,8 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
             if (named_ctor_type && named_ctor_type->is_struct()) {
                 get_expr.object->resolved_type = named_ctor_type;
                 call_expr.constructor_name = get_expr.name;
-                return analyze_constructor_call(expr, named_ctor_type, get_expr.name, call_expr.is_heap);
+                return analyze_constructor_call(expr, named_ctor_type, get_expr.name,
+                                                call_expr.is_heap);
             }
         }
     }
@@ -4029,8 +4237,9 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
                     // when the element type is itself Printable.
                     if (mi->name == "to_string"_sv && !type_implements_printable(base_type)) {
                         error_fmt(expr->loc,
-                                 "type '{}' does not implement Printable (element type has no to_string)",
-                                 m_checker.type_string(base_type).data());
+                                  "type '{}' does not implement Printable (element type has no "
+                                  "to_string)",
+                                  m_checker.type_string(base_type).data());
                         return m_types.error_type();
                     }
                     return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
@@ -4043,20 +4252,22 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
                 if (mi) {
                     if (mi->name == "to_string"_sv && !type_implements_printable(base_type)) {
                         error_fmt(expr->loc,
-                                 "type '{}' does not implement Printable (key or value type has no to_string)",
-                                 m_checker.type_string(base_type).data());
+                                  "type '{}' does not implement Printable (key or value type has "
+                                  "no to_string)",
+                                  m_checker.type_string(base_type).data());
                         return m_types.error_type();
                     }
                     // get_or must copy either the stored value or the fallback out
                     // by value; a move-only value type can't be copied and returning
                     // the stored one would alias the map's owned storage. Steer those
                     // to .contains() + .get() (a borrow) instead.
-                    if (mi->name == "get_or"_sv && base_type->map_info.value_type
-                        && base_type->map_info.value_type->noncopyable()) {
-                        error_fmt(expr->loc,
-                                 "Map.get_or requires a copyable value type, but '{}' is move-only; "
-                                 "use .contains() then .get() instead",
-                                 m_checker.type_string(base_type->map_info.value_type).data());
+                    if (mi->name == "get_or"_sv && base_type->map_info.value_type &&
+                        base_type->map_info.value_type->noncopyable()) {
+                        error_fmt(
+                            expr->loc,
+                            "Map.get_or requires a copyable value type, but '{}' is move-only; "
+                            "use .contains() then .get() instead",
+                            m_checker.type_string(base_type->map_info.value_type).data());
                         return m_types.error_type();
                     }
                     return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
@@ -4066,7 +4277,8 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
             }
             if (base_type && base_type->is_coroutine()) {
                 const MethodInfo* mi = lookup_coro_method(base_type->coro_info, get_expr.name);
-                if (mi) return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
+                if (mi)
+                    return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
                 error_fmt(expr->loc, "Coro has no method '{}'", get_expr.name);
                 return m_types.error_type();
             }
@@ -4079,26 +4291,29 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
             // which carries no methods).
             if (base_type && (base_type->is_primitive() || base_type->is_numeric_literal())) {
                 if (base_type->is_numeric_literal()) {
-                    m_checker.coerce_numeric_literal(get_expr.object, default_literal_type(base_type));
+                    m_checker.coerce_numeric_literal(get_expr.object,
+                                                     default_literal_type(base_type));
                     obj_type = get_expr.object->resolved_type;
                     base_type = obj_type->base_type();
                 }
-                const MethodInfo* mi = m_types.lookup_primitive_method(base_type->kind, get_expr.name);
+                const MethodInfo* mi =
+                    m_types.lookup_primitive_method(base_type->kind, get_expr.name);
                 if (mi) {
-                    BinaryOp bop; UnaryOp uop;
-                    bool op_lowerable = trait_method_to_binary_op(get_expr.name, bop)
-                                     || trait_method_to_unary_op(get_expr.name, uop);
+                    BinaryOp bop;
+                    UnaryOp uop;
+                    bool op_lowerable = trait_method_to_binary_op(get_expr.name, bop) ||
+                                        trait_method_to_unary_op(get_expr.name, uop);
                     if (!mi->native_name.empty() || op_lowerable) {
                         return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
                     }
                     // Registered but unlowerable as an explicit call — the
                     // compound-assign methods, which need an assignable receiver.
                     error_fmt(expr->loc, "method '{}' cannot be called explicitly on type '{}'",
-                             get_expr.name, m_checker.type_string(base_type).data());
+                              get_expr.name, m_checker.type_string(base_type).data());
                     return m_types.error_type();
                 }
                 error_fmt(expr->loc, "type '{}' has no method '{}'",
-                         m_checker.type_string(base_type).data(), get_expr.name);
+                          m_checker.type_string(base_type).data(), get_expr.name);
                 return m_types.error_type();
             }
             // Enum receiver: eq/ne (and the ordered comparisons) come from the
@@ -4110,25 +4325,30 @@ Type* SemanticAnalyzer::analyze_call_expr(Expr* expr) {
                 if (!mi && (get_expr.name == "to_string"_sv || get_expr.name == "hash"_sv)) {
                     mi = m_types.lookup_primitive_method(TypeKind::I32, get_expr.name);
                 }
-                if (mi) return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
-                error_fmt(expr->loc, "enum '{}' has no method '{}'",
-                         base_type->enum_info.name, get_expr.name);
+                if (mi)
+                    return analyze_builtin_method_call(expr, call_expr, get_expr, obj_type, mi);
+                error_fmt(expr->loc, "enum '{}' has no method '{}'", base_type->enum_info.name,
+                          get_expr.name);
                 return m_types.error_type();
             }
             if (base_type && base_type->is_type_param() && m_generic_calls.has_active_bounds()) {
                 Type* found_in_trait = nullptr;
-                const TraitMethodInfo* trait_method = m_generic_calls.lookup_type_param_method(base_type, get_expr.name, &found_in_trait);
+                const TraitMethodInfo* trait_method = m_generic_calls.lookup_type_param_method(
+                    base_type, get_expr.name, &found_in_trait);
                 if (trait_method) {
-                    return m_generic_calls.analyze_type_param_method_call(expr, call_expr, get_expr, obj_type, base_type,
-                                                          trait_method, found_in_trait);
+                    return m_generic_calls.analyze_type_param_method_call(
+                        expr, call_expr, get_expr, obj_type, base_type, trait_method,
+                        found_in_trait);
                 }
                 error_fmt(expr->loc, "no method '{}' found in trait bounds for type parameter '{}'",
-                         get_expr.name, base_type->type_param_info.name);
+                          get_expr.name, base_type->type_param_info.name);
                 return m_types.error_type();
             }
             if (base_type && base_type->is_struct()) {
-                Type* result = analyze_struct_method_call(expr, call_expr, get_expr, obj_type, base_type);
-                if (result) return result;
+                Type* result =
+                    analyze_struct_method_call(expr, call_expr, get_expr, obj_type, base_type);
+                if (result)
+                    return result;
             }
         }
     }
@@ -4153,7 +4373,8 @@ Type* SemanticAnalyzer::analyze_primitive_cast(Expr* expr, Type* target_type) {
 
     // Must have exactly one argument
     if (call_expr.arguments.size() != 1) {
-        error_fmt(expr->loc, "type cast requires exactly 1 argument, got {}", call_expr.arguments.size());
+        error_fmt(expr->loc, "type cast requires exactly 1 argument, got {}",
+                  call_expr.arguments.size());
         return m_types.error_type();
     }
 
@@ -4193,7 +4414,8 @@ Type* SemanticAnalyzer::analyze_primitive_cast(Expr* expr, Type* target_type) {
     return target_type;
 }
 
-Type* SemanticAnalyzer::analyze_constructor_call(Expr* expr, Type* struct_type, StringView ctor_name, bool is_heap) {
+Type* SemanticAnalyzer::analyze_constructor_call(Expr* expr, Type* struct_type,
+                                                 StringView ctor_name, bool is_heap) {
     CallExpr& call_expr = expr->call;
     StructTypeInfo& struct_type_info = struct_type->struct_info;
 
@@ -4202,7 +4424,8 @@ Type* SemanticAnalyzer::analyze_constructor_call(Expr* expr, Type* struct_type, 
 
     // If a constructor name was specified but not found
     if (!ctor_name.empty() && !ctor) {
-        error_fmt(expr->loc, "struct '{}' has no constructor '{}'", struct_type_info.name, ctor_name);
+        error_fmt(expr->loc, "struct '{}' has no constructor '{}'", struct_type_info.name,
+                  ctor_name);
         return m_types.error_type();
     }
 
@@ -4218,7 +4441,7 @@ Type* SemanticAnalyzer::analyze_constructor_call(Expr* expr, Type* struct_type, 
         // Check argument count
         if (call_expr.arguments.size() != ctor->param_types.size()) {
             error_fmt(expr->loc, "constructor expects {} argument(s) but got {}",
-                     ctor->param_types.size(), call_expr.arguments.size());
+                      ctor->param_types.size(), call_expr.arguments.size());
             return result_type();
         }
 
@@ -4226,14 +4449,14 @@ Type* SemanticAnalyzer::analyze_constructor_call(Expr* expr, Type* struct_type, 
         // null decl (a synthetic constructor, or an LSP-recovered one whose AST
         // never fully formed) — fall back to empty params, matching the
         // destructor path in analyze_delete_stmt and the method/free-fun paths.
-        Span<Param> ctor_params = ctor->decl ? ctor->decl->constructor_decl.params
-                                             : Span<Param>();
+        Span<Param> ctor_params = ctor->decl ? ctor->decl->constructor_decl.params : Span<Param>();
         check_call_args(call_expr.arguments, ctor->param_types, ctor_params, expr->loc);
     } else {
         // No constructor defined - either using default construction or error
         if (!ctor_name.empty()) {
             // Named constructor was requested but struct has no constructors
-            error_fmt(expr->loc, "struct '{}' has no constructor '{}'", struct_type_info.name, ctor_name);
+            error_fmt(expr->loc, "struct '{}' has no constructor '{}'", struct_type_info.name,
+                      ctor_name);
             return m_types.error_type();
         }
 
@@ -4254,7 +4477,8 @@ Type* SemanticAnalyzer::analyze_index_expr(Expr* expr) {
     Type* obj_type = analyze_expr(index_expr.object);
     Type* idx_type = analyze_expr(index_expr.index);
 
-    if (obj_type->is_error()) return m_types.error_type();
+    if (obj_type->is_error())
+        return m_types.error_type();
 
     // Unwrap reference types
     Type* base_type = obj_type->base_type();
@@ -4263,7 +4487,8 @@ Type* SemanticAnalyzer::analyze_index_expr(Expr* expr) {
     const MethodInfo* method_info = m_types.lookup_method(base_type, "index"_sv);
     if (method_info && method_info->param_types.size() == 1) {
         if (!idx_type->is_error()) {
-            m_checker.check_assignable(method_info->param_types[0], idx_type, index_expr.index->loc);
+            m_checker.check_assignable(method_info->param_types[0], idx_type,
+                                       index_expr.index->loc);
             m_checker.coerce_numeric_literal(index_expr.index, method_info->param_types[0]);
         }
         return method_info->return_type;
@@ -4276,7 +4501,8 @@ Type* SemanticAnalyzer::analyze_index_expr(Expr* expr) {
 Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
     GetExpr& get_expr = expr->get;
 
-    if (!get_expr.object) return m_types.error_type();
+    if (!get_expr.object)
+        return m_types.error_type();
 
     // Check for module-qualified access: module.member
     if (get_expr.object->kind == AstKind::ExprIdentifier) {
@@ -4311,46 +4537,51 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
                 }
                 if (member_count > 1) {
                     error_fmt(expr->loc,
-                        "'{}' is overloaded in module '{}'; import it with `from ... import {}` to call it",
-                        get_expr.name, name, get_expr.name);
+                              "'{}' is overloaded in module '{}'; import it with `from ... import "
+                              "{}` to call it",
+                              get_expr.name, name, get_expr.name);
                     return m_types.error_type();
                 }
             }
 
             // Mark the expression with the module info for later use by IR builder
             // We set resolved_type on the object to indicate it's a module reference
-            get_expr.object->resolved_type = nullptr;  // Modules don't have a type
+            get_expr.object->resolved_type = nullptr; // Modules don't have a type
 
             return exp->type;
         }
     }
 
     Type* obj_type = analyze_expr(get_expr.object);
-    if (obj_type->is_error()) return m_types.error_type();
+    if (obj_type->is_error())
+        return m_types.error_type();
 
     // Unwrap reference types
     Type* base_type = obj_type->base_type();
 
     if (base_type->is_list()) {
-        error(get_expr.object->loc, "cannot access fields of List type; use methods like .len(), .push(), .pop()");
+        error(get_expr.object->loc,
+              "cannot access fields of List type; use methods like .len(), .push(), .pop()");
         return m_types.error_type();
     }
 
     if (base_type->is_map()) {
-        error(get_expr.object->loc, "cannot access fields of Map type; use methods like .get(), .insert(), .len()");
+        error(get_expr.object->loc,
+              "cannot access fields of Map type; use methods like .get(), .insert(), .len()");
         return m_types.error_type();
     }
 
     if (base_type->is_type_param() && m_generic_calls.has_active_bounds()) {
         // Type parameters have no fields, but may have methods via bounds
         Type* found_in_trait = nullptr;
-        const TraitMethodInfo* trait_method = m_generic_calls.lookup_type_param_method(base_type, get_expr.name, &found_in_trait);
+        const TraitMethodInfo* trait_method =
+            m_generic_calls.lookup_type_param_method(base_type, get_expr.name, &found_in_trait);
         if (trait_method) {
             // Methods on type params must be called, not accessed as values
             return m_types.error_type();
         }
         error_fmt(expr->loc, "type parameter '{}' has no field or method '{}'",
-                 base_type->type_param_info.name, get_expr.name);
+                  base_type->type_param_info.name, get_expr.name);
         return m_types.error_type();
     }
 
@@ -4365,10 +4596,12 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
         if (field.name == get_expr.name) {
             // Check visibility: non-public fields can only be accessed from the same module
             // If either module name is empty, we're in single-file mode where all access is allowed
-            bool same_module = struct_type_info.module_name.empty() || m_program->module_name.empty() ||
+            bool same_module = struct_type_info.module_name.empty() ||
+                               m_program->module_name.empty() ||
                                struct_type_info.module_name == m_program->module_name;
             if (!field.is_pub && !same_module) {
-                error_fmt(expr->loc, "field '{}' is private in struct '{}'", get_expr.name, struct_type_info.name);
+                error_fmt(expr->loc, "field '{}' is private in struct '{}'", get_expr.name,
+                          struct_type_info.name);
                 return m_types.error_type();
             }
             return field.type;
@@ -4378,14 +4611,15 @@ Type* SemanticAnalyzer::analyze_get_expr(Expr* expr) {
     // Look up variant field in when clauses (tagged union)
     const WhenClauseInfo* found_clause = nullptr;
     const VariantInfo* found_variant = nullptr;
-    const VariantFieldInfo* variant_field_info = struct_type_info.find_variant_field(get_expr.name, &found_clause, &found_variant);
+    const VariantFieldInfo* variant_field_info =
+        struct_type_info.find_variant_field(get_expr.name, &found_clause, &found_variant);
     if (variant_field_info) {
         // Variant field access - semantic analysis allows it, runtime will check discriminant
         bool same_module = struct_type_info.module_name.empty() || m_program->module_name.empty() ||
                            struct_type_info.module_name == m_program->module_name;
         if (!variant_field_info->is_pub && !same_module) {
-            error_fmt(expr->loc, "variant field '{}' is private in struct '{}'",
-                      get_expr.name, struct_type_info.name);
+            error_fmt(expr->loc, "variant field '{}' is private in struct '{}'", get_expr.name,
+                      struct_type_info.name);
             return m_types.error_type();
         }
         return variant_field_info->type;
@@ -4440,8 +4674,7 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
     // so the move check in analyze_expr doesn't fire (we're reassigning, not using)
     bool restored_for_assign = false;
     MoveState saved_state = MoveState::Live;
-    if (assign_expr.op == AssignOp::Assign &&
-        assign_expr.target->kind == AstKind::ExprIdentifier) {
+    if (assign_expr.op == AssignOp::Assign && assign_expr.target->kind == AstKind::ExprIdentifier) {
         Symbol* target_sym = m_symbols.lookup(assign_expr.target->identifier.name);
         if (target_sym && m_lifetimes.lookup_state(target_sym, saved_state) &&
             saved_state != MoveState::Live) {
@@ -4485,17 +4718,39 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
         // Fall back to binary op validation
         BinaryOp binop;
         switch (assign_expr.op) {
-            case AssignOp::AddAssign: binop = BinaryOp::Add; break;
-            case AssignOp::SubAssign: binop = BinaryOp::Sub; break;
-            case AssignOp::MulAssign: binop = BinaryOp::Mul; break;
-            case AssignOp::DivAssign: binop = BinaryOp::Div; break;
-            case AssignOp::ModAssign: binop = BinaryOp::Mod; break;
-            case AssignOp::BitAndAssign: binop = BinaryOp::BitAnd; break;
-            case AssignOp::BitOrAssign:  binop = BinaryOp::BitOr; break;
-            case AssignOp::BitXorAssign: binop = BinaryOp::BitXor; break;
-            case AssignOp::ShlAssign:    binop = BinaryOp::Shl; break;
-            case AssignOp::ShrAssign:    binop = BinaryOp::Shr; break;
-            default: binop = BinaryOp::Add; break;
+            case AssignOp::AddAssign:
+                binop = BinaryOp::Add;
+                break;
+            case AssignOp::SubAssign:
+                binop = BinaryOp::Sub;
+                break;
+            case AssignOp::MulAssign:
+                binop = BinaryOp::Mul;
+                break;
+            case AssignOp::DivAssign:
+                binop = BinaryOp::Div;
+                break;
+            case AssignOp::ModAssign:
+                binop = BinaryOp::Mod;
+                break;
+            case AssignOp::BitAndAssign:
+                binop = BinaryOp::BitAnd;
+                break;
+            case AssignOp::BitOrAssign:
+                binop = BinaryOp::BitOr;
+                break;
+            case AssignOp::BitXorAssign:
+                binop = BinaryOp::BitXor;
+                break;
+            case AssignOp::ShlAssign:
+                binop = BinaryOp::Shl;
+                break;
+            case AssignOp::ShrAssign:
+                binop = BinaryOp::Shr;
+                break;
+            default:
+                binop = BinaryOp::Add;
+                break;
         }
         get_binary_result_type(binop, target_type, value_type, expr->loc);
     } else {
@@ -4506,23 +4761,22 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
     // Reject self-assignment of noncopyables (e.g. `x = x` on a uniq variable):
     // the target slot auto-deletes first and then the source "move" copies a
     // dangling pointer back in — a guaranteed use-after-free.
-    if (assign_expr.op == AssignOp::Assign &&
-        target_type && target_type->noncopyable() &&
+    if (assign_expr.op == AssignOp::Assign && target_type && target_type->noncopyable() &&
         assign_expr.target->kind == AstKind::ExprIdentifier &&
         assign_expr.value->kind == AstKind::ExprIdentifier) {
         Symbol* tgt_sym = m_symbols.lookup(assign_expr.target->identifier.name);
         Symbol* src_sym = m_symbols.lookup(assign_expr.value->identifier.name);
         if (tgt_sym && tgt_sym == src_sym) {
             error_fmt(expr->loc,
-                "self-assignment of noncopyable variable '{}' would cause use-after-free",
-                assign_expr.target->identifier.name);
+                      "self-assignment of noncopyable variable '{}' would cause use-after-free",
+                      assign_expr.target->identifier.name);
             return m_types.error_type();
         }
     }
 
     // Reassignment to owned variable: mark it live again (auto-destroy of old value happens in IR)
-    if (assign_expr.target->kind == AstKind::ExprIdentifier &&
-        target_type && target_type->noncopyable()) {
+    if (assign_expr.target->kind == AstKind::ExprIdentifier && target_type &&
+        target_type->noncopyable()) {
         m_lifetimes.mark_live(assign_expr.target->identifier.name);
     }
 
@@ -4536,7 +4790,8 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
     bool moves_noncopyable = target_type && target_type->noncopyable();
     if (!moves_noncopyable && assign_expr.target->kind == AstKind::ExprIndex) {
         Type* container_type = assign_expr.target->index.object->resolved_type;
-        if (container_type) container_type = container_type->base_type();
+        if (container_type)
+            container_type = container_type->base_type();
         Type* elem_type = nullptr;
         if (container_type && container_type->is_list()) {
             elem_type = container_type->list_info.element_type;
@@ -4553,11 +4808,13 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
     if (assign_expr.target->kind == AstKind::ExprIndex) {
         IndexExpr& index_target = assign_expr.target->index;
         Type* container_type = index_target.object->resolved_type;
-        if (container_type) container_type = container_type->base_type();
+        if (container_type)
+            container_type = container_type->base_type();
         if (container_type) {
             const MethodInfo* method_info = m_types.lookup_method(container_type, "index_mut"_sv);
             if (!method_info) {
-                error(assign_expr.target->loc, "type has no 'index_mut' method for index assignment");
+                error(assign_expr.target->loc,
+                      "type has no 'index_mut' method for index assignment");
                 return m_types.error_type();
             }
         }
@@ -4607,7 +4864,8 @@ Type* SemanticAnalyzer::analyze_super_expr(Expr* expr) {
 
     // Look up method in parent (and its ancestors), NOT in child
     Type* found_in_type = nullptr;
-    const MethodInfo* mi = lookup_method_in_hierarchy(parent_type, super_expr.method_name, &found_in_type);
+    const MethodInfo* mi =
+        lookup_method_in_hierarchy(parent_type, super_expr.method_name, &found_in_type);
 
     if (!mi) {
         error_fmt(expr->loc, "parent struct has no method '{}'", super_expr.method_name);
@@ -4621,7 +4879,8 @@ Type* SemanticAnalyzer::analyze_struct_literal_expr(Expr* expr) {
     StructLiteralExpr& sl = expr->struct_literal;
 
     Type* type = resolve_struct_literal_type(expr, sl);
-    if (!type || type->is_error()) return m_types.error_type();
+    if (!type || type->is_error())
+        return m_types.error_type();
 
     check_struct_literal_fields(expr, sl, type);
 
@@ -4638,7 +4897,8 @@ Type* SemanticAnalyzer::resolve_struct_literal_type(Expr* expr, StructLiteralExp
         Vector<Type*> type_arg_types;
         for (auto* type_arg : sl.type_args) {
             Type* arg_type = resolve_type_expr(type_arg);
-            if (arg_type->is_error()) return m_types.error_type();
+            if (arg_type->is_error())
+                return m_types.error_type();
             type_arg_types.push_back(arg_type);
         }
 
@@ -4655,24 +4915,26 @@ Type* SemanticAnalyzer::resolve_struct_literal_type(Expr* expr, StructLiteralExp
         resolve_generic_struct_fields(inst);
         type = inst->concrete_type;
         sl.mangled_name = mangled;
-        sl.type_name = mangled;  // Update to mangled name for IR builder
+        sl.type_name = mangled; // Update to mangled name for IR builder
     }
 
     // Generic struct literal WITHOUT type args — attempt inference
-    if (!type && sl.type_args.size() == 0 && m_type_env.generics().is_generic_struct(sl.type_name)) {
+    if (!type && sl.type_args.size() == 0 &&
+        m_type_env.generics().is_generic_struct(sl.type_name)) {
         Decl* template_decl = m_type_env.generics().get_generic_struct_decl(sl.type_name);
         StructDecl& template_struct_decl = template_decl->struct_decl;
 
         auto inferred = m_generic_calls.infer_type_args_from_fields(
-            template_struct_decl.type_params, template_struct_decl.fields,
-            sl.fields, expr->loc);
+            template_struct_decl.type_params, template_struct_decl.fields, sl.fields, expr->loc);
 
         if (inferred.success) {
             Span<Type*> type_args = m_allocator.alloc_span(inferred.type_args);
 
             // Check trait bounds on inferred type args
-            const ResolvedTypeParams* bounds = m_type_env.generics().get_struct_bounds(sl.type_name);
-            if (!m_generic_calls.check_type_arg_bounds(sl.type_name, type_args, bounds, expr->loc)) {
+            const ResolvedTypeParams* bounds =
+                m_type_env.generics().get_struct_bounds(sl.type_name);
+            if (!m_generic_calls.check_type_arg_bounds(sl.type_name, type_args, bounds,
+                                                       expr->loc)) {
                 return m_types.error_type();
             }
 
@@ -4684,8 +4946,9 @@ Type* SemanticAnalyzer::resolve_struct_literal_type(Expr* expr, StructLiteralExp
             sl.type_name = mangled;
         } else {
             error_fmt(expr->loc,
-                "cannot infer type arguments for generic struct '{}'; "
-                "provide explicit type arguments", sl.type_name);
+                      "cannot infer type arguments for generic struct '{}'; "
+                      "provide explicit type arguments",
+                      sl.type_name);
             return m_types.error_type();
         }
     }
@@ -4782,7 +5045,8 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
             // name (`element = Fire`) or a qualified one (`Element::Fire`).
             // A runtime-valued discriminant stays unknown (check skipped).
             for (u32 ci = 0; ci < when_clauses.size(); ci++) {
-                if (when_clauses[ci].discriminant_name != fi.name) continue;
+                if (when_clauses[ci].discriminant_name != fi.name)
+                    continue;
                 if (fi.value->kind == AstKind::ExprIdentifier) {
                     Symbol* sym = fi.value->identifier.resolved_sym;
                     if (sym && sym->kind == SymbolKind::EnumVariant) {
@@ -4791,9 +5055,10 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
                     }
                 } else if (fi.value->kind == AstKind::ExprStaticGet) {
                     Type* disc_type = fi.value->resolved_type;
-                    const EnumVariantInfo* variant = disc_type && disc_type->is_enum()
-                        ? disc_type->enum_info.find_variant(fi.value->static_get.member_name)
-                        : nullptr;
+                    const EnumVariantInfo* variant =
+                        disc_type && disc_type->is_enum()
+                            ? disc_type->enum_info.find_variant(fi.value->static_get.member_name)
+                            : nullptr;
                     if (variant) {
                         selected_values[ci] = variant->value;
                         selected_known[ci] = true;
@@ -4806,7 +5071,8 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
         // Check if it's a variant field
         const WhenClauseInfo* found_clause = nullptr;
         const VariantInfo* found_variant = nullptr;
-        const VariantFieldInfo* variant_field_info = type->struct_info.find_variant_field(fi.name, &found_clause, &found_variant);
+        const VariantFieldInfo* variant_field_info =
+            type->struct_info.find_variant_field(fi.name, &found_clause, &found_variant);
 
         if (variant_field_info) {
             // Variant field
@@ -4816,14 +5082,14 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
             }
             variant_field_initialized.insert(fi.name);
             variant_inits.push_back(VariantFieldInit{
-                fi.name, fi.loc,
-                static_cast<u32>(found_clause - when_clauses.data())});
+                fi.name, fi.loc, static_cast<u32>(found_clause - when_clauses.data())});
 
-            bool same_module = type->struct_info.module_name.empty() || m_program->module_name.empty() ||
+            bool same_module = type->struct_info.module_name.empty() ||
+                               m_program->module_name.empty() ||
                                type->struct_info.module_name == m_program->module_name;
             if (!variant_field_info->is_pub && !same_module) {
-                error_fmt(fi.loc, "variant field '{}' is private in struct '{}'",
-                          fi.name, type->struct_info.name);
+                error_fmt(fi.loc, "variant field '{}' is private in struct '{}'", fi.name,
+                          type->struct_info.name);
                 continue;
             }
 
@@ -4858,42 +5124,56 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
     // variant; membership is checked against every case carrying the selected
     // value, so grouped cases (`case A, B:`) accept fields under either name.
     for (const auto& init : variant_inits) {
-        if (!selected_known[init.clause_index]) continue;
+        if (!selected_known[init.clause_index])
+            continue;
         const WhenClauseInfo& clause = when_clauses[init.clause_index];
         i64 selected = selected_values[init.clause_index];
         bool belongs = false;
         for (const VariantInfo& variant : clause.variants) {
-            if (variant.discriminant_value != selected) continue;
+            if (variant.discriminant_value != selected)
+                continue;
             for (const VariantFieldInfo& field : variant.fields) {
-                if (field.name == init.name) { belongs = true; break; }
+                if (field.name == init.name) {
+                    belongs = true;
+                    break;
+                }
             }
-            if (belongs) break;
+            if (belongs)
+                break;
         }
-        if (belongs) continue;
+        if (belongs)
+            continue;
         // Name the selected variant through the discriminant enum's table
         // (the selected value may not have a case in this clause at all).
         StringView selected_name;
         if (clause.discriminant_type && clause.discriminant_type->is_enum()) {
             for (const auto& variant : clause.discriminant_type->enum_info.variants) {
-                if (variant.value == selected) { selected_name = variant.name; break; }
+                if (variant.value == selected) {
+                    selected_name = variant.name;
+                    break;
+                }
             }
         }
-        error_fmt(init.loc,
-                  "variant field '{}' does not belong to variant '{}' selected by discriminant '{}'",
-                  init.name, selected_name, clause.discriminant_name);
+        error_fmt(
+            init.loc,
+            "variant field '{}' does not belong to variant '{}' selected by discriminant '{}'",
+            init.name, selected_name, clause.discriminant_name);
     }
 }
 
 // ===== Type Checking Helpers =====
 
-Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* right, SourceLocation loc) {
+Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* right,
+                                               SourceLocation loc) {
     // Java/C#-style numeric promotion: narrow integer types (i8/i16/u8/u16) have no
     // native arithmetic — they widen to i32 for the operation, and the result is i32.
     // Resolution then finds i32's registered operator methods. u32/u64 are NOT narrow
     // (they get native unsigned arithmetic separately and stay unsupported here);
     // string/struct/float/bool operands are never narrow, so this leaves them untouched.
-    if (left && left->is_narrow_integer()) left = m_types.i32_type();
-    if (right && right->is_narrow_integer()) right = m_types.i32_type();
+    if (left && left->is_narrow_integer())
+        left = m_types.i32_type();
+    if (right && right->is_narrow_integer())
+        right = m_types.i32_type();
 
     switch (op) {
         case BinaryOp::Add:
@@ -4902,7 +5182,8 @@ Type* SemanticAnalyzer::get_binary_result_type(BinaryOp op, Type* left, Type* ri
         case BinaryOp::Div:
         case BinaryOp::Mod: {
             // String concatenation (Add only)
-            if (op == BinaryOp::Add && left->kind == TypeKind::String && right->kind == TypeKind::String)
+            if (op == BinaryOp::Add && left->kind == TypeKind::String &&
+                right->kind == TypeKind::String)
                 return m_types.string_type();
             // Unified dispatch: primitives and structs
             if (Type* result = try_resolve_binary_op(op, left, right))
@@ -4983,7 +5264,8 @@ Type* SemanticAnalyzer::get_unary_result_type(UnaryOp op, Type* operand, SourceL
     // Numeric promotion (see get_binary_result_type): a narrow integer operand widens
     // to i32 for '-' / '~', yielding an i32 result. int_literal / bool operands are not
     // narrow, so the int-literal short-circuit and '!' below are unaffected.
-    if (operand && operand->is_narrow_integer()) operand = m_types.i32_type();
+    if (operand && operand->is_narrow_integer())
+        operand = m_types.i32_type();
 
     switch (op) {
         case UnaryOp::Negate:
@@ -5029,7 +5311,8 @@ Type* SemanticAnalyzer::get_unary_result_type(UnaryOp op, Type* operand, SourceL
 }
 
 bool SemanticAnalyzer::is_lvalue(Expr* expr) const {
-    if (!expr) return false;
+    if (!expr)
+        return false;
 
     switch (expr->kind) {
         case AstKind::ExprIdentifier:
@@ -5045,4 +5328,4 @@ bool SemanticAnalyzer::is_lvalue(Expr* expr) const {
     }
 }
 
-}
+} // namespace rx

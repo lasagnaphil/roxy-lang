@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -396,7 +396,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("Generic inference: struct literal multiple params", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic inference: struct literal multiple params", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Pair<T, U> {
             first: T;
@@ -414,7 +415,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.value == 12);
     }
 
-    TEST_CASE_TEMPLATE("Generic inference: function returning generic struct", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic inference: function returning generic struct", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -435,7 +437,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("Generic inference: backward compat explicit args", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic inference: backward compat explicit args", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun identity<T>(value: T): T {
             return value;
@@ -489,7 +492,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("Generic var inference: function returning generic struct", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic var inference: function returning generic struct", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -528,7 +532,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.value == 12);
     }
 
-    TEST_CASE_TEMPLATE("Generic var inference: explicit type args no LHS annotation", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic var inference: explicit type args no LHS annotation", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -660,7 +665,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("Generic bound: multiple bounds Printable + Hash", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic bound: multiple bounds Printable + Hash", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun identity_both<T: Printable + Hash>(value: T): T {
             return value;
@@ -709,7 +715,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("Generic bound: inferred struct literal with bound", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic bound: inferred struct literal with bound", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct HashBox<T: Hash> {
             value: T;
@@ -743,7 +750,8 @@ TEST_SUITE("E2E Generics") {
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE_TEMPLATE("Generic bound: generic trait bound with type args", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic bound: generic trait bound with type args", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Scalable<T>;
 
@@ -773,7 +781,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.value == 1);
     }
 
-    TEST_CASE_TEMPLATE("Generic bound: generic trait bound mismatch (negative)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic bound: generic trait bound mismatch (negative)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Scalable<T>;
 
@@ -802,7 +811,8 @@ TEST_SUITE("E2E Generics") {
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE_TEMPLATE("Generic bound: one of multiple bounds not satisfied (negative)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic bound: one of multiple bounds not satisfied (negative)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Flyable;
 
@@ -819,7 +829,8 @@ TEST_SUITE("E2E Generics") {
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE_TEMPLATE("Generic bound: bound not satisfied on struct (negative)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic bound: bound not satisfied on struct (negative)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Flyable;
 
@@ -837,7 +848,8 @@ TEST_SUITE("E2E Generics") {
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE_TEMPLATE("Generic bound: inferred type args violate bound (negative)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic bound: inferred type args violate bound (negative)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Flyable;
 
@@ -859,7 +871,8 @@ TEST_SUITE("E2E Generics") {
     // Validates that generic template bodies are checked against declared bounds
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("Generic Phase B: call trait method on bounded param", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic Phase B: call trait method on bounded param", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Greetable;
         fun Greetable.greet(): i32;
@@ -880,7 +893,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("Generic Phase B: call methods from multiple bounds", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic Phase B: call methods from multiple bounds", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         trait HasX;
         fun HasX.get_x(): i32;
@@ -905,7 +919,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("Generic Phase B: return type Self resolves to T", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic Phase B: return type Self resolves to T", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Addable;
         fun Addable.add(other: Self): Self;
@@ -930,7 +945,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("Generic Phase B: template body stays pristine for later instantiation", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic Phase B: template body stays pristine for later instantiation",
+                       Backend, RX_E2E_BACKENDS) {
         // Phase B used to type-check a bounded template by walking the
         // template's own AST. Analysis mutates the tree it walks (lambda
         // captures rewrite identifiers to __env reads; generic TypeExprs are
@@ -986,7 +1002,8 @@ TEST_SUITE("E2E Generics") {
         }
     }
 
-    TEST_CASE_TEMPLATE("Generic Phase B: generic trait bound with type args", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic Phase B: generic trait bound with type args", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Scalable<T>;
         fun Scalable.scale(factor: T): Self;
@@ -1013,7 +1030,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("Generic Phase B: bounded template with passthrough return", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic Phase B: bounded template with passthrough return", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun identity_bounded<T: Printable>(value: T): T {
             return value;
@@ -1033,7 +1051,8 @@ TEST_SUITE("E2E Generics") {
     // Phase B Negative Tests: definition-site errors
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("Generic Phase B: call method not in any bound (negative)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic Phase B: call method not in any bound (negative)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Greetable;
         fun Greetable.greet(): i32;
@@ -1047,7 +1066,8 @@ TEST_SUITE("E2E Generics") {
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE_TEMPLATE("Generic Phase B: call method from wrong trait (negative)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic Phase B: call method from wrong trait (negative)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Greetable;
         fun Greetable.greet(): i32;
@@ -1061,7 +1081,8 @@ TEST_SUITE("E2E Generics") {
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE_TEMPLATE("Generic Phase B: access field on type param (negative)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic Phase B: access field on type param (negative)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         trait Greetable;
         fun Greetable.greet(): i32;
@@ -1075,7 +1096,8 @@ TEST_SUITE("E2E Generics") {
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE_TEMPLATE("Generic Phase B: unbounded template body not checked", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic Phase B: unbounded template body not checked", Backend,
+                       RX_E2E_BACKENDS) {
         // Unbounded generic templates are NOT checked at definition site
         // (only checked at instantiation). This should compile fine as long
         // as main doesn't instantiate bad_func.
@@ -1219,7 +1241,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("Generic struct method: with additional parameters", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic struct method: with additional parameters", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -1244,7 +1267,8 @@ TEST_SUITE("E2E Generics") {
     // Generic Struct Constructor/Destructor Tests
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("Generic struct: user-defined default constructor", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic struct: user-defined default constructor", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -1313,7 +1337,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("Generic struct: constructor multiple instantiations", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic struct: constructor multiple instantiations", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Box<T> {
             value: T;
@@ -1361,7 +1386,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.stdout_output == "99\n");
     }
 
-    TEST_CASE_TEMPLATE("Generic struct: constructor suppresses synthesized default", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic struct: constructor suppresses synthesized default", Backend,
+                       RX_E2E_BACKENDS) {
         // User-defined default constructor should be used instead of synthesized one
         const char* source = R"(
         struct Box<T> {
@@ -1505,7 +1531,8 @@ TEST_SUITE("E2E Generics") {
     // abstract type param during Phase B (identity$$T). That abstract instance
     // must be quarantined: analyzing its body outside the bounds context used
     // to report "unknown type 'T'" and fail the whole compile.
-    TEST_CASE_TEMPLATE("Generic bound: bounded body calls a generic fun", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic bound: bounded body calls a generic fun", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun identity<T>(v: T): T {
             return v;
@@ -1528,7 +1555,8 @@ TEST_SUITE("E2E Generics") {
     // Bound-aware f-string interpolation + builtin Ord/Eq at primitives
     // ------------------------------------------------------------------------
 
-    TEST_CASE_TEMPLATE("Generic bound: f-string on Printable-bounded param", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic bound: f-string on Printable-bounded param", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Vec { x: i32; }
         fun Vec.to_string(): string for Printable { return f"Vec[{self.x}]"; }
@@ -1551,7 +1579,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.stdout_output == "42\nhello\n3.5\nVec[3]\n");
     }
 
-    TEST_CASE_TEMPLATE("Generic bound: f-string on non-Printable bound (negative)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic bound: f-string on non-Printable bound (negative)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun show<T: Hash>(v: T): string {
             return f"{v}";
@@ -1567,7 +1596,8 @@ TEST_SUITE("E2E Generics") {
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE_TEMPLATE("Generic bound: builtin Ord at primitives and structs", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic bound: builtin Ord at primitives and structs", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Score { v: i32; }
         fun Score.lt(other: Score): bool for Ord { return self.v < other.v; }
@@ -1597,7 +1627,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.stdout_output == "9\n2.5\n4000000000\n5\n");
     }
 
-    TEST_CASE_TEMPLATE("Generic bound: Ord body using comparison operator", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic bound: Ord body using comparison operator", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun max2<T: Ord>(a: T, b: T): T {
             if (a < b) { return b; }
@@ -1616,7 +1647,8 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.stdout_output == "9\n1.5\n");
     }
 
-    TEST_CASE_TEMPLATE("Generic bound: Ord at enum orders by discriminant", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic bound: Ord at enum orders by discriminant", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         enum Color { Red, Green, Blue }
 
@@ -1654,7 +1686,8 @@ TEST_SUITE("E2E Generics") {
         CHECK_FALSE(result.success);
     }
 
-    TEST_CASE_TEMPLATE("Generic bound: builtin Eq at primitives and structs", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Generic bound: builtin Eq at primitives and structs", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Tag { id: i32; }
         fun Tag.eq(other: Tag): bool for Eq { return self.id == other.id; }
@@ -1677,4 +1710,4 @@ TEST_SUITE("E2E Generics") {
         CHECK(result.stdout_output == "true\nfalse\ntrue\ntrue\n");
     }
 
-}  // TEST_SUITE("E2E Generics")
+} // TEST_SUITE("E2E Generics")

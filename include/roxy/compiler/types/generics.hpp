@@ -1,12 +1,12 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
-#include "roxy/core/span.hpp"
-#include "roxy/core/string_view.hpp"
-#include "roxy/core/vector.hpp"
-#include "roxy/core/bump_allocator.hpp"
 #include "roxy/compiler/parse/ast.hpp"
 #include "roxy/compiler/types/types.hpp"
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/span.hpp"
+#include "roxy/core/string_view.hpp"
+#include "roxy/core/types.hpp"
+#include "roxy/core/vector.hpp"
 
 #include "roxy/core/tsl/robin_map.h"
 
@@ -14,23 +14,23 @@ namespace rx {
 
 // Resolved bounds for all type params of one generic template
 struct ResolvedTypeParams {
-    Span<Span<TraitBound>> param_bounds;  // param_bounds[i] = bounds for i-th type param
+    Span<Span<TraitBound>> param_bounds; // param_bounds[i] = bounds for i-th type param
 };
 
 // Maps type parameter names to concrete types for substitution
 struct TypeSubstitution {
-    Span<StringView> param_names;    // ["T", "U"]
-    Span<Type*> concrete_types;      // [i32_type, string_type]
+    Span<StringView> param_names; // ["T", "U"]
+    Span<Type*> concrete_types;   // [i32_type, string_type]
 
     Type* lookup(StringView name) const;
 };
 
 // A concrete instantiation of a generic function
 struct GenericFunInstance {
-    StringView mangled_name;         // "identity$i32"
-    Decl* original_decl;             // Original generic FunDecl
+    StringView mangled_name; // "identity$i32"
+    Decl* original_decl;     // Original generic FunDecl
     TypeSubstitution substitution;
-    Decl* instantiated_decl;         // Cloned + substituted AST
+    Decl* instantiated_decl; // Cloned + substituted AST
     bool is_analyzed;
     // True when any type argument is itself a TypeParam — an abstract instance
     // (e.g. "identity$$T") created while Phase B checks a bounded template body
@@ -49,11 +49,11 @@ struct GenericFunInstance {
 
 // A concrete instantiation of a generic struct
 struct GenericStructInstance {
-    StringView mangled_name;         // "Box$i32"
-    Decl* original_decl;             // Original generic StructDecl
+    StringView mangled_name; // "Box$i32"
+    Decl* original_decl;     // Original generic StructDecl
     TypeSubstitution substitution;
-    Decl* instantiated_decl;         // Cloned + substituted StructDecl
-    Type* concrete_type;             // The concrete struct Type*
+    Decl* instantiated_decl; // Cloned + substituted StructDecl
+    Type* concrete_type;     // The concrete struct Type*
     bool is_analyzed;
     // True when any type argument is itself a TypeParam — an abstract
     // instance (e.g. "Box$$T") created while Phase B checks a bounded
@@ -70,9 +70,9 @@ struct GenericStructInstance {
     // GenericFunInstance::template_module. Empty in single-module compilations
     // (the IR builder then falls through and emits from the current module).
     StringView template_module;
-    Vector<Decl*> instantiated_methods;       // Cloned external method DeclMethod nodes
-    Vector<Decl*> instantiated_constructors;  // Cloned external constructor DeclConstructor nodes
-    Vector<Decl*> instantiated_destructors;   // Cloned external destructor DeclDestructor nodes
+    Vector<Decl*> instantiated_methods;      // Cloned external method DeclMethod nodes
+    Vector<Decl*> instantiated_constructors; // Cloned external constructor DeclConstructor nodes
+    Vector<Decl*> instantiated_destructors;  // Cloned external destructor DeclDestructor nodes
 };
 
 // Manages generic templates and their instantiations
@@ -130,7 +130,9 @@ public:
 
     // Access all instances (for IR builder)
     const Vector<GenericFunInstance*>& all_fun_instances() const { return m_all_fun_instances; }
-    const Vector<GenericStructInstance*>& all_struct_instances() const { return m_all_struct_instances; }
+    const Vector<GenericStructInstance*>& all_struct_instances() const {
+        return m_all_struct_instances;
+    }
 
     // Look up existing instances by mangled name
     GenericFunInstance* find_fun_instance(StringView mangled_name) const;
@@ -155,7 +157,9 @@ public:
 
     // Accessors for iterating all generic templates
     const tsl::robin_map<StringView, Decl*>& generic_funs_map() const { return m_generic_funs; }
-    const tsl::robin_map<StringView, Decl*>& generic_structs_map() const { return m_generic_structs; }
+    const tsl::robin_map<StringView, Decl*>& generic_structs_map() const {
+        return m_generic_structs;
+    }
 
     // Public AST cloning with type substitution (used by trait default method injection)
     Stmt* clone_stmt(Stmt* stmt, const TypeSubstitution& subst);
@@ -165,9 +169,12 @@ private:
     // Clone AST with type substitution
     Decl* clone_fun_decl(Decl* original, const TypeSubstitution& subst, StringView new_name);
     Decl* clone_struct_decl(Decl* original, const TypeSubstitution& subst, StringView new_name);
-    Decl* clone_method_decl(Decl* original, const TypeSubstitution& subst, StringView mangled_struct_name);
-    Decl* clone_constructor_decl(Decl* original, const TypeSubstitution& subst, StringView mangled_struct_name);
-    Decl* clone_destructor_decl(Decl* original, const TypeSubstitution& subst, StringView mangled_struct_name);
+    Decl* clone_method_decl(Decl* original, const TypeSubstitution& subst,
+                            StringView mangled_struct_name);
+    Decl* clone_constructor_decl(Decl* original, const TypeSubstitution& subst,
+                                 StringView mangled_struct_name);
+    Decl* clone_destructor_decl(Decl* original, const TypeSubstitution& subst,
+                                StringView mangled_struct_name);
     Expr* clone_expr(Expr* expr, const TypeSubstitution& subst);
     Decl* clone_decl(Decl* decl, const TypeSubstitution& subst);
     Span<Decl*> clone_decl_list(Span<Decl*> decls, const TypeSubstitution& subst);
@@ -229,4 +236,4 @@ private:
     tsl::robin_map<StringView, ResolvedTypeParams> m_struct_bounds;
 };
 
-}
+} // namespace rx

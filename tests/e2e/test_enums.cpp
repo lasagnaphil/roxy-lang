@@ -1,5 +1,5 @@
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 #include <roxy/core/doctest/doctest.h>
 
@@ -172,7 +172,8 @@ TEST_SUITE("E2E Enums") {
         CHECK(result.stdout_output == "13\n7\n30\n");
     }
 
-    TEST_CASE_TEMPLATE("Same-named variants across enums resolve independently", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Same-named variants across enums resolve independently", Backend,
+                       RX_E2E_BACKENDS) {
         // Variants used to live in one flat symbol namespace: B's X shadowed
         // A's X, making A::X unresolvable at semantic level — and the IR
         // builder would have emitted B's value (0) for A's X (1) in the when
@@ -246,4 +247,4 @@ TEST_SUITE("E2E Enums") {
         CHECK(compile(allocator, source) == nullptr);
     }
 
-}  // TEST_SUITE("E2E Enums")
+} // TEST_SUITE("E2E Enums")

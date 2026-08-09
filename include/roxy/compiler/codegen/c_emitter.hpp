@@ -1,12 +1,12 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
+#include "roxy/compiler/ir/ssa_ir.hpp"
+#include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/string.hpp"
 #include "roxy/core/string_view.hpp"
-#include "roxy/core/vector.hpp"
-#include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/tsl/robin_set.h"
-#include "roxy/compiler/ir/ssa_ir.hpp"
+#include "roxy/core/types.hpp"
+#include "roxy/core/vector.hpp"
 
 namespace rx {
 
@@ -73,7 +73,7 @@ private:
     // the pointer and recurse with free_obj=true; inline value structs recurse
     // in place with free_obj=false.
     void emit_delete_slot(Type* elem_type, StringView slot_expr, String& out);
-    u32 m_delete_tmp = 0;  // unique-temp counter for emit_typed_delete
+    u32 m_delete_tmp = 0; // unique-temp counter for emit_typed_delete
 
     // --- Per-type container drop glue (lifetimes.md "Value lifecycle") ---
     // Container drops (List/Map) are factored into per-type `roxy_drop__<T>(void*)`
@@ -87,9 +87,9 @@ private:
     String request_container_drop_glue(Type* container);
     void emit_container_drop_body(Type* container, StringView self_var, String& out);
     void append_type_mangle(Type* type, String& out);
-    String m_drop_glue_decls;             // `static void roxy_drop__T(void*);` lines
-    String m_drop_glue_defs;              // the glue function definitions
-    tsl::robin_set<Type*> m_drop_glue_seen;  // container types already emitted
+    String m_drop_glue_decls;               // `static void roxy_drop__T(void*);` lines
+    String m_drop_glue_defs;                // the glue function definitions
+    tsl::robin_set<Type*> m_drop_glue_seen; // container types already emitted
 
     // The C return type for a function. Normally `func->return_type`, but a
     // method returning a closure has its IR return_type left unset (the VM
@@ -163,9 +163,8 @@ private:
     void emit_inline_method_wrapper(Type* struct_type, const MethodInfo& method,
                                     const IRFunction* func, String& out);
     void emit_pub_make_factories(const IRModule* module, String& out);
-    void emit_make_factory(Type* struct_type, u32 type_id,
-                           const IRFunction* ctor, const IRFunction* dtor,
-                           String& out);
+    void emit_make_factory(Type* struct_type, u32 type_id, const IRFunction* ctor,
+                           const IRFunction* dtor, String& out);
     const IRFunction* find_function_by_mangled(StringView mangled);
 
     // Configuration
@@ -176,10 +175,13 @@ private:
     const IRModule* m_module = nullptr;
 
     // Per-function state
-    tsl::robin_map<u32, Type*> m_value_types;         // ValueId.id -> Type*
-    tsl::robin_set<u32> m_stack_alloc_values;          // Tracks StackAlloc result ValueIds
-    tsl::robin_set<u32> m_pointer_values;              // Values that are struct pointers (StackAlloc, struct params, GetFieldAddr)
-    tsl::robin_map<u32, i64> m_const_int_values;       // ValueId.id -> ConstInt value (used at call sites that need compile-time-known indices, e.g. roxy_map_alloc's hash_fn_index/eq_fn_index args)
+    tsl::robin_map<u32, Type*> m_value_types; // ValueId.id -> Type*
+    tsl::robin_set<u32> m_stack_alloc_values; // Tracks StackAlloc result ValueIds
+    tsl::robin_set<u32> m_pointer_values;     // Values that are struct pointers (StackAlloc, struct
+                                              // params, GetFieldAddr)
+    tsl::robin_map<u32, i64> m_const_int_values; // ValueId.id -> ConstInt value (used at call sites
+                                                 // that need compile-time-known indices, e.g.
+                                                 // roxy_map_alloc's hash_fn_index/eq_fn_index args)
 
     // User-registered natives referenced by CallNative ops in this module.
     // Populated by `collect_extern_native_decls()` before function bodies are
@@ -201,18 +203,18 @@ private:
     // then a type_id if/else chain routing to a matching catch block, the
     // catch-all/`finally.catch` block, or the next-outer dispatch / `__unwind`.
     struct TryGroup {
-        BlockId try_entry;                  // shared try entry block
-        tsl::robin_set<u32> body_blocks;    // try_body_blocks as a membership set
-        Vector<u32> handler_indices;        // indices into func->exception_handlers, in order
-        u32 outer_group = UINT32_MAX;       // innermost enclosing group, or none
+        BlockId try_entry;               // shared try entry block
+        tsl::robin_set<u32> body_blocks; // try_body_blocks as a membership set
+        Vector<u32> handler_indices;     // indices into func->exception_handlers, in order
+        u32 outer_group = UINT32_MAX;    // innermost enclosing group, or none
     };
 
-    bool m_module_uses_exceptions = false;  // any function throws / has handlers
-    Vector<TryGroup> m_try_groups;          // per-function try groups
-    tsl::robin_map<u32, u32> m_block_to_group;  // block id -> innermost group index
-    tsl::robin_set<u32> m_cleanup_values;   // cleanup_info value ids (zero-init + null-after-delete)
-    bool m_func_needs_unwind = false;       // emit a `__unwind` label for this function
-    u32 m_cur_block_id = 0;                 // block currently being emitted (for throw/call routing)
+    bool m_module_uses_exceptions = false;     // any function throws / has handlers
+    Vector<TryGroup> m_try_groups;             // per-function try groups
+    tsl::robin_map<u32, u32> m_block_to_group; // block id -> innermost group index
+    tsl::robin_set<u32> m_cleanup_values; // cleanup_info value ids (zero-init + null-after-delete)
+    bool m_func_needs_unwind = false;     // emit a `__unwind` label for this function
+    u32 m_cur_block_id = 0;               // block currently being emitted (for throw/call routing)
 
     bool module_uses_exceptions(const IRModule* module);
     void compute_exception_routing(const IRFunction* func);
@@ -234,9 +236,9 @@ private:
     // the env's first `__call_idx` slot. AOT has no such table, so we build our
     // own: each distinct lifted call function gets an index; `g_closure_fns[idx]`
     // holds its pointer and `Closure` stores `idx` into the env's `__call_idx`.
-    tsl::robin_map<StringView, u32> m_closure_fn_index;  // call_function_name -> index
-    Vector<StringView> m_closure_fns;                    // index -> call_function_name
-    Vector<StringView> m_closure_env_names;              // index -> env_struct_name (parallel)
+    tsl::robin_map<StringView, u32> m_closure_fn_index; // call_function_name -> index
+    Vector<StringView> m_closure_fns;                   // index -> call_function_name
+    Vector<StringView> m_closure_env_names;             // index -> env_struct_name (parallel)
 
     void collect_closure_dispatch(const IRModule* module);
     // Emit `g_closure_fns[]` and the type-erased `__closure_delete` dispatcher.

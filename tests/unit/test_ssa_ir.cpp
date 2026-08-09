@@ -1,16 +1,16 @@
 #include "roxy/core/doctest/doctest.h"
 
-#include "roxy/core/bump_allocator.hpp"
-#include "roxy/core/string.hpp"
-#include "roxy/shared/lexer.hpp"
+#include "roxy/compiler/driver/module_registry.hpp"
+#include "roxy/compiler/ir/ir_builder.hpp"
+#include "roxy/compiler/ir/ssa_ir.hpp"
 #include "roxy/compiler/parse/parser.hpp"
 #include "roxy/compiler/sema/semantic.hpp"
 #include "roxy/compiler/types/type_env.hpp"
-#include "roxy/compiler/ir/ssa_ir.hpp"
-#include "roxy/compiler/ir/ir_builder.hpp"
-#include "roxy/compiler/driver/module_registry.hpp"
-#include "roxy/vm/natives.hpp"
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/string.hpp"
+#include "roxy/shared/lexer.hpp"
 #include "roxy/vm/binding/registry.hpp"
+#include "roxy/vm/natives.hpp"
 
 #include <cstring>
 
@@ -19,7 +19,8 @@ using namespace rx;
 // Helper to parse, analyze, and build IR
 static IRModule* build_ir(BumpAllocator& allocator, const char* source) {
     u32 len = 0;
-    while (source[len]) len++;
+    while (source[len])
+        len++;
 
     TypeEnv type_env(allocator);
     NativeRegistry registry(allocator, type_env.types());
@@ -149,7 +150,8 @@ TEST_SUITE("SSA IR") {
 
         bool found_add = false;
         for (IRInst* inst : entry->instructions) {
-            if (inst->op == IROp::AddI) found_add = true;
+            if (inst->op == IROp::AddI)
+                found_add = true;
         }
         CHECK(found_add);
     }
@@ -199,7 +201,8 @@ TEST_SUITE("SSA IR") {
 
         IRFunction* func = module->functions[0];
 
-        // Should have: entry, then, else blocks (merge block is unreachable since both branches return)
+        // Should have: entry, then, else blocks (merge block is unreachable since both branches
+        // return)
         CHECK(func->blocks.size() >= 3);
 
         // Both then and else blocks should have return terminators
@@ -208,8 +211,10 @@ TEST_SUITE("SSA IR") {
         for (u32 i = 1; i < func->blocks.size(); i++) {
             IRBlock* block = func->blocks[i];
             if (block->terminator.kind == TerminatorKind::Return) {
-                if (!found_then_return) found_then_return = true;
-                else found_else_return = true;
+                if (!found_then_return)
+                    found_then_return = true;
+                else
+                    found_else_return = true;
             }
         }
         CHECK(found_then_return);
@@ -546,7 +551,8 @@ TEST_SUITE("SSA IR") {
 
         IRFunction* func = module->functions[0];
 
-        // Should have multiple blocks for nested if-else (merge blocks are unreachable since all branches return)
+        // Should have multiple blocks for nested if-else (merge blocks are unreachable since all
+        // branches return)
         CHECK(func->blocks.size() >= 5);
 
         // Count return terminators
@@ -556,7 +562,7 @@ TEST_SUITE("SSA IR") {
                 return_count++;
             }
         }
-        CHECK(return_count >= 3);  // Three return statements
+        CHECK(return_count >= 3); // Three return statements
     }
 
     TEST_CASE("Op to string") {
@@ -570,21 +576,23 @@ TEST_SUITE("SSA IR") {
     }
 
     // Helper: count instructions of a given op across all blocks of a function.
-    static int count_op(IRFunction* func, IROp op) {
+    static int count_op(IRFunction * func, IROp op) {
         int n = 0;
         for (IRBlock* block : func->blocks) {
             for (IRInst* inst : block->instructions) {
-                if (inst->op == op) n++;
+                if (inst->op == op)
+                    n++;
             }
         }
         return n;
     }
 
     // Helper: find first ConstInt with given value across all blocks; nullptr if none.
-    static IRInst* find_const_int(IRFunction* func, i64 value) {
+    static IRInst* find_const_int(IRFunction * func, i64 value) {
         for (IRBlock* block : func->blocks) {
             for (IRInst* inst : block->instructions) {
-                if (inst->op == IROp::ConstInt && inst->const_data.int_val == value) return inst;
+                if (inst->op == IROp::ConstInt && inst->const_data.int_val == value)
+                    return inst;
             }
         }
         return nullptr;
@@ -639,7 +647,8 @@ TEST_SUITE("SSA IR") {
             bool found_bool = false;
             for (IRBlock* block : func->blocks) {
                 for (IRInst* inst : block->instructions) {
-                    if (inst->op == IROp::ConstBool) found_bool = true;
+                    if (inst->op == IROp::ConstBool)
+                        found_bool = true;
                 }
             }
             CHECK(found_bool);
@@ -686,7 +695,8 @@ TEST_SUITE("SSA IR") {
         bool found_const_f = false;
         for (IRBlock* block : module->functions[0]->blocks) {
             for (IRInst* inst : block->instructions) {
-                if (inst->op == IROp::ConstF && inst->const_data.f32_val == 6.0f) found_const_f = true;
+                if (inst->op == IROp::ConstF && inst->const_data.f32_val == 6.0f)
+                    found_const_f = true;
             }
         }
         CHECK(found_const_f);
@@ -694,7 +704,8 @@ TEST_SUITE("SSA IR") {
         bool found_const_d = false;
         for (IRBlock* block : module->functions[1]->blocks) {
             for (IRInst* inst : block->instructions) {
-                if (inst->op == IROp::ConstD && inst->const_data.f64_val == 6.0) found_const_d = true;
+                if (inst->op == IROp::ConstD && inst->const_data.f64_val == 6.0)
+                    found_const_d = true;
             }
         }
         CHECK(found_const_d);
@@ -719,7 +730,8 @@ TEST_SUITE("SSA IR") {
         bool found_false = false;
         for (IRBlock* b : module->functions[1]->blocks) {
             for (IRInst* inst : b->instructions) {
-                if (inst->op == IROp::ConstBool && !inst->const_data.bool_val) found_false = true;
+                if (inst->op == IROp::ConstBool && !inst->const_data.bool_val)
+                    found_false = true;
             }
         }
         CHECK(found_false);
@@ -731,7 +743,8 @@ TEST_SUITE("SSA IR") {
         bool found_neg_d = false;
         for (IRBlock* b : module->functions[3]->blocks) {
             for (IRInst* inst : b->instructions) {
-                if (inst->op == IROp::ConstD && inst->const_data.f64_val == -3.5) found_neg_d = true;
+                if (inst->op == IROp::ConstD && inst->const_data.f64_val == -3.5)
+                    found_neg_d = true;
             }
         }
         CHECK(found_neg_d);
@@ -762,7 +775,8 @@ TEST_SUITE("SSA IR") {
         bool found_42d = false;
         for (IRBlock* b : module->functions[0]->blocks) {
             for (IRInst* inst : b->instructions) {
-                if (inst->op == IROp::ConstD && inst->const_data.f64_val == 42.0) found_42d = true;
+                if (inst->op == IROp::ConstD && inst->const_data.f64_val == 42.0)
+                    found_42d = true;
             }
         }
         CHECK(found_42d);
@@ -781,7 +795,8 @@ TEST_SUITE("SSA IR") {
         bool found_false = false;
         for (IRBlock* b : module->functions[4]->blocks) {
             for (IRInst* inst : b->instructions) {
-                if (inst->op == IROp::ConstBool && !inst->const_data.bool_val) found_false = true;
+                if (inst->op == IROp::ConstBool && !inst->const_data.bool_val)
+                    found_false = true;
             }
         }
         CHECK(found_false);
@@ -857,4 +872,4 @@ TEST_SUITE("SSA IR") {
         CHECK(count_op(module->functions[1], IROp::ModI) == 1);
     }
 
-}  // TEST_SUITE("SSA IR")
+} // TEST_SUITE("SSA IR")

@@ -1,5 +1,5 @@
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 #include <roxy/core/doctest/doctest.h>
 
@@ -539,7 +539,8 @@ TEST_SUITE("E2E Tagged Unions") {
         CHECK(result.success);
         // All three Expr objects must be destroyed:
         // root (Binary), then its variant fields in LIFO order (right, left)
-        CHECK(result.stdout_output == "before cleanup\ndelete Binary\ndelete Literal 2\ndelete Literal 1\n");
+        CHECK(result.stdout_output ==
+              "before cleanup\ndelete Binary\ndelete Literal 2\ndelete Literal 1\n");
     }
 
     TEST_CASE_TEMPLATE("with List<uniq T> field", Backend, RX_E2E_BACKENDS) {
@@ -596,7 +597,8 @@ TEST_SUITE("E2E Tagged Unions") {
     // instead of struct contents, corrupting nested when-discriminants)
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("Field assignment: struct value into a regular struct field", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Field assignment: struct value into a regular struct field", Backend,
+                       RX_E2E_BACKENDS) {
         // Pre-fix: emit_set_field stored the source struct's pointer bits into the
         // destination slots, so o.inner.x/y/z came back as garbage.
         const char* source = R"ROXY(
@@ -619,7 +621,8 @@ TEST_SUITE("E2E Tagged Unions") {
         CHECK(result.stdout_output == "1\n2\n3\n");
     }
 
-    TEST_CASE_TEMPLATE("Field assignment: tagged-union struct into a variant field", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Field assignment: tagged-union struct into a variant field", Backend,
+                       RX_E2E_BACKENDS) {
         // Pre-fix: assigning v (kind=IA) into o.inner clobbered the inner
         // discriminant; `when o.inner.kind` matched neither IA nor IB.
         const char* source = R"ROXY(
@@ -660,7 +663,8 @@ TEST_SUITE("E2E Tagged Unions") {
         CHECK(result.stdout_output == "IA=42\n");
     }
 
-    TEST_CASE_TEMPLATE("Field assignment: struct value via 'self' inside a method", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Field assignment: struct value via 'self' inside a method", Backend,
+                       RX_E2E_BACKENDS) {
         // Mirrors the original lox repro: assignment happens through `self.field`
         // (a ref to the enclosing struct) rather than through a local variable.
         const char* source = R"ROXY(
@@ -703,8 +707,8 @@ TEST_SUITE("E2E Tagged Unions") {
         CHECK(result.stdout_output == "IA=13\n");
     }
 
-    TEST_CASE_TEMPLATE("exhaustive when over discriminant needs no trailing return",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("exhaustive when over discriminant needs no trailing return", Backend,
+                       RX_E2E_BACKENDS) {
         // The when covers every variant of the discriminant enum, so it is
         // exhaustive and terminating — the function needs no trailing return.
         const char* source = R"(
@@ -751,7 +755,8 @@ TEST_SUITE("E2E Tagged Unions") {
     // union through the descriptor walk, which uses the shared gate and was
     // always right. An inherited one takes CallDtor instead — and the C backend
     // routes every struct through `$$delete` — so both go through the walk.
-    TEST_CASE_TEMPLATE("inherited tagged union releases a string variant field", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("inherited tagged union releases a string variant field", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         enum K { A, B }
         struct Base { n: i32; }
@@ -774,7 +779,8 @@ TEST_SUITE("E2E Tagged Unions") {
     }
 
     // Re-tagging away from a variant releases what it held, on the same gate.
-    TEST_CASE_TEMPLATE("re-tagging a union releases the outgoing string variant", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("re-tagging a union releases the outgoing string variant", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         enum K { A, B }
         struct T { when k: K { case A: pad: i32; case B: s: string; } }
@@ -790,5 +796,4 @@ TEST_SUITE("E2E Tagged Unions") {
         CHECK(result.success == true);
         CHECK(result.stdout_output == "9\n");
     }
-
 }

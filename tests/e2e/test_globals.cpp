@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -112,7 +112,8 @@ TEST_SUITE("E2E Globals") {
     // set by the constructor is visible, and the program tears down cleanly at
     // shutdown (no double-free; the debug double-delete tripwire would fire
     // otherwise).
-    TEST_CASE_TEMPLATE("uniq global runs its constructor and reads back", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("uniq global runs its constructor and reads back", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
             struct Counter { value: i32; }
             fun new Counter(v: i32) { self.value = v; }
@@ -170,8 +171,8 @@ TEST_SUITE("E2E Globals") {
     // delete-while-borrowed *trap* is asserted VM-only (test_lifetime_regressions
     // "F8*"): the C backend renders that trap as a raw abort, not a catchable
     // error.
-    TEST_CASE_TEMPLATE("global ref is counted; deleted uniq global isn't double-freed",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("global ref is counted; deleted uniq global isn't double-freed", Backend,
+                       RX_E2E_BACKENDS) {
         // A global ref reads through to its owner; the init RefInc and shutdown
         // RefDec balance, so the owner tears down cleanly (a missing dec would
         // leave the owner borrowed at its shutdown Delete).

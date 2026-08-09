@@ -15,7 +15,8 @@ namespace rx {
 using namespace ir_builder_detail;
 
 void IRBuilder::define_local(StringView name, ValueId value, Type* type, bool is_ptr) {
-    if (m_local_scopes.empty()) return;
+    if (m_local_scopes.empty())
+        return;
 
     // Search for an existing binding in outer scopes and update it
     // This is necessary for SSA - assignments should update the existing definition
@@ -49,16 +50,16 @@ ValueId IRBuilder::lookup_local(StringView name) {
         }
     }
     report_error(intern_format("Internal error: undefined variable '{}' in IR generation (fn {})",
-                               name, m_current_func ? m_current_func->name : "?"_sv).data());
+                               name, m_current_func ? m_current_func->name : "?"_sv)
+                     .data());
     return ValueId::invalid();
 }
 
-void IRBuilder::push_scope() {
-    m_local_scopes.push_back({});
-}
+void IRBuilder::push_scope() { m_local_scopes.push_back({}); }
 
 void IRBuilder::pop_scope() {
-    if (m_local_scopes.empty()) return;
+    if (m_local_scopes.empty())
+        return;
     u32 depth = static_cast<u32>(m_local_scopes.size());
 
     // Record cleanup info for exception-path cleanup BEFORE emit_scope_cleanup.
@@ -74,7 +75,8 @@ void IRBuilder::pop_scope() {
 }
 
 BlockId IRBuilder::current_or_last_block_id() const {
-    if (m_current_block) return m_current_block->id;
+    if (m_current_block)
+        return m_current_block->id;
     // A terminator (throw / return / unreachable) has cleared m_current_block,
     // so the scope ends in the block emission was last in — NOT in
     // `blocks.back()`, which is the last block *created*. Those differ whenever
@@ -84,22 +86,28 @@ BlockId IRBuilder::current_or_last_block_id() const {
     // per-variant `variant_retain_next`. The record then ended before the throw,
     // and unwinding skipped it — a value-struct local with a `string` member
     // leaked on every throw past it.
-    if (m_last_current_block) return m_last_current_block->id;
-    if (!m_current_func->blocks.empty()) return m_current_func->blocks.back()->id;
+    if (m_last_current_block)
+        return m_last_current_block->id;
+    if (!m_current_func->blocks.empty())
+        return m_current_func->blocks.back()->id;
     return BlockId::invalid();
 }
 
 void IRBuilder::record_scope_cleanup_records(u32 depth) {
     BlockId end_block = current_or_last_block_id();
-    if (!end_block.is_valid()) return;
+    if (!end_block.is_valid())
+        return;
     for (u32 i = 0; i < m_ownership.count(); i++) {
         const OwnedLocalInfo& info = m_ownership.entry(i);
-        if (info.scope_depth < depth) continue;
-        if (info.adopted_in_place) continue;  // the adopting binding's record covers it
-        if (!info.start_block.is_valid() || !info.initial_value.is_valid()) continue;
+        if (info.scope_depth < depth)
+            continue;
+        if (info.adopted_in_place)
+            continue; // the adopting binding's record covers it
+        if (!info.start_block.is_valid() || !info.initial_value.is_valid())
+            continue;
         IRCleanupKind kind = info.kind == OwnedKind::RefBorrow ? IRCleanupKind::RefDec
-                           : info.kind == OwnedKind::StrOwn    ? IRCleanupKind::StrRelease
-                           : IRCleanupKind::Delete;
+                             : info.kind == OwnedKind::StrOwn  ? IRCleanupKind::StrRelease
+                                                               : IRCleanupKind::Delete;
         IRCleanupInfo record{info.initial_value, info.type, info.start_block, end_block, kind};
         record.from_merge_rebind = info.rebound_at_merge;
         m_current_func->cleanup_info.push_back(record);
@@ -121,33 +129,39 @@ void IRBuilder::track_noncopyable_call_temp(ValueId val, Type* type) {
     // Keyed on drop glue rather than move-only-ness (`tracked_for_cleanup`): a
     // temporary is tracked because someone has to destroy it, which has nothing
     // to do with whether binding it would move its source.
-    if (!tracked_for_cleanup(type) || !m_current_block || !val.is_valid()) return;
+    if (!tracked_for_cleanup(type) || !m_current_block || !val.is_valid())
+        return;
     // Skip if already tracked as a temporary (constructor/struct-literal paths
     // self-track their heap temps at creation).
-    if (m_ownership.has_temp_for(val)) return;
+    if (m_ownership.has_temp_for(val))
+        return;
     StringView temp_name = intern_synthetic_name("__tmp", m_next_temp_id++);
     define_local(temp_name, val, type);
     u32 scope_depth = static_cast<u32>(m_local_scopes.size());
-    m_ownership.track({temp_name, type, scope_depth, false, true,
-                       m_current_block->id, val});
+    m_ownership.track({temp_name, type, scope_depth, false, true, m_current_block->id, val});
 }
 
 bool IRBuilder::is_borrowed_view_call(Expr* expr) const {
-    if (!expr || expr->kind != AstKind::ExprCall) return false;
+    if (!expr || expr->kind != AstKind::ExprCall)
+        return false;
     Expr* callee = expr->call.callee;
-    if (!callee || callee->kind != AstKind::ExprGet) return false;
+    if (!callee || callee->kind != AstKind::ExprGet)
+        return false;
     Expr* receiver = callee->get.object;
     // A null receiver type means `object` names an imported module, not a value.
-    if (!receiver || !receiver->resolved_type) return false;
+    if (!receiver || !receiver->resolved_type)
+        return false;
     const MethodInfo* method =
         m_types.lookup_method(receiver->resolved_type->base_type(), callee->get.name);
     return method && !method->native_name.empty() && method->returns_borrowed;
 }
 
 void IRBuilder::track_string_temp(ValueId val, Type* type) {
-    if (!type || type->kind != TypeKind::String || !m_current_block || !val.is_valid()) return;
+    if (!type || type->kind != TypeKind::String || !m_current_block || !val.is_valid())
+        return;
     // Skip if already tracked as a temporary (avoid double-tracking).
-    if (m_ownership.has_temp_for(val)) return;
+    if (m_ownership.has_temp_for(val))
+        return;
     StringView temp_name = intern_synthetic_name("__str", m_next_temp_id++);
     define_local(temp_name, val, type);
     u32 scope_depth = static_cast<u32>(m_local_scopes.size());
@@ -156,9 +170,11 @@ void IRBuilder::track_string_temp(ValueId val, Type* type) {
 }
 
 void IRBuilder::track_ref_call_temp(ValueId val, Type* type) {
-    if (!type || type->kind != TypeKind::Ref || !m_current_block || !val.is_valid()) return;
+    if (!type || type->kind != TypeKind::Ref || !m_current_block || !val.is_valid())
+        return;
     // Skip if already tracked as a temporary (avoid double-tracking).
-    if (m_ownership.has_temp_for(val)) return;
+    if (m_ownership.has_temp_for(val))
+        return;
     StringView temp_name = intern_synthetic_name("__ref", m_next_temp_id++);
     define_local(temp_name, val, type);
     u32 scope_depth = static_cast<u32>(m_local_scopes.size());
@@ -176,7 +192,8 @@ void IRBuilder::acquire_ref_borrow(ValueId val, Expr* source) {
         // adopt. End the temporary's tracking so the binding — not the temp —
         // is what releases it; otherwise both decrement and the count underflows.
         OwnedLocalInfo* temp = m_ownership.find_live_temp(val);
-        if (temp && temp->kind == OwnedKind::RefBorrow) temp->is_moved = true;
+        if (temp && temp->kind == OwnedKind::RefBorrow)
+            temp->is_moved = true;
         return;
     }
     // Any other source is a fresh borrow alongside a still-live owner.
@@ -185,12 +202,13 @@ void IRBuilder::acquire_ref_borrow(ValueId val, Expr* source) {
 }
 
 void IRBuilder::consume_or_retain_string(ValueId val, Type* type, TempAdoption adoption) {
-    if (!type || type->kind != TypeKind::String || !val.is_valid()) return;
+    if (!type || type->kind != TypeKind::String || !val.is_valid())
+        return;
     // A tracked owned string temp: adopt its count-1 ownership (consume the temp)
     // rather than retaining a second reference.
     OwnedLocalInfo* info = m_ownership.find_live_temp(val);
     if (info && info->kind == OwnedKind::StrOwn) {
-        info->is_moved = true;  // adopt: ownership transfers to the destination
+        info->is_moved = true; // adopt: ownership transfers to the destination
         if (adoption == TempAdoption::Elsewhere) {
             // Stored into a field/container/global (not sharing a tracked
             // local's register): end the temp's cleanup record and null its
@@ -213,7 +231,8 @@ void IRBuilder::consume_temp_noncopyable(ValueId val, TempAdoption adoption) {
     // Only matches temporaries, not named variables that happen to share the
     // same ValueId (the tracker's value index holds temporaries only).
     OwnedLocalInfo* info = m_ownership.find_live_temp(val);
-    if (!info) return;  // not a tracked temporary (named variable / copyable type)
+    if (!info)
+        return; // not a tracked temporary (named variable / copyable type)
     info->is_moved = true;
     // When adopted by a variable (same register), the variable's cleanup record
     // handles destruction — no Nullify needed. Otherwise, emit a Nullify annotation
@@ -231,7 +250,8 @@ void IRBuilder::consume_temp_noncopyable(ValueId val, TempAdoption adoption) {
 
 void IRBuilder::mark_moved_from(StringView name, bool null_ssa, bool nullify_record) {
     OwnedLocalInfo* owned_info = m_ownership.find_by_name(name);
-    if (!owned_info || owned_info->is_moved) return;
+    if (!owned_info || owned_info->is_moved)
+        return;
 
     // For uniq sources, re-point the SSA name at null so future reads (and the
     // scope-exit Delete) see null instead of the moved-out pointer. Value-struct
@@ -250,29 +270,35 @@ void IRBuilder::mark_moved_from(StringView name, bool null_ssa, bool nullify_rec
 }
 
 void IRBuilder::nullify_moved_field_source(Expr* consumed) {
-    if (!consumed || consumed->kind != AstKind::ExprGet) return;
+    if (!consumed || consumed->kind != AstKind::ExprGet)
+        return;
     Type* field_type = consumed->resolved_type;
-    if (!field_type || field_type->is_copy()) return;
+    if (!field_type || field_type->is_copy())
+        return;
 
     GetExpr& src_get = consumed->get;
     Type* src_obj_type = src_get.object->resolved_type;
     Type* src_struct_type = src_obj_type ? src_obj_type->base_type() : nullptr;
-    if (!src_struct_type || !src_struct_type->is_struct()) return;
+    if (!src_struct_type || !src_struct_type->is_struct())
+        return;
     const FieldInfo* src_field = src_struct_type->struct_info.find_field(src_get.name);
-    if (!src_field) return;
+    if (!src_field)
+        return;
 
     ValueId src_obj_ptr = gen_expr(src_get.object);
     ValueId null_val = emit_const_null();
     // Tag the store with the field's real type (not void): the C backend keys
     // off the SetField type to cast the null (`void*`) to a `uniq`/`ref` pointer
     // field — `field = nullptr` is ill-formed otherwise in C++.
-    emit_set_field(src_obj_ptr, src_field->name, src_field->slot_offset,
-                   src_field->slot_count, null_val, field_type);
+    emit_set_field(src_obj_ptr, src_field->name, src_field->slot_offset, src_field->slot_count,
+                   null_val, field_type);
 }
 
 void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
-    if (info.is_moved) return;
-    if (!m_current_block) return;  // Block already terminated
+    if (info.is_moved)
+        return;
+    if (!m_current_block)
+        return; // Block already terminated
 
     ValueId current_value = lookup_local(info.name);
 
@@ -335,24 +361,22 @@ void IRBuilder::emit_implicit_destroy(OwnedLocalInfo& info) {
         }
     }
 
-    info.is_moved = true;  // Prevent double-destroy
+    info.is_moved = true; // Prevent double-destroy
 }
 
-void IRBuilder::emit_single_field_destroy(ValueId obj_ptr, StringView field_name,
-                                          u32 slot_offset, u32 slot_count, Type* field_type) {
+void IRBuilder::emit_single_field_destroy(ValueId obj_ptr, StringView field_name, u32 slot_offset,
+                                          u32 slot_count, Type* field_type) {
     // For struct fields stored as addresses (value-type structs), use GetFieldAddr.
     // The caller has already decided this field needs dropping; this only picks
     // the addressing mode, so it asks about representation, not move-only-ness.
     if (field_type->is_struct()) {
-        ValueId field_addr = emit_get_field_addr(obj_ptr, field_name,
-            slot_offset, field_type);
+        ValueId field_addr = emit_get_field_addr(obj_ptr, field_name, slot_offset, field_type);
         emit_delete(field_addr, field_type);
         return;
     }
 
     // For pointer-valued fields (uniq, list, map): load the pointer and emit typed Delete
-    ValueId field_val = emit_get_field(obj_ptr, field_name,
-        slot_offset, slot_count, field_type);
+    ValueId field_val = emit_get_field(obj_ptr, field_name, slot_offset, slot_count, field_type);
     emit_delete(field_val, field_type);
 }
 
@@ -379,25 +403,27 @@ void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
     for (i32 i = static_cast<i32>(struct_info.fields.size()) - 1;
          i >= static_cast<i32>(own_field_start); i--) {
         const FieldInfo& field = struct_info.fields[i];
-        if (!field.type) continue;
+        if (!field.type)
+            continue;
 
         // One gate, shared with the synthetic-destructor pass and both backends'
         // container drops (member_needs_drop → compute_drop_plan). Restating it
         // here as `Uniq || noncopyable()` is what silently skipped `string`
         // fields; a typed Delete on a string field lowers to StrRelease on both
         // backends, so routing them through the same path is all it takes.
-        if (!member_needs_drop(field.type)) continue;
+        if (!member_needs_drop(field.type))
+            continue;
 
         if (field.type->kind == TypeKind::Ref) {
             // A `ref` field is a counted borrow — release it. Only synthesized
             // closure envs hold ref fields ([ref self] / captured ref locals);
             // ref is banned from user struct fields, so this is inert elsewhere.
-            ValueId ref_val = emit_get_field(self_ptr, field.name,
-                field.slot_offset, field.slot_count, field.type);
+            ValueId ref_val = emit_get_field(self_ptr, field.name, field.slot_offset,
+                                             field.slot_count, field.type);
             emit_ref_dec(ref_val);
         } else {
-            emit_single_field_destroy(self_ptr, field.name,
-                field.slot_offset, field.slot_count, field.type);
+            emit_single_field_destroy(self_ptr, field.name, field.slot_offset, field.slot_count,
+                                      field.type);
         }
     }
 
@@ -418,9 +444,11 @@ void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
                     break;
                 }
             }
-            if (has_droppable_variant) break;
+            if (has_droppable_variant)
+                break;
         }
-        if (!has_droppable_variant) continue;
+        if (!has_droppable_variant)
+            continue;
 
         // Load the discriminant value
         const FieldInfo* disc_field = nullptr;
@@ -430,10 +458,11 @@ void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
                 break;
             }
         }
-        if (!disc_field) continue;
+        if (!disc_field)
+            continue;
 
-        ValueId disc_val = emit_get_field(self_ptr, disc_field->name,
-            disc_field->slot_offset, disc_field->slot_count, disc_field->type);
+        ValueId disc_val = emit_get_field(self_ptr, disc_field->name, disc_field->slot_offset,
+                                          disc_field->slot_count, disc_field->type);
 
         // Create a merge block for after all variant cleanup
         IRBlock* merge_block = create_block("variant_cleanup_done");
@@ -449,11 +478,12 @@ void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
                     break;
                 }
             }
-            if (!variant_has_cleanup) continue;
+            if (!variant_has_cleanup)
+                continue;
 
             // Compare discriminant to this variant's value
-            ValueId variant_val = emit_const_int(
-                static_cast<i32>(variant.discriminant_value), disc_field->type);
+            ValueId variant_val =
+                emit_const_int(static_cast<i32>(variant.discriminant_value), disc_field->type);
             ValueId is_match = emit_binary(IROp::EqI, disc_val, variant_val, m_types.bool_type());
 
             IRBlock* cleanup_block = create_block("variant_cleanup");
@@ -464,10 +494,11 @@ void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
             set_current_block(cleanup_block);
             for (i32 fi = static_cast<i32>(variant.fields.size()) - 1; fi >= 0; fi--) {
                 const auto& variant_field = variant.fields[fi];
-                if (!member_needs_drop(variant_field.type)) continue;
+                if (!member_needs_drop(variant_field.type))
+                    continue;
                 u32 actual_offset = clause.union_slot_offset + variant_field.slot_offset;
-                emit_single_field_destroy(self_ptr, variant_field.name,
-                    actual_offset, variant_field.slot_count, variant_field.type);
+                emit_single_field_destroy(self_ptr, variant_field.name, actual_offset,
+                                          variant_field.slot_count, variant_field.type);
             }
             finish_block_goto(merge_block->id);
 
@@ -481,15 +512,18 @@ void IRBuilder::emit_field_cleanup(ValueId self_ptr, Type* struct_type) {
 }
 
 void IRBuilder::emit_struct_clone_glue(ValueId struct_ptr, Type* struct_type) {
-    if (!struct_type || !struct_type->is_struct() || !struct_ptr.is_valid()) return;
-    if (!m_current_block) return;  // block already terminated
+    if (!struct_type || !struct_type->is_struct() || !struct_ptr.is_valid())
+        return;
+    if (!m_current_block)
+        return; // block already terminated
 
     // A move-only struct is never duplicated — its copies are moves, and the
     // source hands its counts over rather than sharing them. Nothing to acquire.
     // (This is also what keeps the walk below total: only a copyable struct
     // reaches it, and a copyable struct cannot hold a member whose drop has no
     // inverse — that member is exactly what would have made it move-only.)
-    if (struct_type->noncopyable()) return;
+    if (struct_type->noncopyable())
+        return;
 
     StructTypeInfo& struct_info = struct_type->struct_info;
 
@@ -499,14 +533,15 @@ void IRBuilder::emit_struct_clone_glue(ValueId struct_ptr, Type* struct_type) {
     // flat memcpy of the whole layout with nothing to chain to. Stopping early
     // would duplicate an inherited member without retaining it.
     for (const auto& field : struct_info.fields) {
-        if (!field.type) continue;
+        if (!field.type)
+            continue;
         // The same gate as the drop (member_needs_drop → compute_drop_plan), so
         // retain and release are inverses by construction rather than by review:
         // a member acquires a count here exactly when it releases one on
         // teardown, and the two turn on together.
-        if (!member_needs_drop(field.type)) continue;
-        emit_member_retain(struct_ptr, field.name, field.slot_offset,
-                           field.slot_count, field.type);
+        if (!member_needs_drop(field.type))
+            continue;
+        emit_member_retain(struct_ptr, field.name, field.slot_offset, field.slot_count, field.type);
     }
 
     // Variant fields live in the union, so only the members named by the current
@@ -521,15 +556,18 @@ void IRBuilder::emit_struct_clone_glue(ValueId struct_ptr, Type* struct_type) {
                     break;
                 }
             }
-            if (any_retaining_variant) break;
+            if (any_retaining_variant)
+                break;
         }
-        if (!any_retaining_variant) continue;
+        if (!any_retaining_variant)
+            continue;
 
         const FieldInfo* disc_field = struct_info.find_field(clause.discriminant_name);
-        if (!disc_field) continue;
+        if (!disc_field)
+            continue;
 
-        ValueId disc_val = emit_get_field(struct_ptr, disc_field->name,
-            disc_field->slot_offset, disc_field->slot_count, disc_field->type);
+        ValueId disc_val = emit_get_field(struct_ptr, disc_field->name, disc_field->slot_offset,
+                                          disc_field->slot_count, disc_field->type);
 
         IRBlock* merge_block = create_block("variant_retain_done");
 
@@ -541,10 +579,11 @@ void IRBuilder::emit_struct_clone_glue(ValueId struct_ptr, Type* struct_type) {
                     break;
                 }
             }
-            if (!variant_retains) continue;
+            if (!variant_retains)
+                continue;
 
-            ValueId variant_val = emit_const_int(
-                static_cast<i32>(variant.discriminant_value), disc_field->type);
+            ValueId variant_val =
+                emit_const_int(static_cast<i32>(variant.discriminant_value), disc_field->type);
             ValueId is_match = emit_binary(IROp::EqI, disc_val, variant_val, m_types.bool_type());
 
             IRBlock* retain_block = create_block("variant_retain");
@@ -553,8 +592,10 @@ void IRBuilder::emit_struct_clone_glue(ValueId struct_ptr, Type* struct_type) {
 
             set_current_block(retain_block);
             for (const auto& variant_field : variant.fields) {
-                if (!variant_field.type) continue;
-                if (!member_needs_drop(variant_field.type)) continue;
+                if (!variant_field.type)
+                    continue;
+                if (!member_needs_drop(variant_field.type))
+                    continue;
                 emit_member_retain(struct_ptr, variant_field.name,
                                    clause.union_slot_offset + variant_field.slot_offset,
                                    variant_field.slot_count, variant_field.type);
@@ -575,47 +616,47 @@ void IRBuilder::emit_value_retain(ValueId value, Type* type) {
 
 void IRBuilder::emit_value_retain(ValueId value, Type* type, const RetainPlan& plan) {
     switch (plan.kind) {
-    case RetainKind::StrRetain:
-        emit_str_retain(value);
-        break;
-    case RetainKind::RefInc:
-        emit_ref_inc(value);
-        break;
-    case RetainKind::WalkFields:
-        // A value struct is represented by its address (the IR-wide convention),
-        // so `value` is already what the recursive walk needs. Terminating: a
-        // direct value cycle is rejected as infinitely sized (recursive-types.md),
-        // so the field graph is a DAG.
-        emit_struct_clone_glue(value, plan.struct_type);
-        break;
-    case RetainKind::None:
-        // A value that drops but cannot be retained — `uniq`, a container, a
-        // coroutine. Holding one is precisely what makes a type move-only, so
-        // reaching here means the move-only derivation and the drop derivation
-        // have gone out of sync (lifetimes.md: "a type is move-only exactly when
-        // its drop has no inverse"). Duplicating it anyway would hand two owners
-        // the same pointer.
-        report_error("Internal error: duplicating a value that cannot be retained");
-        break;
+        case RetainKind::StrRetain:
+            emit_str_retain(value);
+            break;
+        case RetainKind::RefInc:
+            emit_ref_inc(value);
+            break;
+        case RetainKind::WalkFields:
+            // A value struct is represented by its address (the IR-wide convention),
+            // so `value` is already what the recursive walk needs. Terminating: a
+            // direct value cycle is rejected as infinitely sized (recursive-types.md),
+            // so the field graph is a DAG.
+            emit_struct_clone_glue(value, plan.struct_type);
+            break;
+        case RetainKind::None:
+            // A value that drops but cannot be retained — `uniq`, a container, a
+            // coroutine. Holding one is precisely what makes a type move-only, so
+            // reaching here means the move-only derivation and the drop derivation
+            // have gone out of sync (lifetimes.md: "a type is move-only exactly when
+            // its drop has no inverse"). Duplicating it anyway would hand two owners
+            // the same pointer.
+            report_error("Internal error: duplicating a value that cannot be retained");
+            break;
     }
 }
 
-void IRBuilder::emit_member_retain(ValueId struct_ptr, StringView field_name,
-                                   u32 slot_offset, u32 slot_count, Type* field_type) {
+void IRBuilder::emit_member_retain(ValueId struct_ptr, StringView field_name, u32 slot_offset,
+                                   u32 slot_count, Type* field_type) {
     // A nested value struct lives inline in the enclosing layout, so its "value"
     // is its address; everything else is loaded out of the slot. The plan is
     // computed once and passed down — `compute_retain_plan` recurses through a
     // struct's fields, so recomputing it inside emit_value_retain would walk the
     // whole field subtree a second time, per field, at every clone site.
     RetainPlan plan = compute_retain_plan(field_type);
-    ValueId member = plan.kind == RetainKind::WalkFields
-        ? emit_get_field_addr(struct_ptr, field_name, slot_offset, field_type)
-        : emit_get_field(struct_ptr, field_name, slot_offset, slot_count, field_type);
+    ValueId member =
+        plan.kind == RetainKind::WalkFields
+            ? emit_get_field_addr(struct_ptr, field_name, slot_offset, field_type)
+            : emit_get_field(struct_ptr, field_name, slot_offset, slot_count, field_type);
     emit_value_retain(member, field_type, plan);
 }
 
-void IRBuilder::emit_discriminant_reassign_cleanup(ValueId obj,
-                                                   const WhenClauseInfo& clause,
+void IRBuilder::emit_discriminant_reassign_cleanup(ValueId obj, const WhenClauseInfo& clause,
                                                    ValueId new_disc) {
     // Reassigning `s.kind` moves the tagged union to a different variant. Two
     // hazards, both because the destructor's variant cleanup is guarded by the
@@ -630,17 +671,22 @@ void IRBuilder::emit_discriminant_reassign_cleanup(ValueId obj,
     // what teardown would have, `string` variant fields included.
     auto variant_has_owned = [](const VariantInfo& v) {
         for (const auto& f : v.fields)
-            if (member_needs_drop(f.type)) return true;
+            if (member_needs_drop(f.type))
+                return true;
         return false;
     };
 
     bool any_owned = false;
     for (const auto& v : clause.variants)
-        if (variant_has_owned(v)) { any_owned = true; break; }
-    if (!any_owned) return;   // trivial variants: re-tagging is already safe
+        if (variant_has_owned(v)) {
+            any_owned = true;
+            break;
+        }
+    if (!any_owned)
+        return; // trivial variants: re-tagging is already safe
 
     ValueId disc_old = emit_get_field(obj, clause.discriminant_name,
-        clause.discriminant_slot_offset, 1, clause.discriminant_type);
+                                      clause.discriminant_slot_offset, 1, clause.discriminant_type);
 
     // Skip everything when re-tagging to the same variant (a no-op that must
     // preserve the current owned field rather than free it).
@@ -654,9 +700,10 @@ void IRBuilder::emit_discriminant_reassign_cleanup(ValueId obj,
     // discriminant), mirroring emit_field_cleanup's per-variant dispatch.
     IRBlock* drop_merge = create_block("disc_reassign_drop_done");
     for (const auto& variant : clause.variants) {
-        if (!variant_has_owned(variant)) continue;
-        ValueId variant_val = emit_const_int(
-            static_cast<i32>(variant.discriminant_value), clause.discriminant_type);
+        if (!variant_has_owned(variant))
+            continue;
+        ValueId variant_val =
+            emit_const_int(static_cast<i32>(variant.discriminant_value), clause.discriminant_type);
         ValueId is_match = emit_binary(IROp::EqI, disc_old, variant_val, m_types.bool_type());
         IRBlock* drop_block = create_block("disc_reassign_drop");
         IRBlock* next_block = create_block("disc_reassign_next");
@@ -665,10 +712,11 @@ void IRBuilder::emit_discriminant_reassign_cleanup(ValueId obj,
         set_current_block(drop_block);
         for (i32 fi = static_cast<i32>(variant.fields.size()) - 1; fi >= 0; fi--) {
             const auto& variant_field = variant.fields[fi];
-            if (!member_needs_drop(variant_field.type)) continue;
+            if (!member_needs_drop(variant_field.type))
+                continue;
             emit_single_field_destroy(obj, variant_field.name,
-                clause.union_slot_offset + variant_field.slot_offset,
-                variant_field.slot_count, variant_field.type);
+                                      clause.union_slot_offset + variant_field.slot_offset,
+                                      variant_field.slot_count, variant_field.type);
         }
         finish_block_goto(drop_merge->id);
         set_current_block(next_block);
@@ -689,7 +737,8 @@ void IRBuilder::emit_discriminant_reassign_cleanup(ValueId obj,
 // IROp::Delete instruction which lowers to the DELETE bytecode opcode.
 
 void IRBuilder::emit_scope_cleanup(u32 min_scope_depth) {
-    if (!m_current_block) return;  // Block already terminated
+    if (!m_current_block)
+        return; // Block already terminated
 
     // LIFO order (reverse declaration order, like C++ destructors)
     for (i32 i = static_cast<i32>(m_ownership.count()) - 1; i >= 0; i--) {
@@ -700,4 +749,4 @@ void IRBuilder::emit_scope_cleanup(u32 min_scope_depth) {
     }
 }
 
-}
+} // namespace rx

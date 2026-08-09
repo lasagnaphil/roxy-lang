@@ -1,38 +1,35 @@
 #include "roxy/compiler/driver/compiler.hpp"
+#include "roxy/compiler/codegen/lowering.hpp"
+#include "roxy/compiler/ir/coroutine_lowering.hpp"
+#include "roxy/compiler/ir/ir_builder.hpp"
+#include "roxy/compiler/ir/ir_optimize.hpp"
+#include "roxy/compiler/ir/ir_validator.hpp"
+#include "roxy/compiler/ir/ssa_ir.hpp"
+#include "roxy/compiler/parse/parser.hpp"
+#include "roxy/compiler/sema/semantic.hpp"
 #include "roxy/core/trace.hpp"
 #include "roxy/core/unique_ptr.hpp"
 #include "roxy/shared/lexer.hpp"
-#include "roxy/compiler/parse/parser.hpp"
-#include "roxy/compiler/sema/semantic.hpp"
-#include "roxy/compiler/ir/ssa_ir.hpp"
-#include "roxy/compiler/ir/ir_builder.hpp"
-#include "roxy/compiler/ir/ir_validator.hpp"
-#include "roxy/compiler/ir/ir_optimize.hpp"
-#include "roxy/compiler/ir/coroutine_lowering.hpp"
-#include "roxy/compiler/codegen/lowering.hpp"
 #include "roxy/vm/binding/registry.hpp"
 #include "roxy/vm/natives.hpp"
 
-#include <cstring>
 #include <chrono>
+#include <cstring>
 
 namespace rx {
 
 // Monotonic nanosecond timestamp for phase timing (see CompileTimings).
 static inline u64 now_ns() {
-    return static_cast<u64>(
-        std::chrono::steady_clock::now().time_since_epoch().count());
+    return static_cast<u64>(std::chrono::steady_clock::now().time_since_epoch().count());
 }
 
 Compiler::Compiler(BumpAllocator& allocator)
-    : m_allocator(allocator)
-    , m_type_env(allocator)
-    , m_module_registry(allocator)
-    , m_builtin_registry(new NativeRegistry(allocator, m_type_env.types()))
-{
+    : m_allocator(allocator), m_type_env(allocator), m_module_registry(allocator),
+      m_builtin_registry(new NativeRegistry(allocator, m_type_env.types())) {
     // Register built-in natives and add as "builtin" module (auto-imported as prelude)
     register_builtin_natives(*m_builtin_registry);
-    m_module_registry.register_native_module(BUILTIN_MODULE_NAME, m_builtin_registry.get(), m_type_env.types());
+    m_module_registry.register_native_module(BUILTIN_MODULE_NAME, m_builtin_registry.get(),
+                                             m_type_env.types());
     m_native_registries.push_back({BUILTIN_MODULE_NAME, m_builtin_registry.get()});
 }
 
@@ -69,25 +66,29 @@ BCModule* Compiler::compile() {
     u64 t0 = now_ns();
     bool ok = parse_all();
     m_timings.parse_ns = now_ns() - t0;
-    if (!ok) return nullptr;
+    if (!ok)
+        return nullptr;
 
     // Phase 2: Topologically sort by imports
     t0 = now_ns();
     ok = topological_sort();
     m_timings.topo_ns = now_ns() - t0;
-    if (!ok) return nullptr;
+    if (!ok)
+        return nullptr;
 
     // Phase 3: Semantic analysis (in topological order)
     t0 = now_ns();
     ok = analyze_all();
     m_timings.sema_ns = now_ns() - t0;
-    if (!ok) return nullptr;
+    if (!ok)
+        return nullptr;
 
     // Phase 4: Build IR for all modules
     t0 = now_ns();
     ok = build_ir_all();
     m_timings.ir_build_ns = now_ns() - t0;
-    if (!ok) return nullptr;
+    if (!ok)
+        return nullptr;
 
     // Phase 5: Link into single BCModule (sub-phases timed inside)
     BCModule* module = link_modules();
@@ -107,8 +108,8 @@ bool Compiler::parse_all() {
 
         if (!program || parser.has_error()) {
             const auto& err = parser.error();
-            add_error_fmt("Parse error in module '{}' at line {}: {}",
-                         src.name, err.loc.line, err.message);
+            add_error_fmt("Parse error in module '{}' at line {}: {}", src.name, err.loc.line,
+                          err.message);
             return false;
         }
 
@@ -167,8 +168,9 @@ bool Compiler::detect_cycle(u32 module_idx, Vector<u8>& state, Vector<u32>& orde
         u32 dep_idx = it->second;
         if (state[dep_idx] == 1) {
             // Cycle detected
-            add_error_fmt("Circular import detected: module '{}' imports '{}' which creates a cycle",
-                         m_sources[module_idx].name, import_name);
+            add_error_fmt(
+                "Circular import detected: module '{}' imports '{}' which creates a cycle",
+                m_sources[module_idx].name, import_name);
             return false;
         }
 
@@ -202,8 +204,8 @@ bool Compiler::analyze_all() {
 
         if (!analyzer.analyze(program)) {
             for (const auto& err : analyzer.errors()) {
-                add_error_fmt("Semantic error in module '{}' at line {}: {}",
-                             src.name, err.loc.line, err.message);
+                add_error_fmt("Semantic error in module '{}' at line {}: {}", src.name,
+                              err.loc.line, err.message);
             }
             delete symbols;
             return false;
@@ -220,7 +222,8 @@ bool Compiler::analyze_all() {
         ModuleInfo* mod_info = m_module_registry.find_module(src.name);
         if (mod_info) {
             for (auto* decl : program->declarations) {
-                if (!decl) continue;
+                if (!decl)
+                    continue;
 
                 if (decl->kind == AstKind::DeclFun && decl->fun_decl.is_pub) {
                     // lookup() returns the overload chain HEAD — for a member
@@ -230,8 +233,10 @@ bool Compiler::analyze_all() {
                     while (sym && sym->decl != decl && sym->next_overload) {
                         sym = sym->next_overload;
                     }
-                    if (sym && sym->decl != decl) sym = nullptr;
-                    if (!sym) sym = symbols->lookup(decl->fun_decl.name);
+                    if (sym && sym->decl != decl)
+                        sym = nullptr;
+                    if (!sym)
+                        sym = symbols->lookup(decl->fun_decl.name);
                     Type* func_type = sym ? sym->type : nullptr;
 
                     ModuleExport exp;
@@ -246,8 +251,7 @@ bool Compiler::analyze_all() {
                     // name (empty for single definitions).
                     exp.symbol_name = decl->fun_decl.overload_mangled_name;
                     mod_info->exports.push_back(exp);
-                }
-                else if (decl->kind == AstKind::DeclStruct && decl->struct_decl.is_pub) {
+                } else if (decl->kind == AstKind::DeclStruct && decl->struct_decl.is_pub) {
                     Symbol* sym = symbols->lookup(decl->struct_decl.name);
                     Type* struct_type = sym ? sym->type : nullptr;
 
@@ -260,8 +264,7 @@ bool Compiler::analyze_all() {
                     exp.index = static_cast<u32>(mod_info->exports.size());
                     exp.decl = decl;
                     mod_info->exports.push_back(exp);
-                }
-                else if (decl->kind == AstKind::DeclEnum && decl->enum_decl.is_pub) {
+                } else if (decl->kind == AstKind::DeclEnum && decl->enum_decl.is_pub) {
                     Symbol* sym = symbols->lookup(decl->enum_decl.name);
                     Type* enum_type = sym ? sym->type : nullptr;
 
@@ -287,30 +290,32 @@ bool Compiler::analyze_all() {
     // references) and asking it to handle only its own templates' instances.
     // Iterate to a fixed point: an A-owned instance's body might instantiate
     // a B-owned template that nobody had referenced before.
-    while (m_type_env.generics().has_cross_module_funs()
-           || m_type_env.generics().has_pending_funs()) {
+    while (m_type_env.generics().has_cross_module_funs() ||
+           m_type_env.generics().has_pending_funs()) {
         // Promote any sidelined cross-module instances back into the pending
         // queue so the per-module analyzers below can pick them up.
         m_type_env.generics().promote_cross_module_funs();
 
         u32 total_drained = 0;
         for (u32 idx : m_compile_order) {
-            if (!m_type_env.generics().has_pending_funs()) break;
+            if (!m_type_env.generics().has_pending_funs())
+                break;
             const SourceModule& src = m_sources[idx];
             Program* program = m_module_states[idx].program;
             SymbolTable* symbols = m_module_states[idx].symbols;
-            if (!program || !symbols) continue;
+            if (!program || !symbols)
+                continue;
 
             // Fresh analyzer using this module's persisted SymbolTable. It
             // shares the global TypeEnv (with the pending queue) and only
             // drains instances whose template belongs to this module.
             SemanticAnalyzer analyzer(m_allocator, m_type_env, m_module_registry, *symbols);
-            analyzer.set_program(program);  // seeds m_program for module-name lookup
+            analyzer.set_program(program); // seeds m_program for module-name lookup
             total_drained += analyzer.analyze_owned_pending_fun_instances();
             if (analyzer.has_errors()) {
                 for (const auto& err : analyzer.errors()) {
-                    add_error_fmt("Semantic error in module '{}' at line {}: {}",
-                                  src.name, err.loc.line, err.message);
+                    add_error_fmt("Semantic error in module '{}' at line {}: {}", src.name,
+                                  err.loc.line, err.message);
                 }
                 return false;
             }
@@ -325,7 +330,8 @@ bool Compiler::analyze_all() {
             }
         }
         // No module owned any of the pending — break to avoid infinite loop.
-        if (total_drained == 0) break;
+        if (total_drained == 0)
+            break;
     }
 
     return true;
@@ -344,8 +350,8 @@ bool Compiler::build_ir_all() {
         auto& syn_vec = m_module_states[idx].synthetic_decls;
         Span<Decl*> synthetic_decls;
         if (!syn_vec.empty()) {
-            Decl** data = reinterpret_cast<Decl**>(m_allocator.alloc_bytes(
-                sizeof(Decl*) * syn_vec.size(), alignof(Decl*)));
+            Decl** data = reinterpret_cast<Decl**>(
+                m_allocator.alloc_bytes(sizeof(Decl*) * syn_vec.size(), alignof(Decl*)));
             for (u32 j = 0; j < syn_vec.size(); j++) {
                 data[j] = syn_vec[j];
             }
@@ -353,16 +359,16 @@ bool Compiler::build_ir_all() {
         }
 
         // Use combined registry with all native functions
-        IRBuilder ir_builder(m_allocator, m_type_env, *m_combined_registry, symbols, m_module_registry);
+        IRBuilder ir_builder(m_allocator, m_type_env, *m_combined_registry, symbols,
+                             m_module_registry);
         IRModule* ir_module = ir_builder.build(program, synthetic_decls);
 
         if (!ir_module) {
             if (ir_builder.has_error()) {
-                add_error_fmt("IR generation failed for module '{}': {}",
-                             src.name, ir_builder.error());
+                add_error_fmt("IR generation failed for module '{}': {}", src.name,
+                              ir_builder.error());
             } else {
-                add_error_fmt("IR generation failed for module '{}'",
-                             src.name);
+                add_error_fmt("IR generation failed for module '{}'", src.name);
             }
             return false;
         }
@@ -489,6 +495,5 @@ void Compiler::add_error(const char* message) {
     memcpy(msg, message, len + 1);
     m_errors.push_back(msg);
 }
-
 
 } // namespace rx

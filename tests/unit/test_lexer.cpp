@@ -1,7 +1,7 @@
 #include "roxy/core/doctest/doctest.h"
 
-#include "roxy/shared/lexer.hpp"
 #include "roxy/core/vector.hpp"
+#include "roxy/shared/lexer.hpp"
 
 #include <cstring>
 
@@ -35,7 +35,8 @@ void check_int_literal(const Vector<Token>& tokens, u32 index, i64 expected_valu
 }
 
 // Helper to check float literal
-void check_float_literal(const Vector<Token>& tokens, u32 index, f64 expected_value, f64 epsilon = 0.0001) {
+void check_float_literal(const Vector<Token>& tokens, u32 index, f64 expected_value,
+                         f64 epsilon = 0.0001) {
     REQUIRE(index < tokens.size());
     CHECK(tokens[index].kind == TokenKind::FloatLiteral);
     CHECK(tokens[index].float_value == doctest::Approx(expected_value).epsilon(epsilon));
@@ -59,13 +60,11 @@ void check_location(const Vector<Token>& tokens, u32 index, u32 line, u32 column
 TEST_SUITE("Lexer") {
 
     TEST_CASE("Keywords") {
-        auto tokens = lex_all(
-            "true false nil var fun struct enum pub native "
-            "if else for while break continue return when case "
-            "self super new delete "
-            "uniq ref weak out inout "
-            "import from"
-        );
+        auto tokens = lex_all("true false nil var fun struct enum pub native "
+                              "if else for while break continue return when case "
+                              "self super new delete "
+                              "uniq ref weak out inout "
+                              "import from");
 
         u32 i = 0;
         // Types/modifiers
@@ -178,10 +177,10 @@ TEST_SUITE("Lexer") {
         auto tokens = lex_all("\"hello\" \"world\" \"with\\nescapes\"");
 
         check_token(tokens, 0, TokenKind::StringLiteral);
-        CHECK(tokens[0].length == 7);  // "hello" including quotes
+        CHECK(tokens[0].length == 7); // "hello" including quotes
 
         check_token(tokens, 1, TokenKind::StringLiteral);
-        CHECK(tokens[1].length == 7);  // "world"
+        CHECK(tokens[1].length == 7); // "world"
 
         check_token(tokens, 2, TokenKind::StringLiteral);
     }
@@ -271,17 +270,15 @@ TEST_SUITE("Lexer") {
     TEST_CASE("Line and Column Tracking") {
         auto tokens = lex_all("foo\nbar\n  baz");
 
-        check_location(tokens, 0, 1, 1);  // foo at line 1, col 1
-        check_location(tokens, 1, 2, 1);  // bar at line 2, col 1
-        check_location(tokens, 2, 3, 3);  // baz at line 3, col 3
+        check_location(tokens, 0, 1, 1); // foo at line 1, col 1
+        check_location(tokens, 1, 2, 1); // bar at line 2, col 1
+        check_location(tokens, 2, 3, 3); // baz at line 3, col 3
     }
 
     TEST_CASE("Code Snippet - Function") {
-        auto tokens = lex_all(
-            "fun add(a: i32, b: i32): i32 {\n"
-            "    return a + b;\n"
-            "}"
-        );
+        auto tokens = lex_all("fun add(a: i32, b: i32): i32 {\n"
+                              "    return a + b;\n"
+                              "}");
 
         u32 i = 0;
         check_token(tokens, i++, TokenKind::KwFun);
@@ -308,12 +305,10 @@ TEST_SUITE("Lexer") {
     }
 
     TEST_CASE("Code Snippet - Struct") {
-        auto tokens = lex_all(
-            "struct Point {\n"
-            "    x: f32;\n"
-            "    y: f32;\n"
-            "}"
-        );
+        auto tokens = lex_all("struct Point {\n"
+                              "    x: f32;\n"
+                              "    y: f32;\n"
+                              "}");
 
         u32 i = 0;
         check_token(tokens, i++, TokenKind::KwStruct);
@@ -373,4 +368,4 @@ TEST_SUITE("Lexer") {
         }
     }
 
-}  // TEST_SUITE("Lexer")
+} // TEST_SUITE("Lexer")

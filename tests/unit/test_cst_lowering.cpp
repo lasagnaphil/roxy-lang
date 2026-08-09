@@ -1,15 +1,16 @@
 #include "roxy/core/doctest/doctest.h"
 
+#include "roxy/core/bump_allocator.hpp"
 #include "roxy/lsp/cst_lowering.hpp"
 #include "roxy/lsp/lsp_parser.hpp"
-#include "roxy/core/bump_allocator.hpp"
 
 #include <cstring>
 
 using namespace rx;
 
 // Helper to parse source to CST then lower to AST
-static Program* parse_and_lower(const char* source, BumpAllocator& parse_allocator, BumpAllocator& ast_allocator) {
+static Program* parse_and_lower(const char* source, BumpAllocator& parse_allocator,
+                                BumpAllocator& ast_allocator) {
     u32 length = static_cast<u32>(strlen(source));
     Lexer lexer(source, length);
     LspParser parser(lexer, parse_allocator);
@@ -59,7 +60,8 @@ TEST_SUITE("CST Lowering") {
     TEST_CASE("FunDecl with params and return type") {
         BumpAllocator parse_alloc(4096);
         BumpAllocator ast_alloc(4096);
-        Program* program = parse_and_lower("fun add(a: i32, b: i32): i32 { return a + b; }", parse_alloc, ast_alloc);
+        Program* program = parse_and_lower("fun add(a: i32, b: i32): i32 { return a + b; }",
+                                           parse_alloc, ast_alloc);
 
         REQUIRE(program != nullptr);
         REQUIRE(program->declarations.size() == 1);
@@ -79,7 +81,8 @@ TEST_SUITE("CST Lowering") {
     TEST_CASE("MethodDecl") {
         BumpAllocator parse_alloc(4096);
         BumpAllocator ast_alloc(4096);
-        Program* program = parse_and_lower("fun Point.length(): f32 { return 0.0; }", parse_alloc, ast_alloc);
+        Program* program =
+            parse_and_lower("fun Point.length(): f32 { return 0.0; }", parse_alloc, ast_alloc);
 
         REQUIRE(program != nullptr);
         REQUIRE(program->declarations.size() == 1);
@@ -140,7 +143,8 @@ TEST_SUITE("CST Lowering") {
     TEST_CASE("BlockStmt with nested declarations") {
         BumpAllocator parse_alloc(4096);
         BumpAllocator ast_alloc(4096);
-        Program* program = parse_and_lower("fun main() { var a: i32; var b: f32; }", parse_alloc, ast_alloc);
+        Program* program =
+            parse_and_lower("fun main() { var a: i32; var b: f32; }", parse_alloc, ast_alloc);
 
         REQUIRE(program != nullptr);
         REQUIRE(program->declarations.size() == 1);
@@ -165,7 +169,8 @@ TEST_SUITE("CST Lowering") {
     TEST_CASE("StructDecl with fields") {
         BumpAllocator parse_alloc(4096);
         BumpAllocator ast_alloc(4096);
-        Program* program = parse_and_lower("struct Point { x: f32; y: f32; }", parse_alloc, ast_alloc);
+        Program* program =
+            parse_and_lower("struct Point { x: f32; y: f32; }", parse_alloc, ast_alloc);
 
         REQUIRE(program != nullptr);
         REQUIRE(program->declarations.size() == 1);
@@ -209,7 +214,8 @@ TEST_SUITE("CST Lowering") {
     TEST_CASE("SelfExpr") {
         BumpAllocator parse_alloc(4096);
         BumpAllocator ast_alloc(4096);
-        Program* program = parse_and_lower("fun Point.get_x(): f32 { return self.x; }", parse_alloc, ast_alloc);
+        Program* program =
+            parse_and_lower("fun Point.get_x(): f32 { return self.x; }", parse_alloc, ast_alloc);
 
         REQUIRE(program != nullptr);
         Decl* method_decl = program->declarations[0];
@@ -226,4 +232,4 @@ TEST_SUITE("CST Lowering") {
         CHECK(return_decl->stmt.return_stmt.value->get.object->kind == AstKind::ExprThis);
     }
 
-}  // TEST_SUITE("CST Lowering")
+} // TEST_SUITE("CST Lowering")

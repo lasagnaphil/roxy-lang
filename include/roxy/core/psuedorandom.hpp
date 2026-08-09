@@ -4,18 +4,14 @@
 
 namespace rx {
 
-inline u64 rol64(u64 x, int k)
-{
-    return (x << k) | (x >> (64 - k));
-}
+inline u64 rol64(u64 x, int k) { return (x << k) | (x >> (64 - k)); }
 
 struct xoshiro256ss_state {
     u64 s[4];
 };
 
-inline u64 xoshiro256ss(struct xoshiro256ss_state *state)
-{
-    u64 *s = state->s;
+inline u64 xoshiro256ss(struct xoshiro256ss_state* state) {
+    u64* s = state->s;
     u64 const result = rol64(s[1] * 5, 7) * 9;
     u64 const t = s[1] << 17;
 
@@ -34,7 +30,7 @@ struct splitmix64_state {
     u64 s;
 };
 
-inline u64 splitmix64(struct splitmix64_state *state) {
+inline u64 splitmix64(struct splitmix64_state* state) {
     u64 result = (state->s += 0x9E3779B97f4A7C15);
     result = (result ^ (result >> 30)) * 0xBF58476D1CE4E5B9;
     result = (result ^ (result >> 27)) * 0x94D049BB133111EB;
@@ -42,7 +38,7 @@ inline u64 splitmix64(struct splitmix64_state *state) {
 }
 
 // one could do the same for any of the other generators
-inline void xoshiro256ss_init(struct xoshiro256ss_state *state, u64 seed) {
+inline void xoshiro256ss_init(struct xoshiro256ss_state* state, u64 seed) {
     struct splitmix64_state smstate = {seed};
 
     u64 tmp = splitmix64(&smstate);
@@ -55,4 +51,4 @@ inline void xoshiro256ss_init(struct xoshiro256ss_state *state, u64 seed) {
     state->s[3] = tmp;
 }
 
-}
+} // namespace rx

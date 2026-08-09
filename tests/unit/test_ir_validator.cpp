@@ -104,7 +104,7 @@ TEST_SUITE("IR Validator") {
         add_inst->op = IROp::AddI;
         add_inst->result = func->new_value_for(add_inst);
         add_inst->type = types.i64_type();
-        add_inst->binary.left = ValueId::invalid();  // invalid!
+        add_inst->binary.left = ValueId::invalid(); // invalid!
         add_inst->binary.right = ValueId{0};
         entry->instructions.push_back(add_inst);
 
@@ -136,7 +136,7 @@ TEST_SUITE("IR Validator") {
         // Create const with v0
         IRInst* const_inst = alloc.emplace<IRInst>();
         const_inst->op = IROp::ConstInt;
-        const_inst->result = func->new_value_for(const_inst);  // v0
+        const_inst->result = func->new_value_for(const_inst); // v0
         const_inst->type = types.i64_type();
         const_inst->const_data.int_val = 1;
         entry->instructions.push_back(const_inst);
@@ -144,10 +144,10 @@ TEST_SUITE("IR Validator") {
         // Create add referencing v999 which is out of range
         IRInst* add_inst = alloc.emplace<IRInst>();
         add_inst->op = IROp::AddI;
-        add_inst->result = func->new_value_for(add_inst);  // v1
+        add_inst->result = func->new_value_for(add_inst); // v1
         add_inst->type = types.i64_type();
         add_inst->binary.left = const_inst->result;
-        add_inst->binary.right = ValueId{999};  // out of range
+        add_inst->binary.right = ValueId{999}; // out of range
         entry->instructions.push_back(add_inst);
 
         entry->terminator.kind = TerminatorKind::Return;
@@ -204,7 +204,7 @@ TEST_SUITE("IR Validator") {
         entry->id = BlockId{0};
         entry->terminator.kind = TerminatorKind::Goto;
         entry->terminator.goto_target.block = BlockId{1};
-        entry->terminator.goto_target.args = {};  // 0 args
+        entry->terminator.goto_target.args = {}; // 0 args
 
         // Block 1: expects 1 parameter
         IRBlock* target = alloc.emplace<IRBlock>();
@@ -244,7 +244,7 @@ TEST_SUITE("IR Validator") {
         IRInst* const_inst = alloc.emplace<IRInst>();
         const_inst->op = IROp::ConstInt;
         const_inst->result = func->new_value_for(const_inst);
-        const_inst->type = nullptr;  // null type!
+        const_inst->type = nullptr; // null type!
         const_inst->const_data.int_val = 42;
         entry->instructions.push_back(const_inst);
 
@@ -271,7 +271,7 @@ TEST_SUITE("IR Validator") {
         func->return_type = types.void_type();
 
         IRBlock* entry = alloc.emplace<IRBlock>();
-        entry->id = BlockId{5};  // Should be 0!
+        entry->id = BlockId{5}; // Should be 0!
 
         entry->terminator.kind = TerminatorKind::Return;
         entry->terminator.return_value = ValueId::invalid();
@@ -299,7 +299,7 @@ TEST_SUITE("IR Validator") {
         IRBlock* entry = alloc.emplace<IRBlock>();
         entry->id = BlockId{0};
         entry->terminator.kind = TerminatorKind::Branch;
-        entry->terminator.branch.condition = ValueId::invalid();  // invalid!
+        entry->terminator.branch.condition = ValueId::invalid(); // invalid!
         entry->terminator.branch.then_target.block = BlockId{1};
         entry->terminator.branch.then_target.args = {};
         entry->terminator.branch.else_target.block = BlockId{2};
@@ -345,7 +345,7 @@ TEST_SUITE("IR Validator") {
         block_arg_inst->op = IROp::BlockArg;
         block_arg_inst->result = func->new_value_for(block_arg_inst);
         block_arg_inst->type = types.i64_type();
-        block_arg_inst->block_arg_index = 0;  // out of range (no params)
+        block_arg_inst->block_arg_index = 0; // out of range (no params)
         entry->instructions.push_back(block_arg_inst);
 
         entry->terminator.kind = TerminatorKind::Return;
@@ -376,7 +376,7 @@ TEST_SUITE("IR Validator") {
         // Create a source value
         IRInst* const_inst = alloc.emplace<IRInst>();
         const_inst->op = IROp::ConstInt;
-        const_inst->result = func->new_value_for(const_inst);  // v0
+        const_inst->result = func->new_value_for(const_inst); // v0
         const_inst->type = types.i64_type();
         const_inst->const_data.int_val = 42;
         entry->instructions.push_back(const_inst);
@@ -384,10 +384,10 @@ TEST_SUITE("IR Validator") {
         // Cast with null source_type
         IRInst* cast_inst = alloc.emplace<IRInst>();
         cast_inst->op = IROp::Cast;
-        cast_inst->result = func->new_value_for(cast_inst);  // v1
+        cast_inst->result = func->new_value_for(cast_inst); // v1
         cast_inst->type = types.f64_type();
         cast_inst->cast.source = const_inst->result;
-        cast_inst->cast.source_type = nullptr;  // null!
+        cast_inst->cast.source_type = nullptr; // null!
         entry->instructions.push_back(cast_inst);
 
         entry->terminator.kind = TerminatorKind::Return;
@@ -404,4 +404,4 @@ TEST_SUITE("IR Validator") {
         CHECK(strstr(validator.error(), "null source_type") != nullptr);
     }
 
-}  // TEST_SUITE("IR Validator")
+} // TEST_SUITE("IR Validator")

@@ -22,8 +22,8 @@ inline u32 slot_count_or_1(Type* type) {
 // They share teardown shape — load the pointer, typed Delete — and their
 // cleanup records are narrowed by a Nullify at the destroy point.
 inline bool holds_owning_pointer(Type* type) {
-    return type && (type->kind == TypeKind::Uniq || type->kind == TypeKind::Function
-                    || type->is_list() || type->is_map() || type->is_coroutine());
+    return type && (type->kind == TypeKind::Uniq || type->kind == TypeKind::Function ||
+                    type->is_list() || type->is_map() || type->is_coroutine());
 }
 
 // Whether a local, parameter, or temporary of this type must be **tracked for
@@ -40,8 +40,10 @@ inline bool holds_owning_pointer(Type* type) {
 // `ref` and `string` are excluded because they have their own OwnedKind tracking
 // (RefBorrow / StrOwn) at the same sites; this predicate covers the `Owned` kind.
 inline bool tracked_for_cleanup(Type* t) {
-    if (!t) return false;
-    if (t->kind == TypeKind::Ref || t->kind == TypeKind::String) return false;
+    if (!t)
+        return false;
+    if (t->kind == TypeKind::Ref || t->kind == TypeKind::String)
+        return false;
     return member_needs_drop(t);
 }
 
@@ -53,9 +55,7 @@ inline bool tracked_for_cleanup(Type* t) {
 // creates the borrow, both of which predate the glue. Naming it keeps that
 // carve-out — and its justification — in one place rather than restated as a
 // bare `kind != Ref` at every acquire site.
-inline bool counted_by_runtime(Type* t) {
-    return t && t->kind == TypeKind::Ref;
-}
+inline bool counted_by_runtime(Type* t) { return t && t->kind == TypeKind::Ref; }
 
 // Whether a struct rvalue's storage was created by the expression that produced
 // it — a struct literal's own stack allocation, or the slot a call returned
@@ -73,8 +73,7 @@ inline bool produces_fresh_struct_storage(const Expr* e) {
 }
 
 inline StructCopyKind struct_copy_kind_for(const Expr* source) {
-    return produces_fresh_struct_storage(source) ? StructCopyKind::Move
-                                                 : StructCopyKind::Clone;
+    return produces_fresh_struct_storage(source) ? StructCopyKind::Move : StructCopyKind::Clone;
 }
 
 // Whether a BY-VALUE PARAMETER of this type is the callee's to destroy.
@@ -101,25 +100,22 @@ inline StructCopyKind struct_copy_kind_for(const Expr* source) {
 //
 // `ref`/`string` report false, as they must: both have their own counting at
 // this site (m_ref_params' entry RefInc, and nothing at all for `string`).
-inline bool param_owns_its_value(Type* t) {
-    return t && t->noncopyable();
-}
+inline bool param_owns_its_value(Type* t) { return t && t->noncopyable(); }
 
 // A `ref`-typed expression "hands off" a borrow count when it is the result of
 // a call: by the counting convention (gen_return_stmt) every ref-returning
 // function returns with exactly one count handed to the caller. All other ref
 // sources (identifiers, borrowed subscripts, `ref x`, field reads) carry no
 // count of their own, so binding from them is a fresh borrow that increments.
-inline bool is_ref_handoff_source(Expr* init) {
-    return init && init->kind == AstKind::ExprCall;
-}
+inline bool is_ref_handoff_source(Expr* init) { return init && init->kind == AstKind::ExprCall; }
 
 // True if `e` is a bare `self` reference (possibly parenthesized). Inside a
 // method body `self` is `ExprThis`; inside a lambda body it has already been
 // rewritten to `__env.__self` (an `ExprGet` sourced from a heap-checked env), so
 // only `ExprThis` is the un-promoted second-class receiver borrow.
 inline bool is_bare_self(Expr* e) {
-    while (e && e->kind == AstKind::ExprGrouping) e = e->grouping.expr;
+    while (e && e->kind == AstKind::ExprGrouping)
+        e = e->grouping.expr;
     return e && e->kind == AstKind::ExprThis;
 }
 
@@ -142,23 +138,28 @@ inline bool is_bare_self(Expr* e) {
 // mark_call_args_moved to align arguments with owned parameters.
 inline i32 self_pass_param_offset(CallExpr& call_expr) {
     Expr* callee = call_expr.callee;
-    if (!callee) return -1;
-    if (callee->kind != AstKind::ExprGet) return 0;
+    if (!callee)
+        return -1;
+    if (callee->kind != AstKind::ExprGet)
+        return 0;
     Expr* obj = callee->get.object;
-    if (!obj) return -1;
-    if (obj->resolved_type == nullptr) return 0;  // module-qualified: no self
+    if (!obj)
+        return -1;
+    if (obj->resolved_type == nullptr)
+        return 0; // module-qualified: no self
     Type* obj_base = obj->resolved_type->base_type();
-    if (!obj_base) return -1;
+    if (!obj_base)
+        return -1;
     if (obj_base->is_struct()) {
         const FieldInfo* fn_field = obj_base->struct_info.find_field(callee->get.name);
         if (fn_field && fn_field->type && fn_field->type->base_type()->is_function())
-            return 0;  // field-stored closure: no implicit self
-        return 1;  // genuine user-struct method
+            return 0; // field-stored closure: no implicit self
+        return 1;     // genuine user-struct method
     }
     if (obj_base->is_container() || obj_base->is_coroutine()) {
-        return 1;  // builtin method: build_method_function_type includes self
+        return 1; // builtin method: build_method_function_type includes self
     }
-    return 0;  // any other object shape: the callee carries a plain fn type
+    return 0; // any other object shape: the callee carries a plain fn type
 }
 
 // The declared parameter type that explicit argument `arg_index` binds to, or
@@ -175,15 +176,16 @@ inline i32 self_pass_param_offset(CallExpr& call_expr) {
 // generation} pair and read back as a dangling reference.
 inline Type* callee_param_type(CallExpr& call_expr, u32 arg_index) {
     Expr* callee = call_expr.callee;
-    Type* fn_type = callee && callee->resolved_type
-        ? callee->resolved_type->base_type() : nullptr;
-    if (!fn_type || !fn_type->is_function()) return nullptr;
+    Type* fn_type = callee && callee->resolved_type ? callee->resolved_type->base_type() : nullptr;
+    if (!fn_type || !fn_type->is_function())
+        return nullptr;
     i32 self_offset = self_pass_param_offset(call_expr);
-    if (self_offset < 0) return nullptr;
+    if (self_offset < 0)
+        return nullptr;
     Span<Type*> param_types = fn_type->func_info.param_types;
     u32 param_index = arg_index + static_cast<u32>(self_offset);
     return param_index < param_types.size() ? param_types[param_index] : nullptr;
 }
 
-}  // namespace ir_builder_detail
-}  // namespace rx
+} // namespace ir_builder_detail
+} // namespace rx

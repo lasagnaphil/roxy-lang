@@ -31,4 +31,4 @@ struct VirtualMemoryOps {
     static u64 page_size();
 };
 
-}
+} // namespace rx

@@ -6,7 +6,8 @@ namespace rx {
 static String build_signature(const Vector<ParamStub>& params, const TypeRef& return_type) {
     String sig("(");
     for (u32 i = 0; i < params.size(); i++) {
-        if (i > 0) sig.append(", ", 2);
+        if (i > 0)
+            sig.append(", ", 2);
         sig.append(params[i].name.data(), params[i].name.size());
         if (!params[i].type.name.empty()) {
             sig.append(": ", 2);
@@ -221,7 +222,8 @@ void GlobalIndex::update_file(const String& uri, const FileStubs& stubs) {
 void GlobalIndex::remove_file(StringView uri) {
     String uri_key(uri);
     auto file_it = m_file_names.find(uri_key);
-    if (file_it == m_file_names.end()) return;
+    if (file_it == m_file_names.end())
+        return;
 
     const FileNameSet& name_set = file_it->second;
 
@@ -297,52 +299,62 @@ void GlobalIndex::remove_file(StringView uri) {
 
 const SymbolLocation* GlobalIndex::find_struct(StringView name) const {
     auto it = m_structs.find(String(name));
-    if (it != m_structs.end()) return &it->second;
+    if (it != m_structs.end())
+        return &it->second;
     return nullptr;
 }
 
 const SymbolLocation* GlobalIndex::find_enum(StringView name) const {
     auto it = m_enums.find(String(name));
-    if (it != m_enums.end()) return &it->second;
+    if (it != m_enums.end())
+        return &it->second;
     return nullptr;
 }
 
 const SymbolLocation* GlobalIndex::find_function(StringView name) const {
     auto it = m_functions.find(String(name));
-    if (it != m_functions.end()) return &it->second;
+    if (it != m_functions.end())
+        return &it->second;
     return nullptr;
 }
 
 const SymbolLocation* GlobalIndex::find_trait(StringView name) const {
     auto it = m_traits.find(String(name));
-    if (it != m_traits.end()) return &it->second;
+    if (it != m_traits.end())
+        return &it->second;
     return nullptr;
 }
 
 const SymbolLocation* GlobalIndex::find_global(StringView name) const {
     auto it = m_globals.find(String(name));
-    if (it != m_globals.end()) return &it->second;
+    if (it != m_globals.end())
+        return &it->second;
     return nullptr;
 }
 
-const SymbolLocation* GlobalIndex::find_method(StringView struct_name, StringView method_name) const {
+const SymbolLocation* GlobalIndex::find_method(StringView struct_name,
+                                               StringView method_name) const {
     String key = make_qualified_key(struct_name, method_name);
     auto it = m_methods.find(key);
-    if (it != m_methods.end()) return &it->second;
+    if (it != m_methods.end())
+        return &it->second;
     return nullptr;
 }
 
-const SymbolLocation* GlobalIndex::find_constructor(StringView struct_name, StringView constructor_name) const {
+const SymbolLocation* GlobalIndex::find_constructor(StringView struct_name,
+                                                    StringView constructor_name) const {
     String key = make_qualified_key(struct_name, constructor_name);
     auto it = m_constructors.find(key);
-    if (it != m_constructors.end()) return &it->second;
+    if (it != m_constructors.end())
+        return &it->second;
     return nullptr;
 }
 
 const SymbolLocation* GlobalIndex::find_field(StringView struct_name, StringView field_name) const {
     String key = make_qualified_key(struct_name, field_name);
     auto it = m_fields.find(key);
-    if (it != m_fields.end()) return &it->second;
+    if (it != m_fields.end())
+        return &it->second;
     return nullptr;
 }
 
@@ -371,7 +383,8 @@ StringView GlobalIndex::find_function_return_type(StringView function_name) cons
     return StringView();
 }
 
-StringView GlobalIndex::find_method_return_type(StringView struct_name, StringView method_name) const {
+StringView GlobalIndex::find_method_return_type(StringView struct_name,
+                                                StringView method_name) const {
     String key = make_qualified_key(struct_name, method_name);
     auto it = m_method_return_types.find(key);
     if (it != m_method_return_types.end()) {
@@ -390,23 +403,27 @@ StringView GlobalIndex::find_global_type(StringView name) const {
 
 const Vector<String>* GlobalIndex::get_struct_fields(StringView struct_name) const {
     auto it = m_struct_field_names.find(String(struct_name));
-    if (it != m_struct_field_names.end()) return &it->second;
+    if (it != m_struct_field_names.end())
+        return &it->second;
     return nullptr;
 }
 
 const Vector<String>* GlobalIndex::get_struct_methods(StringView struct_name) const {
     auto it = m_struct_method_names.find(String(struct_name));
-    if (it != m_struct_method_names.end()) return &it->second;
+    if (it != m_struct_method_names.end())
+        return &it->second;
     return nullptr;
 }
 
 const Vector<String>* GlobalIndex::get_enum_variants(StringView enum_name) const {
     auto it = m_enum_variant_names.find(String(enum_name));
-    if (it != m_enum_variant_names.end()) return &it->second;
+    if (it != m_enum_variant_names.end())
+        return &it->second;
     return nullptr;
 }
 
-StringView GlobalIndex::find_method_signature(StringView struct_name, StringView method_name) const {
+StringView GlobalIndex::find_method_signature(StringView struct_name,
+                                              StringView method_name) const {
     String key = make_qualified_key(struct_name, method_name);
     auto it = m_method_signatures.find(key);
     if (it != m_method_signatures.end()) {
@@ -425,28 +442,32 @@ StringView GlobalIndex::find_function_signature(StringView function_name) const 
 
 i32 GlobalIndex::find_function_param_count(StringView name) const {
     auto it = m_function_param_counts.find(String(name));
-    if (it != m_function_param_counts.end()) return it->second;
+    if (it != m_function_param_counts.end())
+        return it->second;
     return -1;
 }
 
 i32 GlobalIndex::find_method_param_count(StringView struct_name, StringView method_name) const {
     String key = make_qualified_key(struct_name, method_name);
     auto it = m_method_param_counts.find(key);
-    if (it != m_method_param_counts.end()) return it->second;
+    if (it != m_method_param_counts.end())
+        return it->second;
     return -1;
 }
 
 i32 GlobalIndex::find_constructor_param_count(StringView struct_name, StringView ctor_name) const {
     String key = make_qualified_key(struct_name, ctor_name);
     auto it = m_constructor_param_counts.find(key);
-    if (it != m_constructor_param_counts.end()) return it->second;
+    if (it != m_constructor_param_counts.end())
+        return it->second;
     return -1;
 }
 
 bool GlobalIndex::field_has_default(StringView struct_name, StringView field_name) const {
     String key = make_qualified_key(struct_name, field_name);
     auto it = m_field_has_defaults.find(key);
-    if (it != m_field_has_defaults.end()) return it->second;
+    if (it != m_field_has_defaults.end())
+        return it->second;
     return false;
 }
 
@@ -455,19 +476,24 @@ Vector<SymbolLocation> GlobalIndex::find_any(StringView name) const {
     String name_str(name);
 
     auto struct_it = m_structs.find(name_str);
-    if (struct_it != m_structs.end()) results.push_back(struct_it->second);
+    if (struct_it != m_structs.end())
+        results.push_back(struct_it->second);
 
     auto enum_it = m_enums.find(name_str);
-    if (enum_it != m_enums.end()) results.push_back(enum_it->second);
+    if (enum_it != m_enums.end())
+        results.push_back(enum_it->second);
 
     auto func_it = m_functions.find(name_str);
-    if (func_it != m_functions.end()) results.push_back(func_it->second);
+    if (func_it != m_functions.end())
+        results.push_back(func_it->second);
 
     auto trait_it = m_traits.find(name_str);
-    if (trait_it != m_traits.end()) results.push_back(trait_it->second);
+    if (trait_it != m_traits.end())
+        results.push_back(trait_it->second);
 
     auto global_it = m_globals.find(name_str);
-    if (global_it != m_globals.end()) results.push_back(global_it->second);
+    if (global_it != m_globals.end())
+        results.push_back(global_it->second);
 
     return results;
 }

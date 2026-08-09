@@ -1,11 +1,11 @@
 #pragma once
 
 #include "roxy/core/bump_allocator.hpp"
-#include "roxy/core/string_view.hpp"
 #include "roxy/core/span.hpp"
+#include "roxy/core/string_view.hpp"
 #include "roxy/core/vector.hpp"
-#include "roxy/vm/value.hpp"
 #include "roxy/vm/bytecode.hpp"
+#include "roxy/vm/value.hpp"
 
 #include "roxy/core/string.hpp"
 
@@ -16,9 +16,9 @@ class NativeRegistry;
 
 // Result of running a test, includes return value and captured output
 struct TestResult {
-    i64 value;                    // Return value (always integer in Roxy)
-    String stdout_output;         // Captured stdout
-    bool success;                 // true if compilation and execution succeeded
+    i64 value;            // Return value (always integer in Roxy)
+    String stdout_output; // Captured stdout
+    bool success;         // true if compilation and execution succeeded
     // Objects still alive after main() returned, excluding immortal string
     // literals. Must be 0 for a program that ran to completion: a nonzero
     // count is a missing drop or an unbalanced retain. See roxy_rt_heap_stats.
@@ -42,8 +42,8 @@ struct ExpectedLeak {
 struct CBackendResult {
     int exit_code;
     String stdout_output;
-    bool compile_success;         // true if Roxy->C++ and C++->binary both succeeded
-    bool run_success;             // true if binary executed successfully
+    bool compile_success; // true if Roxy->C++ and C++->binary both succeeded
+    bool run_success;     // true if binary executed successfully
 };
 
 // Helper to compile Roxy source to bytecode module
@@ -57,8 +57,7 @@ IRModule* compile_to_ir(BumpAllocator& allocator, const char* source, bool debug
 // `source_path`, when non-null, is plumbed into `CEmitterConfig::source_path`
 // so the generated source carries `#line N "<source_path>"` directives at
 // each function-body start.
-String compile_to_cpp(const char* source, bool debug = false,
-                      const char* source_path = nullptr);
+String compile_to_cpp(const char* source, bool debug = false, const char* source_path = nullptr);
 
 // Helper to compile Roxy source to a generated public header (.hpp) string
 String compile_to_hpp(const char* source, bool debug = false);
@@ -73,12 +72,10 @@ CBackendResult compile_and_run_cpp(const char* source, bool debug = false);
 // as a separate translation unit and linked into the final binary — used to
 // verify cross-TU linkage against AOT extern decls). Used to test AOT
 // NativeRegistry dispatch end-to-end.
-CBackendResult compile_and_run_cpp_with_registry(
-    const char* source,
-    NativeRegistry* registry,
-    const char* native_header_text = nullptr,
-    const char* extra_cpp_text = nullptr,
-    bool debug = false);
+CBackendResult compile_and_run_cpp_with_registry(const char* source, NativeRegistry* registry,
+                                                 const char* native_header_text = nullptr,
+                                                 const char* extra_cpp_text = nullptr,
+                                                 bool debug = false);
 
 // Compile only the generated header (with a tiny driver `#include`-ing it).
 // Returns true if the header is valid C++ that compiles standalone against the
@@ -87,10 +84,12 @@ bool header_compiles(const char* source, bool debug = false);
 
 // Helper to compile and run, returning result
 // Set debug=true to print generated IR for debugging
-Value compile_and_run(const char* source, StringView func_name, Span<Value> args = {}, bool debug = false);
+Value compile_and_run(const char* source, StringView func_name, Span<Value> args = {},
+                      bool debug = false);
 
 // Helper to compile and run with stdout/stderr capture
 // Returns TestResult with value and captured output
-TestResult run_and_capture(const char* source, StringView func_name, Span<Value> args = {}, bool debug = false);
+TestResult run_and_capture(const char* source, StringView func_name, Span<Value> args = {},
+                           bool debug = false);
 
 } // namespace rx

@@ -10,8 +10,7 @@ namespace rx {
 // early return. Replaces the manual `auto prev = m_x; m_x = ...; ...; m_x =
 // prev;` idiom, which silently leaks state if a return slips between the save
 // and the restore.
-template <typename T>
-class ScopedValue {
+template <typename T> class ScopedValue {
 public:
     explicit ScopedValue(T& slot) : m_slot(slot), m_saved(slot) {}
     ~ScopedValue() { m_slot = std::move(m_saved); }
@@ -23,4 +22,4 @@ private:
     T m_saved;
 };
 
-}
+} // namespace rx

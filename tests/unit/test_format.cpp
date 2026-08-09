@@ -110,8 +110,8 @@ TEST_SUITE("Format") {
 
         // "hello world" is 11 chars, buf is 8, should truncate to "hello w\0"
         i32 n = format_to(buf, sizeof(buf), "hello world");
-        CHECK(n == 11);              // would-have-written count
-        CHECK(strcmp(buf, "hello w") == 0);  // truncated but null-terminated
+        CHECK(n == 11);                     // would-have-written count
+        CHECK(strcmp(buf, "hello w") == 0); // truncated but null-terminated
         CHECK(buf[7] == '\0');
     }
 
@@ -126,7 +126,7 @@ TEST_SUITE("Format") {
         char buf[1] = {'X'};
         i32 n = format_to(buf, 0, "hello");
         CHECK(n == 0);
-        CHECK(buf[0] == 'X');  // untouched
+        CHECK(buf[0] == 'X'); // untouched
     }
 
     TEST_CASE("enum") {
@@ -153,7 +153,7 @@ TEST_SUITE("Format") {
         CHECK(strcmp(buf, "0000") == 0);
 
         format_to(buf, sizeof(buf), "{:04}", (u32)12345);
-        CHECK(strcmp(buf, "12345") == 0);  // wider than width, no truncation
+        CHECK(strcmp(buf, "12345") == 0); // wider than width, no truncation
     }
 
     TEST_CASE("left-align string") {
@@ -265,4 +265,4 @@ TEST_SUITE("Format") {
         CHECK(strcmp(buf, "0x12345678") == 0);
     }
 
-}  // TEST_SUITE("Format")
+} // TEST_SUITE("Format")

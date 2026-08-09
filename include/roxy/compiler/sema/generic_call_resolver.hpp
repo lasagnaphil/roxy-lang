@@ -1,25 +1,25 @@
 #pragma once
 
+#include "roxy/compiler/parse/ast.hpp"
+#include "roxy/compiler/sema/function_context.hpp"
+#include "roxy/compiler/sema/lifetime_checker.hpp"
+#include "roxy/compiler/sema/sema_context.hpp"
+#include "roxy/compiler/sema/type_checker.hpp"
+#include "roxy/compiler/support/error_reporter.hpp"
+#include "roxy/compiler/types/symbol_table.hpp"
+#include "roxy/compiler/types/type_env.hpp"
+#include "roxy/compiler/types/types.hpp"
+#include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
-#include "roxy/core/bump_allocator.hpp"
 #include "roxy/shared/token.hpp"
-#include "roxy/compiler/parse/ast.hpp"
-#include "roxy/compiler/types/types.hpp"
-#include "roxy/compiler/types/type_env.hpp"
-#include "roxy/compiler/types/symbol_table.hpp"
-#include "roxy/compiler/support/error_reporter.hpp"
-#include "roxy/compiler/sema/type_checker.hpp"
-#include "roxy/compiler/sema/sema_context.hpp"
-#include "roxy/compiler/sema/lifetime_checker.hpp"
-#include "roxy/compiler/sema/function_context.hpp"
 
 namespace rx {
 
 // Result of generic type argument inference
 struct InferredTypeArgs {
     bool success;
-    Vector<Type*> type_args;  // indexed by type param position
+    Vector<Type*> type_args; // indexed by type param position
 };
 
 // GenericCallResolver owns the generic-call machinery the semantic analyzer
@@ -38,16 +38,10 @@ class GenericCallResolver {
 public:
     GenericCallResolver(SemaContext& context, LifetimeChecker& lifetimes,
                         FunctionContext& function_context, Vector<Decl*>& synthetic_decls)
-        : m_context(context)
-        , m_allocator(context.allocator)
-        , m_type_env(context.type_env)
-        , m_types(context.types)
-        , m_symbols(context.symbols)
-        , m_reporter(context.reporter)
-        , m_checker(context.checker)
-        , m_lifetimes(lifetimes)
-        , m_function_context(function_context)
-        , m_synthetic_decls(synthetic_decls) {}
+        : m_context(context), m_allocator(context.allocator), m_type_env(context.type_env),
+          m_types(context.types), m_symbols(context.symbols), m_reporter(context.reporter),
+          m_checker(context.checker), m_lifetimes(lifetimes), m_function_context(function_context),
+          m_synthetic_decls(synthetic_decls) {}
 
     // ===== Pass 1.9: trait bounds on generic type parameters =====
 
@@ -131,13 +125,11 @@ public:
 private:
     // Unify a template parameter's TypeExpr pattern against a concrete type,
     // binding type params by position into `bindings` (null = unbound).
-    bool unify_type_expr(TypeExpr* pattern, Type* concrete,
-                         Span<TypeParam> type_params, Vector<Type*>& bindings);
+    bool unify_type_expr(TypeExpr* pattern, Type* concrete, Span<TypeParam> type_params,
+                         Vector<Type*>& bindings);
 
-    InferredTypeArgs infer_type_args_from_call(Span<TypeParam> type_params,
-                                               Span<Param> params,
-                                               Span<CallArg> args,
-                                               SourceLocation loc);
+    InferredTypeArgs infer_type_args_from_call(Span<TypeParam> type_params, Span<Param> params,
+                                               Span<CallArg> args, SourceLocation loc);
 
     // Shared tail for both generic-fun-call paths: validates argument count
     // against the instantiated function, type-checks each argument, resolves the
@@ -154,14 +146,14 @@ private:
     // resolve_generic_bounds (generic functions and generic structs).
     bool resolve_template_bounds(Span<TypeParam> type_params, ResolvedTypeParams& out);
 
-    SemaContext& m_context;  // resolve_type_expr / analyze_expr / analyze_stmt services
+    SemaContext& m_context; // resolve_type_expr / analyze_expr / analyze_stmt services
     BumpAllocator& m_allocator;
     TypeEnv& m_type_env;
     TypeCache& m_types;
     SymbolTable& m_symbols;
     ErrorReporter& m_reporter;
     TypeChecker& m_checker;
-    LifetimeChecker& m_lifetimes;  // arg-consume in calls; bundled into the Phase B body guard
+    LifetimeChecker& m_lifetimes; // arg-consume in calls; bundled into the Phase B body guard
     // The analyzer's per-function context: Phase B body checking pushes a
     // fresh one (via FunctionContextScope) like every other body entry point.
     FunctionContext& m_function_context;
@@ -178,4 +170,4 @@ private:
     Span<TypeParam> m_active_type_params;
 };
 
-}
+} // namespace rx

@@ -6,8 +6,10 @@ namespace rx {
 
 // ===== Generic Trait Bound Resolution =====
 
-Span<TraitBound> GenericCallResolver::resolve_type_param_bounds(Span<TypeExpr*> bound_exprs, SourceLocation loc) {
-    if (bound_exprs.size() == 0) return {};
+Span<TraitBound> GenericCallResolver::resolve_type_param_bounds(Span<TypeExpr*> bound_exprs,
+                                                                SourceLocation loc) {
+    if (bound_exprs.size() == 0)
+        return {};
 
     Vector<TraitBound> bounds;
     for (auto* bound_expr : bound_exprs) {
@@ -20,7 +22,8 @@ Span<TraitBound> GenericCallResolver::resolve_type_param_bounds(Span<TypeExpr*> 
         // Look up the trait by name
         Type* trait_type = m_type_env.trait_type_by_name(bound_expr->name);
         if (!trait_type) {
-            m_reporter.error_fmt(bound_expr->loc, "unknown trait '{}' in type parameter bound", bound_expr->name);
+            m_reporter.error_fmt(bound_expr->loc, "unknown trait '{}' in type parameter bound",
+                                 bound_expr->name);
             continue;
         }
 
@@ -38,8 +41,9 @@ Span<TraitBound> GenericCallResolver::resolve_type_param_bounds(Span<TypeExpr*> 
         // Validate type arg count against trait's type params
         u32 expected_count = trait_type->trait_info.type_params.size();
         if (resolved_type_args.size() != expected_count) {
-            m_reporter.error_fmt(bound_expr->loc, "trait '{}' expects {} type argument(s) but got {}",
-                     bound_expr->name, expected_count, (u32)resolved_type_args.size());
+            m_reporter.error_fmt(bound_expr->loc,
+                                 "trait '{}' expects {} type argument(s) but got {}",
+                                 bound_expr->name, expected_count, (u32)resolved_type_args.size());
             continue;
         }
 
@@ -52,12 +56,17 @@ Span<TraitBound> GenericCallResolver::resolve_type_param_bounds(Span<TypeExpr*> 
     return m_allocator.alloc_span(bounds);
 }
 
-bool GenericCallResolver::resolve_template_bounds(Span<TypeParam> type_params, ResolvedTypeParams& out) {
+bool GenericCallResolver::resolve_template_bounds(Span<TypeParam> type_params,
+                                                  ResolvedTypeParams& out) {
     bool has_bounds = false;
     for (const auto& type_param : type_params) {
-        if (type_param.bounds.size() > 0) { has_bounds = true; break; }
+        if (type_param.bounds.size() > 0) {
+            has_bounds = true;
+            break;
+        }
     }
-    if (!has_bounds) return false;
+    if (!has_bounds)
+        return false;
 
     Vector<Span<TraitBound>> all_param_bounds;
     for (const auto& type_param : type_params) {
@@ -83,8 +92,10 @@ void GenericCallResolver::resolve_generic_bounds() {
 }
 
 bool GenericCallResolver::check_type_arg_bounds(StringView template_name, Span<Type*> type_args,
-                                              const ResolvedTypeParams* bounds, SourceLocation loc) {
-    if (!bounds) return true;  // No bounds to check
+                                                const ResolvedTypeParams* bounds,
+                                                SourceLocation loc) {
+    if (!bounds)
+        return true; // No bounds to check
 
     bool all_ok = true;
     for (u32 i = 0; i < type_args.size() && i < bounds->param_bounds.size(); i++) {
@@ -115,11 +126,12 @@ bool GenericCallResolver::check_type_arg_bounds(StringView template_name, Span<T
                 if (subst_args.size() > 0) {
                     String args;
                     for (u32 j = 0; j < subst_args.size(); j++) {
-                        if (j > 0) args.append(", ", 2);
+                        if (j > 0)
+                            args.append(", ", 2);
                         type_to_string(subst_args[j], args);
                     }
-                    trait_str = format_to_arena(m_allocator, "{}<{}>",
-                                                bound.trait->trait_info.name, args);
+                    trait_str =
+                        format_to_arena(m_allocator, "{}<{}>", bound.trait->trait_info.name, args);
                 }
 
                 // type_string embeds a trailing NUL (so .data() is a C string);
@@ -127,8 +139,9 @@ bool GenericCallResolver::check_type_arg_bounds(StringView template_name, Span<T
                 // error_fmt's strlen would truncate everything after it.
                 auto concrete_str = m_checker.type_string(concrete_type);
                 m_reporter.error_fmt(loc,
-                    "type '{}' does not implement trait '{}' required by type parameter bound on '{}'",
-                    concrete_str.data(), trait_str, template_name);
+                                     "type '{}' does not implement trait '{}' required by type "
+                                     "parameter bound on '{}'",
+                                     concrete_str.data(), trait_str, template_name);
                 all_ok = false;
             }
         }
@@ -140,15 +153,19 @@ bool GenericCallResolver::check_type_arg_bounds(StringView template_name, Span<T
 // Phase B: Definition-site checking of generic template bodies
 // ============================================================================
 
-Type* GenericCallResolver::substitute_trait_types(Type* type, Type* type_param, Type* found_in_trait) {
-    if (!type) return type;
-    if (type->is_self()) return type_param;
+Type* GenericCallResolver::substitute_trait_types(Type* type, Type* type_param,
+                                                  Type* found_in_trait) {
+    if (!type)
+        return type;
+    if (type->is_self())
+        return type_param;
     if (type->is_type_param()) {
         // Substitute trait's own type params with the bound's type args
         u32 tp_index = type_param->type_param_info.index;
         if (tp_index < m_active_type_param_bounds.size()) {
             for (const auto& bound : m_active_type_param_bounds[tp_index]) {
-                if (bound.trait == found_in_trait && bound.type_args.size() > type->type_param_info.index) {
+                if (bound.trait == found_in_trait &&
+                    bound.type_args.size() > type->type_param_info.index) {
                     return bound.type_args[type->type_param_info.index];
                 }
             }
@@ -159,18 +176,21 @@ Type* GenericCallResolver::substitute_trait_types(Type* type, Type* type_param, 
     return type;
 }
 
-const TraitMethodInfo* GenericCallResolver::lookup_type_param_method(
-    Type* type_param_type, StringView method_name, Type** found_in_trait) {
+const TraitMethodInfo* GenericCallResolver::lookup_type_param_method(Type* type_param_type,
+                                                                     StringView method_name,
+                                                                     Type** found_in_trait) {
 
     u32 param_index = type_param_type->type_param_info.index;
-    if (param_index >= m_active_type_param_bounds.size()) return nullptr;
+    if (param_index >= m_active_type_param_bounds.size())
+        return nullptr;
 
     for (const auto& bound : m_active_type_param_bounds[param_index]) {
         TraitTypeInfo& trait_info = bound.trait->trait_info;
         // Search methods (including those on this trait)
         for (const auto& method : trait_info.methods) {
             if (method.name == method_name) {
-                if (found_in_trait) *found_in_trait = bound.trait;
+                if (found_in_trait)
+                    *found_in_trait = bound.trait;
                 return &method;
             }
         }
@@ -179,7 +199,8 @@ const TraitMethodInfo* GenericCallResolver::lookup_type_param_method(
         while (parent && parent->is_trait()) {
             for (const auto& method : parent->trait_info.methods) {
                 if (method.name == method_name) {
-                    if (found_in_trait) *found_in_trait = parent;
+                    if (found_in_trait)
+                        *found_in_trait = parent;
                     return &method;
                 }
             }
@@ -190,25 +211,31 @@ const TraitMethodInfo* GenericCallResolver::lookup_type_param_method(
 }
 
 bool GenericCallResolver::bound_includes_trait(Type* type_param_type, Type* trait) {
-    if (!trait) return false;
+    if (!trait)
+        return false;
     u32 param_index = type_param_type->type_param_info.index;
-    if (param_index >= m_active_type_param_bounds.size()) return false;
+    if (param_index >= m_active_type_param_bounds.size())
+        return false;
 
     for (const auto& bound : m_active_type_param_bounds[param_index]) {
-        if (bound.trait == trait) return true;
+        if (bound.trait == trait)
+            return true;
         // A bound on a derived trait also satisfies its parents.
         Type* parent = bound.trait->trait_info.parent;
         while (parent && parent->is_trait()) {
-            if (parent == trait) return true;
+            if (parent == trait)
+                return true;
             parent = parent->trait_info.parent;
         }
     }
     return false;
 }
 
-Type* GenericCallResolver::analyze_type_param_method_call(
-    Expr* expr, CallExpr& call_expr, GetExpr& get_expr, Type* obj_type,
-    Type* type_param_type, const TraitMethodInfo* trait_method, Type* found_in_trait) {
+Type* GenericCallResolver::analyze_type_param_method_call(Expr* expr, CallExpr& call_expr,
+                                                          GetExpr& get_expr, Type* obj_type,
+                                                          Type* type_param_type,
+                                                          const TraitMethodInfo* trait_method,
+                                                          Type* found_in_trait) {
 
     auto substitute = [&](Type* t) -> Type* {
         return substitute_trait_types(t, type_param_type, found_in_trait);
@@ -217,7 +244,8 @@ Type* GenericCallResolver::analyze_type_param_method_call(
     // Check argument count
     if (call_expr.arguments.size() != trait_method->param_types.size()) {
         m_reporter.error_fmt(expr->loc, "method '{}' expects {} argument(s) but got {}",
-                 trait_method->name, trait_method->param_types.size(), call_expr.arguments.size());
+                             trait_method->name, trait_method->param_types.size(),
+                             call_expr.arguments.size());
         return substitute(trait_method->return_type);
     }
 
@@ -242,16 +270,23 @@ void GenericCallResolver::analyze_generic_template_body(Decl* decl) {
     const ResolvedTypeParams* bounds = m_type_env.generics().get_fun_bounds(func_name);
 
     // Only check bodies of bounded templates (at least one type param has bounds)
-    if (!bounds) return;
+    if (!bounds)
+        return;
     bool has_any_bound = false;
     for (u32 i = 0; i < bounds->param_bounds.size(); i++) {
-        if (bounds->param_bounds[i].size() > 0) { has_any_bound = true; break; }
+        if (bounds->param_bounds[i].size() > 0) {
+            has_any_bound = true;
+            break;
+        }
     }
-    if (!has_any_bound) return;
+    if (!has_any_bound)
+        return;
 
     // Skip forward declarations (no body) and native functions
-    if (!fun_decl.body) return;
-    if (fun_decl.is_native) return;
+    if (!fun_decl.body)
+        return;
+    if (fun_decl.is_native)
+        return;
 
     // Set the bounds context (restored on exit by these guards).
     ScopedValue bounds_guard(m_active_type_param_bounds);
@@ -274,9 +309,9 @@ void GenericCallResolver::analyze_generic_template_body(Decl* decl) {
     // via resolve_type_expr) from a cloned TypeExpr — resolution mutates
     // generic TypeExprs in place.
     Type* return_type = fun_decl.return_type
-        ? m_context.resolve_type_expr(
-              generics.substitute_type_expr(fun_decl.return_type, identity_substitution))
-        : m_types.void_type();
+                            ? m_context.resolve_type_expr(generics.substitute_type_expr(
+                                  fun_decl.return_type, identity_substitution))
+                            : m_types.void_type();
 
     // Fresh per-function context and lifetime state (same pattern as
     // analyze_fun_body — every body-analysis entry point pushes one).
@@ -322,9 +357,9 @@ Type* GenericCallResolver::resolve_active_type_param(StringView name) {
 // ============================================================================
 
 bool GenericCallResolver::unify_type_expr(TypeExpr* pattern, Type* concrete,
-                                        Span<TypeParam> type_params,
-                                        Vector<Type*>& bindings) {
-    if (!pattern || !concrete || concrete->is_error()) return false;
+                                          Span<TypeParam> type_params, Vector<Type*>& bindings) {
+    if (!pattern || !concrete || concrete->is_error())
+        return false;
 
     // Check if pattern name matches a type parameter
     for (u32 i = 0; i < type_params.size(); i++) {
@@ -332,8 +367,10 @@ bool GenericCallResolver::unify_type_expr(TypeExpr* pattern, Type* concrete,
             // Default an unsuffixed literal to its concrete type when binding
             // generic type params — `identity(1)` binds T=i32, `identity(1.0)`
             // binds T=f64, never the polymorphic literal type itself.
-            if (concrete->is_int_literal()) concrete = m_types.i32_type();
-            else if (concrete->is_float_literal()) concrete = m_types.f64_type();
+            if (concrete->is_int_literal())
+                concrete = m_types.i32_type();
+            else if (concrete->is_float_literal())
+                concrete = m_types.f64_type();
             // This is a type parameter reference
             if (bindings[i] == nullptr) {
                 bindings[i] = concrete;
@@ -350,15 +387,15 @@ bool GenericCallResolver::unify_type_expr(TypeExpr* pattern, Type* concrete,
             // Create a sub-pattern without the ref wrapper
             TypeExpr inner_pattern = *pattern;
             inner_pattern.ref_kind = RefKind::None;
-            return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type,
-                                   type_params, bindings);
+            return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type, type_params,
+                                   bindings);
         }
         if (pattern->ref_kind == RefKind::Ref) {
             TypeExpr inner_pattern = *pattern;
             inner_pattern.ref_kind = RefKind::None;
             if (concrete->kind == TypeKind::Ref) {
-                return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type,
-                                       type_params, bindings);
+                return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type, type_params,
+                                       bindings);
             }
             // A `ref T` parameter also accepts what implicitly *borrows* into
             // one, and inference has to see through that or an argument that
@@ -373,32 +410,32 @@ bool GenericCallResolver::unify_type_expr(TypeExpr* pattern, Type* concrete,
             // then rejected by the assignability check, which is the accurate
             // diagnostic — same trade the Coro<T> arm below makes.
             if (concrete->kind == TypeKind::Uniq) {
-                return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type,
-                                       type_params, bindings);
+                return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type, type_params,
+                                       bindings);
             }
             return unify_type_expr(&inner_pattern, concrete, type_params, bindings);
         }
         if (pattern->ref_kind == RefKind::Weak && concrete->kind == TypeKind::Weak) {
             TypeExpr inner_pattern = *pattern;
             inner_pattern.ref_kind = RefKind::None;
-            return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type,
-                                   type_params, bindings);
+            return unify_type_expr(&inner_pattern, concrete->ref_info.inner_type, type_params,
+                                   bindings);
         }
         return false;
     }
 
     // List<T> pattern against List type
     if (pattern->name == "List" && pattern->type_args.size() == 1 && concrete->is_list()) {
-        return unify_type_expr(pattern->type_args[0], concrete->list_info.element_type,
-                               type_params, bindings);
+        return unify_type_expr(pattern->type_args[0], concrete->list_info.element_type, type_params,
+                               bindings);
     }
 
     // Map<K, V> pattern against Map type
     if (pattern->name == "Map" && pattern->type_args.size() == 2 && concrete->is_map()) {
-        return unify_type_expr(pattern->type_args[0], concrete->map_info.key_type,
-                               type_params, bindings)
-            && unify_type_expr(pattern->type_args[1], concrete->map_info.value_type,
-                               type_params, bindings);
+        return unify_type_expr(pattern->type_args[0], concrete->map_info.key_type, type_params,
+                               bindings) &&
+               unify_type_expr(pattern->type_args[1], concrete->map_info.value_type, type_params,
+                               bindings);
     }
 
     // Coro<T> pattern against a coroutine type. Inference binds T from the
@@ -408,8 +445,8 @@ bool GenericCallResolver::unify_type_expr(TypeExpr* pattern, Type* concrete,
     // coroutine_type_for_func), but the diagnostic now points at that real
     // limitation instead of a bogus "cannot infer type arguments".
     if (pattern->name == "Coro" && pattern->type_args.size() == 1 && concrete->is_coroutine()) {
-        return unify_type_expr(pattern->type_args[0], concrete->coro_info.yield_type,
-                               type_params, bindings);
+        return unify_type_expr(pattern->type_args[0], concrete->coro_info.yield_type, type_params,
+                               bindings);
     }
 
     // Generic struct pattern: e.g., Box<T> against Box$i32
@@ -418,7 +455,8 @@ bool GenericCallResolver::unify_type_expr(TypeExpr* pattern, Type* concrete,
         if (inst) {
             // Verify original template name matches
             Decl* original = inst->original_decl;
-            if (original->struct_decl.name != pattern->name) return false;
+            if (original->struct_decl.name != pattern->name)
+                return false;
 
             // Match type arg count
             if (inst->substitution.concrete_types.size() != pattern->type_args.size())
@@ -426,8 +464,7 @@ bool GenericCallResolver::unify_type_expr(TypeExpr* pattern, Type* concrete,
 
             // Recurse into each type arg
             for (u32 i = 0; i < pattern->type_args.size(); i++) {
-                if (!unify_type_expr(pattern->type_args[i],
-                                     inst->substitution.concrete_types[i],
+                if (!unify_type_expr(pattern->type_args[i], inst->substitution.concrete_types[i],
                                      type_params, bindings))
                     return false;
             }
@@ -439,21 +476,24 @@ bool GenericCallResolver::unify_type_expr(TypeExpr* pattern, Type* concrete,
     // Function-kind pattern: `fun(P1, P2) -> R` against a Function concrete type
     if (pattern->kind == TypeExprKind::Function && concrete->kind == TypeKind::Function) {
         Span<Type*> concrete_params = concrete->func_info.param_types;
-        if (pattern->type_args.size() != concrete_params.size()) return false;
+        if (pattern->type_args.size() != concrete_params.size())
+            return false;
         for (u32 i = 0; i < pattern->type_args.size(); i++) {
-            if (!unify_type_expr(pattern->type_args[i], concrete_params[i],
-                                 type_params, bindings)) {
+            if (!unify_type_expr(pattern->type_args[i], concrete_params[i], type_params,
+                                 bindings)) {
                 return false;
             }
         }
         Type* concrete_ret = concrete->func_info.return_type;
         if (pattern->return_type) {
-            if (!concrete_ret) return false;
-            if (!unify_type_expr(pattern->return_type, concrete_ret,
-                                 type_params, bindings)) return false;
+            if (!concrete_ret)
+                return false;
+            if (!unify_type_expr(pattern->return_type, concrete_ret, type_params, bindings))
+                return false;
         } else {
             // Pattern omits return type ⇒ void
-            if (concrete_ret && !concrete_ret->is_void()) return false;
+            if (concrete_ret && !concrete_ret->is_void())
+                return false;
         }
         return true;
     }
@@ -462,7 +502,8 @@ bool GenericCallResolver::unify_type_expr(TypeExpr* pattern, Type* concrete,
     if (pattern->type_args.size() == 0) {
         // Resolve the pattern name to a type and compare
         Type* pattern_type = m_type_env.type_by_name(pattern->name);
-        if (pattern_type && pattern_type == concrete) return true;
+        if (pattern_type && pattern_type == concrete)
+            return true;
 
         return false;
     }
@@ -470,21 +511,25 @@ bool GenericCallResolver::unify_type_expr(TypeExpr* pattern, Type* concrete,
     return false;
 }
 
-InferredTypeArgs GenericCallResolver::infer_type_args_from_call(
-        Span<TypeParam> type_params, Span<Param> params,
-        Span<CallArg> args, SourceLocation loc) {
+InferredTypeArgs GenericCallResolver::infer_type_args_from_call(Span<TypeParam> type_params,
+                                                                Span<Param> params,
+                                                                Span<CallArg> args,
+                                                                SourceLocation loc) {
     InferredTypeArgs result;
     result.success = false;
     result.type_args.resize(type_params.size());
-    for (u32 i = 0; i < type_params.size(); i++) result.type_args[i] = nullptr;
+    for (u32 i = 0; i < type_params.size(); i++)
+        result.type_args[i] = nullptr;
 
     // Arg count mismatch — cannot infer
-    if (args.size() != params.size()) return result;
+    if (args.size() != params.size())
+        return result;
 
     // Analyze each argument to get its concrete type, then unify
     for (u32 i = 0; i < args.size(); i++) {
         Type* arg_type = m_context.analyze_expr(args[i].expr);
-        if (!arg_type || arg_type->is_error()) return result;
+        if (!arg_type || arg_type->is_error())
+            return result;
 
         if (!unify_type_expr(params[i].type, arg_type, type_params, result.type_args)) {
             return result;
@@ -493,20 +538,23 @@ InferredTypeArgs GenericCallResolver::infer_type_args_from_call(
 
     // Check that all type params were resolved
     for (u32 i = 0; i < type_params.size(); i++) {
-        if (result.type_args[i] == nullptr) return result;
+        if (result.type_args[i] == nullptr)
+            return result;
     }
 
     result.success = true;
     return result;
 }
 
-InferredTypeArgs GenericCallResolver::infer_type_args_from_fields(
-        Span<TypeParam> type_params, Span<FieldDecl> template_fields,
-        Span<FieldInit> literal_fields, SourceLocation loc) {
+InferredTypeArgs GenericCallResolver::infer_type_args_from_fields(Span<TypeParam> type_params,
+                                                                  Span<FieldDecl> template_fields,
+                                                                  Span<FieldInit> literal_fields,
+                                                                  SourceLocation loc) {
     InferredTypeArgs result;
     result.success = false;
     result.type_args.resize(type_params.size());
-    for (u32 i = 0; i < type_params.size(); i++) result.type_args[i] = nullptr;
+    for (u32 i = 0; i < type_params.size(); i++)
+        result.type_args[i] = nullptr;
 
     // For each literal field, find the matching template field and unify
     for (u32 i = 0; i < literal_fields.size(); i++) {
@@ -518,10 +566,12 @@ InferredTypeArgs GenericCallResolver::infer_type_args_from_fields(
                 break;
             }
         }
-        if (!field_type_expr) return result;  // Unknown field
+        if (!field_type_expr)
+            return result; // Unknown field
 
         Type* value_type = m_context.analyze_expr(literal_fields[i].value);
-        if (!value_type || value_type->is_error()) return result;
+        if (!value_type || value_type->is_error())
+            return result;
 
         if (!unify_type_expr(field_type_expr, value_type, type_params, result.type_args)) {
             return result;
@@ -530,21 +580,24 @@ InferredTypeArgs GenericCallResolver::infer_type_args_from_fields(
 
     // Check that all type params were resolved
     for (u32 i = 0; i < type_params.size(); i++) {
-        if (result.type_args[i] == nullptr) return result;
+        if (result.type_args[i] == nullptr)
+            return result;
     }
 
     result.success = true;
     return result;
 }
 
-Type* GenericCallResolver::analyze_generic_fun_call(Expr* expr, CallExpr& ce, StringView func_name) {
+Type* GenericCallResolver::analyze_generic_fun_call(Expr* expr, CallExpr& ce,
+                                                    StringView func_name) {
     Decl* template_decl = m_type_env.generics().get_generic_fun_decl(func_name);
     FunDecl& template_fun_decl = template_decl->fun_decl;
 
     // Validate type arg count
     if (ce.type_args.size() != template_fun_decl.type_params.size()) {
-        m_reporter.error_fmt(expr->loc, "generic function '{}' expects {} type argument(s) but got {}",
-                 func_name, template_fun_decl.type_params.size(), ce.type_args.size());
+        m_reporter.error_fmt(expr->loc,
+                             "generic function '{}' expects {} type argument(s) but got {}",
+                             func_name, template_fun_decl.type_params.size(), ce.type_args.size());
         return m_types.error_type();
     }
 
@@ -552,7 +605,8 @@ Type* GenericCallResolver::analyze_generic_fun_call(Expr* expr, CallExpr& ce, St
     Vector<Type*> type_arg_types;
     for (auto& type_arg : ce.type_args) {
         Type* arg_type = m_context.resolve_type_expr(type_arg);
-        if (arg_type->is_error()) return m_types.error_type();
+        if (arg_type->is_error())
+            return m_types.error_type();
         type_arg_types.push_back(arg_type);
     }
 
@@ -570,18 +624,19 @@ Type* GenericCallResolver::analyze_generic_fun_call(Expr* expr, CallExpr& ce, St
     return check_instantiated_generic_call(expr, ce, func_name, inst, /*args_pre_analyzed=*/false);
 }
 
-Type* GenericCallResolver::analyze_generic_fun_call_inferred(Expr* expr, CallExpr& ce, StringView func_name) {
+Type* GenericCallResolver::analyze_generic_fun_call_inferred(Expr* expr, CallExpr& ce,
+                                                             StringView func_name) {
     Decl* template_decl = m_type_env.generics().get_generic_fun_decl(func_name);
     FunDecl& template_fun_decl = template_decl->fun_decl;
 
     // Infer type args from the call arguments (this analyzes each argument).
     InferredTypeArgs inferred = infer_type_args_from_call(
-        template_fun_decl.type_params, template_fun_decl.params,
-        ce.arguments, expr->loc);
+        template_fun_decl.type_params, template_fun_decl.params, ce.arguments, expr->loc);
     if (!inferred.success) {
         m_reporter.error_fmt(expr->loc,
-            "cannot infer type arguments for generic function '{}'; "
-            "provide explicit type arguments", func_name);
+                             "cannot infer type arguments for generic function '{}'; "
+                             "provide explicit type arguments",
+                             func_name);
         return m_types.error_type();
     }
 
@@ -600,14 +655,15 @@ Type* GenericCallResolver::analyze_generic_fun_call_inferred(Expr* expr, CallExp
     return check_instantiated_generic_call(expr, ce, func_name, inst, /*args_pre_analyzed=*/true);
 }
 
-Type* GenericCallResolver::check_instantiated_generic_call(
-        Expr* expr, CallExpr& ce, StringView func_name,
-        GenericFunInstance* inst, bool args_pre_analyzed) {
+Type* GenericCallResolver::check_instantiated_generic_call(Expr* expr, CallExpr& ce,
+                                                           StringView func_name,
+                                                           GenericFunInstance* inst,
+                                                           bool args_pre_analyzed) {
     FunDecl& inst_fun_decl = inst->instantiated_decl->fun_decl;
 
     if (ce.arguments.size() != inst_fun_decl.params.size()) {
         m_reporter.error_fmt(expr->loc, "function '{}' expects {} argument(s) but got {}",
-                 func_name, inst_fun_decl.params.size(), ce.arguments.size());
+                             func_name, inst_fun_decl.params.size(), ce.arguments.size());
         return m_types.error_type();
     }
 
@@ -619,8 +675,8 @@ Type* GenericCallResolver::check_instantiated_generic_call(
         CallArg& arg = ce.arguments[i];
         // On the inference path the arguments were already analyzed in
         // infer_type_args_from_call; re-analyzing would be redundant.
-        Type* arg_type = args_pre_analyzed ? arg.expr->resolved_type
-                                           : m_context.analyze_expr(arg.expr);
+        Type* arg_type =
+            args_pre_analyzed ? arg.expr->resolved_type : m_context.analyze_expr(arg.expr);
 
         Type* param_type = nullptr;
         if (inst_fun_decl.params[i].type) {
@@ -640,8 +696,7 @@ Type* GenericCallResolver::check_instantiated_generic_call(
 
         // Move semantics: passing an owned arg to a noncopyable param consumes it.
         // Mirrors check_call_args; the non-generic path goes through that helper.
-        if (param_type && param_type->noncopyable()
-            && arg.modifier == ParamModifier::None) {
+        if (param_type && param_type->noncopyable() && arg.modifier == ParamModifier::None) {
             m_lifetimes.consume_noncopyable(arg.expr, arg.expr->loc);
         }
     }
@@ -656,8 +711,8 @@ Type* GenericCallResolver::check_instantiated_generic_call(
     // can read param types for post-call move/nullify decisions on
     // noncopyable arguments.
     if (ce.callee) {
-        ce.callee->resolved_type = m_types.function_type(
-            m_allocator.alloc_span(resolved_param_types), return_type);
+        ce.callee->resolved_type =
+            m_types.function_type(m_allocator.alloc_span(resolved_param_types), return_type);
     }
 
     return return_type;
@@ -666,14 +721,17 @@ Type* GenericCallResolver::check_instantiated_generic_call(
 // ===== Generic-template refs in value position =====
 
 bool GenericCallResolver::coerce_generic_template_ref(Expr* expr, Type* expected) {
-    if (!expr || expr->kind != AstKind::ExprIdentifier) return true;
+    if (!expr || expr->kind != AstKind::ExprIdentifier)
+        return true;
     IdentifierExpr& id = expr->identifier;
-    if (!id.is_generic_template_ref) return true;
+    if (!id.is_generic_template_ref)
+        return true;
     if (!expected || !expected->is_function()) {
         m_reporter.error_fmt(expr->loc,
-            "cannot use generic function '{}' as a value here; it needs a "
-            "concrete function-type context (e.g. a typed variable or a "
-            "typed function parameter) to bind the type parameters", id.name);
+                             "cannot use generic function '{}' as a value here; it needs a "
+                             "concrete function-type context (e.g. a typed variable or a "
+                             "typed function parameter) to bind the type parameters",
+                             id.name);
         return false;
     }
 
@@ -688,9 +746,10 @@ bool GenericCallResolver::coerce_generic_template_ref(Expr* expr, Type* expected
     // Param-count mismatch ⇒ no plausible binding.
     if (template_fun_decl.params.size() != expected_fti.param_types.size()) {
         m_reporter.error_fmt(expr->loc,
-            "generic function '{}' has {} parameters but expected function "
-            "type takes {}", id.name,
-            template_fun_decl.params.size(), expected_fti.param_types.size());
+                             "generic function '{}' has {} parameters but expected function "
+                             "type takes {}",
+                             id.name, template_fun_decl.params.size(),
+                             expected_fti.param_types.size());
         return false;
     }
 
@@ -700,33 +759,34 @@ bool GenericCallResolver::coerce_generic_template_ref(Expr* expr, Type* expected
     // patterns so nested fun(T)->T params bind too.
     Vector<Type*> bindings;
     bindings.resize(template_fun_decl.type_params.size());
-    for (u32 i = 0; i < bindings.size(); i++) bindings[i] = nullptr;
+    for (u32 i = 0; i < bindings.size(); i++)
+        bindings[i] = nullptr;
     for (u32 i = 0; i < template_fun_decl.params.size(); i++) {
-        if (!unify_type_expr(template_fun_decl.params[i].type,
-                             expected_fti.param_types[i],
+        if (!unify_type_expr(template_fun_decl.params[i].type, expected_fti.param_types[i],
                              template_fun_decl.type_params, bindings)) {
             m_reporter.error_fmt(expr->loc,
-                "cannot bind type parameters of '{}' against expected "
-                "function type at parameter {}", id.name, i);
+                                 "cannot bind type parameters of '{}' against expected "
+                                 "function type at parameter {}",
+                                 id.name, i);
             return false;
         }
     }
     if (template_fun_decl.return_type) {
-        Type* concrete_ret = expected_fti.return_type
-            ? expected_fti.return_type : m_types.void_type();
+        Type* concrete_ret =
+            expected_fti.return_type ? expected_fti.return_type : m_types.void_type();
         if (!unify_type_expr(template_fun_decl.return_type, concrete_ret,
                              template_fun_decl.type_params, bindings)) {
             m_reporter.error_fmt(expr->loc,
-                "cannot bind type parameters of '{}' against expected return type",
-                id.name);
+                                 "cannot bind type parameters of '{}' against expected return type",
+                                 id.name);
             return false;
         }
     }
     for (u32 i = 0; i < bindings.size(); i++) {
         if (!bindings[i]) {
             m_reporter.error_fmt(expr->loc,
-                "cannot infer type parameter '{}' of generic function '{}'",
-                template_fun_decl.type_params[i].name, id.name);
+                                 "cannot infer type parameter '{}' of generic function '{}'",
+                                 template_fun_decl.type_params[i].name, id.name);
             return false;
         }
     }
@@ -754,8 +814,8 @@ Type* GenericCallResolver::resolve_explicit_generic_template_ref(Expr* expr) {
     FunDecl& template_fun_decl = template_decl->fun_decl;
     if (id.generic_args.size() != template_fun_decl.type_params.size()) {
         m_reporter.error_fmt(expr->loc,
-            "generic function '{}' expects {} type argument(s) but got {}",
-            id.name, template_fun_decl.type_params.size(), id.generic_args.size());
+                             "generic function '{}' expects {} type argument(s) but got {}",
+                             id.name, template_fun_decl.type_params.size(), id.generic_args.size());
         return m_types.error_type();
     }
 
@@ -763,7 +823,8 @@ Type* GenericCallResolver::resolve_explicit_generic_template_ref(Expr* expr) {
     type_arg_types.reserve(id.generic_args.size());
     for (auto* arg_expr : id.generic_args) {
         Type* arg_type = m_context.resolve_type_expr(arg_expr);
-        if (arg_type->is_error()) return m_types.error_type();
+        if (arg_type->is_error())
+            return m_types.error_type();
         type_arg_types.push_back(arg_type);
     }
 
@@ -785,12 +846,11 @@ Type* GenericCallResolver::resolve_explicit_generic_template_ref(Expr* expr) {
     for (auto& p : inst_decl.params) {
         param_types.push_back(m_context.resolve_type_expr(p.type));
     }
-    Type* ret_type = inst_decl.return_type
-        ? m_context.resolve_type_expr(inst_decl.return_type) : m_types.void_type();
-    Type* fn_type = m_types.function_type(
-        m_allocator.alloc_span(param_types), ret_type);
+    Type* ret_type = inst_decl.return_type ? m_context.resolve_type_expr(inst_decl.return_type)
+                                           : m_types.void_type();
+    Type* fn_type = m_types.function_type(m_allocator.alloc_span(param_types), ret_type);
     expr->resolved_type = fn_type;
     return fn_type;
 }
 
-}
+} // namespace rx

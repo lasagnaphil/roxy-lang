@@ -17,18 +17,22 @@ bool LspTransport::read_message(String& out_message) {
         String line;
         while (true) {
             int ch = fgetc(stdin);
-            if (ch == EOF) return false;
+            if (ch == EOF)
+                return false;
             if (ch == '\r') {
                 int next = fgetc(stdin);
-                if (next == '\n') break;
+                if (next == '\n')
+                    break;
                 // Not \r\n, put it back
-                if (next != EOF) ungetc(next, stdin);
+                if (next != EOF)
+                    ungetc(next, stdin);
             }
             line.push_back(static_cast<char>(ch));
         }
 
         // Empty line signals end of headers
-        if (line.empty()) break;
+        if (line.empty())
+            break;
 
         // Parse Content-Length. strtol rather than atoi so a malformed header
         // is rejected instead of silently parsing as 0 — atoi has no error
@@ -40,7 +44,8 @@ bool LspTransport::read_message(String& out_message) {
             const char* digits = line.data() + prefix_len;
             char* parse_end = nullptr;
             long parsed = strtol(digits, &parse_end, 10);
-            if (parse_end == digits || parsed < 0 || parsed > INT32_MAX) return false;
+            if (parse_end == digits || parsed < 0 || parsed > INT32_MAX)
+                return false;
             content_length = static_cast<i32>(parsed);
         }
         // Other headers (Content-Type, etc.) are ignored
@@ -101,7 +106,8 @@ void LspTransport::write_error_response(i64 request_id, i32 error_code, StringVi
     // Simple escape for the error message (just escape quotes and backslashes)
     for (u32 i = 0; i < error_message.size(); i++) {
         char ch = error_message[i];
-        if (ch == '"' || ch == '\\') body.push_back('\\');
+        if (ch == '"' || ch == '\\')
+            body.push_back('\\');
         body.push_back(ch);
     }
     body.append("\"}}");

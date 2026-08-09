@@ -1,10 +1,10 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
+#include "roxy/compiler/parse/ast.hpp"
 #include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
 #include "roxy/shared/lexer.hpp"
-#include "roxy/compiler/parse/ast.hpp"
 
 namespace rx {
 
@@ -38,8 +38,8 @@ private:
     Token m_current;
     Token m_previous;
     bool m_has_error;
-    bool m_suppress_struct_literal = false;  // Suppresses identifier { } struct literal parsing
-    bool m_native_signature_mode = false;    // Enables the `borrowed T` type modifier
+    bool m_suppress_struct_literal = false; // Suppresses identifier { } struct literal parsing
+    bool m_native_signature_mode = false;   // Enables the `borrowed T` type modifier
     ParseError m_error;
 
     // Token operations
@@ -54,13 +54,9 @@ private:
     void report_error_at(const Token& token, const char* message);
 
     // Allocation helpers
-    template <typename T>
-    T* alloc() {
-        return m_allocator.emplace<T>();
-    }
+    template <typename T> T* alloc() { return m_allocator.emplace<T>(); }
 
-    template <typename T>
-    Span<T> alloc_span(const Vector<T>& vec);
+    template <typename T> Span<T> alloc_span(const Vector<T>& vec);
 
     // Expression parsing (Pratt parser)
     Expr* expression();
@@ -96,8 +92,8 @@ private:
     Decl* declaration();
     Decl* var_declaration(bool is_pub);
     Decl* fun_declaration(bool is_pub, bool is_native);
-    Decl* method_declaration(bool is_pub, bool is_native,
-                              Token struct_token, Span<TypeParam> type_params);
+    Decl* method_declaration(bool is_pub, bool is_native, Token struct_token,
+                             Span<TypeParam> type_params);
     Decl* constructor_declaration(bool is_pub);
     Decl* destructor_declaration(bool is_pub);
     Decl* struct_declaration(bool is_pub);
@@ -119,8 +115,8 @@ private:
     TypeExpr* type_expression();
 
     // Generic type parameter/argument parsing
-    Span<TypeParam> parse_type_params();     // <T, U> in declarations
-    Span<TypeExpr*> parse_type_args();       // <i32, string> in type annotations
+    Span<TypeParam> parse_type_params();      // <T, U> in declarations
+    Span<TypeExpr*> parse_type_args();        // <i32, string> in type annotations
     Span<TypeExpr*> try_parse_generic_args(); // Trial parse <types> in expression position
 
     // Closing angle bracket that handles >> splitting for nested generics
@@ -152,4 +148,4 @@ private:
     StringView parse_module_path();
 };
 
-}
+} // namespace rx

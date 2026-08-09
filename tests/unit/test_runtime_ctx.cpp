@@ -147,4 +147,4 @@ TEST_SUITE("Runtime Context") {
         roxy_ctx_destroy(&ctx);
     }
 
-}  // TEST_SUITE("Runtime Context")
+} // TEST_SUITE("Runtime Context")

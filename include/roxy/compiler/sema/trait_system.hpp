@@ -1,16 +1,16 @@
 #pragma once
 
+#include "roxy/compiler/parse/ast.hpp"
+#include "roxy/compiler/sema/sema_context.hpp"
+#include "roxy/compiler/sema/type_checker.hpp"
+#include "roxy/compiler/support/error_reporter.hpp"
+#include "roxy/compiler/types/symbol_table.hpp"
+#include "roxy/compiler/types/type_env.hpp"
+#include "roxy/compiler/types/types.hpp"
+#include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
-#include "roxy/core/bump_allocator.hpp"
 #include "roxy/shared/token.hpp"
-#include "roxy/compiler/parse/ast.hpp"
-#include "roxy/compiler/types/types.hpp"
-#include "roxy/compiler/types/type_env.hpp"
-#include "roxy/compiler/types/symbol_table.hpp"
-#include "roxy/compiler/support/error_reporter.hpp"
-#include "roxy/compiler/sema/type_checker.hpp"
-#include "roxy/compiler/sema/sema_context.hpp"
 
 namespace rx {
 
@@ -30,14 +30,9 @@ namespace rx {
 class TraitSystem {
 public:
     TraitSystem(SemaContext& context, Vector<Decl*>& synthetic_decls)
-        : m_context(context)
-        , m_allocator(context.allocator)
-        , m_type_env(context.type_env)
-        , m_types(context.types)
-        , m_symbols(context.symbols)
-        , m_reporter(context.reporter)
-        , m_checker(context.checker)
-        , m_synthetic_decls(synthetic_decls) {}
+        : m_context(context), m_allocator(context.allocator), m_type_env(context.type_env),
+          m_types(context.types), m_symbols(context.symbols), m_reporter(context.reporter),
+          m_checker(context.checker), m_synthetic_decls(synthetic_decls) {}
 
     // ===== Pass 1 (type collection) =====
 
@@ -85,8 +80,7 @@ private:
     // caller can stash it in the matching TypeEnv slot.
     Type* register_builtin_trait(StringView name, StringView method_name,
                                  Span<Type*> method_param_types, Type* return_type,
-                                 Span<TypeKind> primitive_kinds,
-                                 bool register_trait_on_primitives);
+                                 Span<TypeKind> primitive_kinds, bool register_trait_on_primitives);
 
     // Register a builtin generic operator trait for the subscript operator:
     //   Index<Idx, Output>     with  index(idx: Idx): Output
@@ -118,23 +112,24 @@ private:
                                            Vector<bool>& implemented);
     void finalize_trait_impl(const TraitImplGroup& group, const Vector<bool>& implemented);
 
-    void inject_default_method(Type* struct_type, Type* trait_type,
-                               TraitMethodInfo& tmi, Span<Type*> trait_type_args);
+    void inject_default_method(Type* struct_type, Type* trait_type, TraitMethodInfo& tmi,
+                               Span<Type*> trait_type_args);
 
     // Concretize an abstract trait-method type (`Self` -> the implementing
     // struct; a trait type-param -> the matching `for Trait<Args>` argument).
     // (Distinct from resolve_trait_method_type_expr, which works on TypeExprs.)
-    Type* concretize_trait_type(Type* abstract_type, Type* struct_type, Span<Type*> trait_type_args);
+    Type* concretize_trait_type(Type* abstract_type, Type* struct_type,
+                                Span<Type*> trait_type_args);
 
     // Pending trait implementations (struct_name resolved to struct type + trait decl)
     struct PendingTraitImpl {
         Decl* decl;
         Type* struct_type;
         Type* trait_type;
-        Span<Type*> trait_type_args;   // Resolved type args for generic traits
+        Span<Type*> trait_type_args; // Resolved type args for generic traits
     };
 
-    SemaContext& m_context;  // TypeExpr resolution service (resolve_type_expr)
+    SemaContext& m_context; // TypeExpr resolution service (resolve_type_expr)
     BumpAllocator& m_allocator;
     TypeEnv& m_type_env;
     TypeCache& m_types;
@@ -148,4 +143,4 @@ private:
     Vector<PendingTraitImpl> m_pending_trait_impls;
 };
 
-}
+} // namespace rx

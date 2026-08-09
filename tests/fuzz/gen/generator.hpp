@@ -34,8 +34,8 @@
 namespace rx::gen {
 
 struct GenConfig {
-    uint32_t num_modules = 1;           // >= 1; the last module is "main"
-    uint32_t min_funcs_per_module = 2;  // free functions, not counting methods
+    uint32_t num_modules = 1;          // >= 1; the last module is "main"
+    uint32_t min_funcs_per_module = 2; // free functions, not counting methods
     uint32_t max_funcs_per_module = 6;
     uint32_t max_structs_per_module = 3;
     uint32_t max_enums_per_module = 2;
@@ -43,7 +43,7 @@ struct GenConfig {
     uint32_t max_stmts_per_block = 5;
     uint32_t max_expr_depth = 3;
     uint32_t max_params = 3;
-    uint32_t max_block_depth = 3;       // nesting cap for compound statements
+    uint32_t max_block_depth = 3; // nesting cap for compound statements
     // Per-function statement budget across all nested blocks (realism: real
     // functions rarely exceed ~50 statements; corpora scale by breadth).
     uint32_t max_stmts_per_function = 30;
@@ -56,11 +56,11 @@ struct GenConfig {
     // this budget. Keeps every generated program's runtime in the millisecond
     // range on the VM.
     uint64_t max_dynamic_cost = 20000;
-    bool allow_print = false;           // emit a final print() in main (stdout!)
-    bool use_generics = true;           // generic fn/struct + instantiations
+    bool allow_print = false; // emit a final print() in main (stdout!)
+    bool use_generics = true; // generic fn/struct + instantiations
     bool use_methods = true;
     bool use_fstrings = true;
-    bool use_cross_module = true;       // import / from-import + qualified calls
+    bool use_cross_module = true; // import / from-import + qualified calls
 
     // Small program shapes for per-input fuzz iterations and CI regression.
     static GenConfig fuzz_default();
@@ -69,20 +69,20 @@ struct GenConfig {
 };
 
 struct GeneratedModule {
-    std::string name;    // module name == file basename (e.g. "m3_barkel")
+    std::string name; // module name == file basename (e.g. "m3_barkel")
     std::string source;
 };
 
 struct GenStats {
     uint32_t modules = 0;
-    uint32_t functions = 0;  // free functions + methods + generic functions
+    uint32_t functions = 0; // free functions + methods + generic functions
     uint32_t structs = 0;
     uint32_t enums = 0;
     uint32_t lines = 0;
 };
 
 struct GeneratedProgram {
-    std::vector<GeneratedModule> modules;  // modules.back() is always "main"
+    std::vector<GeneratedModule> modules; // modules.back() is always "main"
     GenStats stats;
 };
 

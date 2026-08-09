@@ -1,13 +1,13 @@
 #include "roxy/vm/map.hpp"
-#include "roxy/vm/object.hpp"
+#include "roxy/rt/roxy_rt.h"
 #include "roxy/vm/list.hpp"
+#include "roxy/vm/map_dispatch.hpp"
+#include "roxy/vm/object.hpp"
 #include "roxy/vm/string.hpp"
 #include "roxy/vm/vm.hpp"
-#include "roxy/vm/map_dispatch.hpp"
-#include "roxy/rt/roxy_rt.h"
 
-#include <cstring>
 #include <cassert>
+#include <cstring>
 
 namespace rx {
 
@@ -17,9 +17,7 @@ static u32 g_map_type_id = UINT32_MAX;
 // Destructor invoked by `object_free` when a map is reclaimed by the slab.
 // Removes the map's bytecode-dispatch entry so a future allocation reusing
 // the same address doesn't inherit stale Hash/Eq indices.
-static void map_destructor(RoxyVM* vm, void* data) {
-    map_dispatch_unregister(vm, data);
-}
+static void map_destructor(RoxyVM* vm, void* data) { map_dispatch_unregister(vm, data); }
 
 u32 register_map_type() {
     if (g_map_type_id == UINT32_MAX) {
@@ -28,9 +26,7 @@ u32 register_map_type() {
     return g_map_type_id;
 }
 
-u32 get_map_type_id() {
-    return g_map_type_id;
-}
+u32 get_map_type_id() { return g_map_type_id; }
 
 // VM-side map ops are now thin wrappers around the unified `roxy_map_*`
 // runtime. Custom user-defined Hash/Eq dispatch (Struct keys with `impl Hash`
@@ -61,43 +57,42 @@ struct MapDispatchScope {
     MapDispatchScope& operator=(const MapDispatchScope&) = delete;
 };
 
-}
+} // namespace
 
 // --- Public API ---
 
-void* map_alloc(RoxyVM* vm, MapKeyKind key_kind, u32 capacity,
-                u8 key_slot_count, bool key_is_inline,
-                u8 value_slot_count, bool value_is_inline,
-                u32 hash_fn_index, u32 eq_fn_index) {
+void* map_alloc(RoxyVM* vm, MapKeyKind key_kind, u32 capacity, u8 key_slot_count,
+                bool key_is_inline, u8 value_slot_count, bool value_is_inline, u32 hash_fn_index,
+                u32 eq_fn_index) {
     // Install the VM trampolines whenever the user provided custom Hash/Eq
     // bytecode impls. AOT mode would write actual function pointers here;
     // VM mode points at the trampolines, which read the dispatch stack
     // for the active (vm, fn_idx) pair.
-    roxy_map_hash_fn hash_fn = (hash_fn_index != UINT32_MAX)
-        ? map_dispatch_hash_trampoline() : nullptr;
-    roxy_map_eq_fn eq_fn = (eq_fn_index != UINT32_MAX)
-        ? map_dispatch_eq_trampoline() : nullptr;
+    roxy_map_hash_fn hash_fn =
+        (hash_fn_index != UINT32_MAX) ? map_dispatch_hash_trampoline() : nullptr;
+    roxy_map_eq_fn eq_fn = (eq_fn_index != UINT32_MAX) ? map_dispatch_eq_trampoline() : nullptr;
 
     void* data = roxy_map_alloc(static_cast<int32_t>(key_slot_count > 0 ? key_slot_count : 2),
                                 key_is_inline ? 1 : 0,
                                 static_cast<int32_t>(value_slot_count > 0 ? value_slot_count : 2),
-                                value_is_inline ? 1 : 0,
-                                hash_fn, eq_fn);
-    if (!data) return nullptr;
+                                value_is_inline ? 1 : 0, hash_fn, eq_fn);
+    if (!data)
+        return nullptr;
     roxy_map_init(data, static_cast<int32_t>(key_kind), static_cast<int32_t>(capacity));
 
     // Record the bytecode dispatch indices in the per-VM side-table so
     // `MapDispatchScope` can rebuild the dispatch frame for each map op.
-    map_dispatch_register(vm, data,
-                          MapDispatchInfo{hash_fn_index, eq_fn_index});
+    map_dispatch_register(vm, data, MapDispatchInfo{hash_fn_index, eq_fn_index});
     return data;
 }
 
 void* map_copy(RoxyVM* vm, void* src) {
-    if (!src) return nullptr;
+    if (!src)
+        return nullptr;
     MapDispatchScope scope(vm, src);
     void* dst = roxy_map_copy(src);
-    if (!dst) return nullptr;
+    if (!dst)
+        return nullptr;
     // `roxy_map_copy` preserves `hash_fn`/`eq_fn`. Mirror the dispatch
     // info into the side-table so the dst dispatches like the src.
     MapDispatchInfo info = map_dispatch_lookup(vm, src);
@@ -106,7 +101,8 @@ void* map_copy(RoxyVM* vm, void* src) {
 }
 
 bool map_contains(RoxyVM* vm, const void* data, const u32* key_src) {
-    if (!data) return false;
+    if (!data)
+        return false;
     MapDispatchScope scope(vm, const_cast<void*>(data));
     return roxy_map_contains(const_cast<void*>(data), key_src);
 }
@@ -126,7 +122,8 @@ const u32* map_get_ptr(RoxyVM* vm, const void* data, const u32* key_src, const c
 }
 
 const u32* map_get_or(RoxyVM* vm, const void* data, const u32* key_src, const u32* default_src) {
-    if (data == nullptr) return default_src;
+    if (data == nullptr)
+        return default_src;
     MapDispatchScope scope(vm, const_cast<void*>(data));
     void* ptr = roxy_map_get_or(const_cast<void*>(data), key_src, default_src);
     return static_cast<const u32*>(ptr);
@@ -152,8 +149,6 @@ void* map_keys(RoxyVM* /*vm*/, void* data) {
     return roxy_map_keys(data);
 }
 
-void* map_values(RoxyVM* /*vm*/, void* data) {
-    return roxy_map_values(data);
-}
+void* map_values(RoxyVM* /*vm*/, void* data) { return roxy_map_values(data); }
 
-}
+} // namespace rx

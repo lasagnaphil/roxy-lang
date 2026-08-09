@@ -1,11 +1,11 @@
 #include "roxy/rt/roxy_rt.h"
 #include "roxy/rt/slab_allocator.hpp"
 
-#include <cstdlib>
-#include <cstring>
-#include <cstdio>
 #include <cassert>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <new>
 
 #define XXH_INLINE_ALL
@@ -19,7 +19,8 @@
 static thread_local roxy_ctx* tls_current_ctx = nullptr;
 
 void roxy_ctx_init(roxy_ctx* ctx) {
-    if (!ctx) return;
+    if (!ctx)
+        return;
     // Pick up the runtime's default allocator at init time. Before the first
     // `roxy_rt_init` this is `&roxy_malloc_allocator`; after, it's the global
     // slab vtable. Embedders may overwrite `ctx->allocator` afterwards (e.g.
@@ -36,13 +37,9 @@ void roxy_ctx_destroy(roxy_ctx* ctx) {
     (void)ctx;
 }
 
-void roxy_set_ctx(roxy_ctx* ctx) {
-    tls_current_ctx = ctx;
-}
+void roxy_set_ctx(roxy_ctx* ctx) { tls_current_ctx = ctx; }
 
-roxy_ctx* roxy_get_ctx(void) {
-    return tls_current_ctx;
-}
+roxy_ctx* roxy_get_ctx(void) { return tls_current_ctx; }
 
 // ===== Exceptions (AOT checked-return model) =====
 //
@@ -56,17 +53,11 @@ void roxy_set_pending(void* exc) {
     tls_pending_type_id = exc ? roxy_get_header(exc)->type_id : 0;
 }
 
-int roxy_exception_pending(void) {
-    return tls_pending_exc != nullptr;
-}
+int roxy_exception_pending(void) { return tls_pending_exc != nullptr; }
 
-uint32_t roxy_exception_type_id(void) {
-    return tls_pending_type_id;
-}
+uint32_t roxy_exception_type_id(void) { return tls_pending_type_id; }
 
-void* roxy_exception_current(void) {
-    return tls_pending_exc;
-}
+void* roxy_exception_current(void) { return tls_pending_exc; }
 
 void* roxy_exception_take(void) {
     void* e = tls_pending_exc;
@@ -81,9 +72,11 @@ void* roxy_exception_message(void* exc) {
 }
 
 int roxy_heap_owns(void* ptr) {
-    if (!ptr) return 0;
+    if (!ptr)
+        return 0;
     roxy_ctx* ctx = roxy_get_ctx();
-    if (!ctx || !ctx->allocator || !ctx->allocator->owns) return 0;
+    if (!ctx || !ctx->allocator || !ctx->allocator->owns)
+        return 0;
     return ctx->allocator->owns(ctx->allocator->userdata, ptr) ? 1 : 0;
 }
 
@@ -94,7 +87,8 @@ static thread_local const char* tls_runtime_error = nullptr;
 void roxy_runtime_error_set(const char* msg) {
     // Keep the first error so the earliest violation wins (later refused
     // mutations don't clobber it before the backend gets to surface it).
-    if (!tls_runtime_error) tls_runtime_error = msg;
+    if (!tls_runtime_error)
+        tls_runtime_error = msg;
 }
 int roxy_runtime_error_pending(void) { return tls_runtime_error != nullptr; }
 const char* roxy_runtime_error_message(void) { return tls_runtime_error; }
@@ -103,22 +97,28 @@ void roxy_runtime_error_clear(void) { tls_runtime_error = nullptr; }
 // Type-dispatched element-borrow pin (see roxy_list_pin / roxy_map_pin). The
 // generated call-site code uses this so it needn't track the container kind.
 void roxy_container_pin(void* container) {
-    if (!container) return;
+    if (!container)
+        return;
     uint32_t tid = roxy_get_header(container)->type_id;
-    if (tid == ROXY_TYPEID_LIST) static_cast<roxy_list_header*>(container)->borrow_count++;
-    else if (tid == ROXY_TYPEID_MAP) static_cast<roxy_map_header*>(container)->borrow_count++;
+    if (tid == ROXY_TYPEID_LIST)
+        static_cast<roxy_list_header*>(container)->borrow_count++;
+    else if (tid == ROXY_TYPEID_MAP)
+        static_cast<roxy_map_header*>(container)->borrow_count++;
 }
 void roxy_container_unpin(void* container) {
-    if (!container) return;
+    if (!container)
+        return;
     uint32_t tid = roxy_get_header(container)->type_id;
     if (tid == ROXY_TYPEID_LIST) {
         auto* h = static_cast<roxy_list_header*>(container);
         assert(h->borrow_count > 0 && "roxy_container_unpin: list borrow_count underflow");
-        if (h->borrow_count > 0) h->borrow_count--;
+        if (h->borrow_count > 0)
+            h->borrow_count--;
     } else if (tid == ROXY_TYPEID_MAP) {
         auto* h = static_cast<roxy_map_header*>(container);
         assert(h->borrow_count > 0 && "roxy_container_unpin: map borrow_count underflow");
-        if (h->borrow_count > 0) h->borrow_count--;
+        if (h->borrow_count > 0)
+            h->borrow_count--;
     }
 }
 
@@ -141,23 +141,25 @@ static uint64_t roxy_random_generation() {
 // can land without changing any allocation outcomes (Phase 2 wires the
 // vtable into `roxy_alloc` and starts dispatching through it).
 
-static void* roxy_malloc_alloc_fn(void* userdata, uint32_t total_size,
-                                  uint64_t* out_generation) {
+static void* roxy_malloc_alloc_fn(void* userdata, uint32_t total_size, uint64_t* out_generation) {
     (void)userdata;
     void* raw = malloc(total_size);
     if (!raw) {
-        if (out_generation) *out_generation = 0;
+        if (out_generation)
+            *out_generation = 0;
         return nullptr;
     }
-    if (out_generation) *out_generation = roxy_random_generation();
+    if (out_generation)
+        *out_generation = roxy_random_generation();
     return raw;
 }
 
 static void roxy_malloc_free_fn(void* userdata, void* header_ptr) {
     (void)userdata;
-    if (!header_ptr) return;
+    if (!header_ptr)
+        return;
     auto* hdr = static_cast<roxy_object_header*>(header_ptr);
-    hdr->weak_generation = 0;  // Tombstone before freeing.
+    hdr->weak_generation = 0; // Tombstone before freeing.
     free(header_ptr);
 }
 
@@ -172,10 +174,10 @@ static bool roxy_malloc_owns_fn(void* userdata, void* ptr) {
 }
 
 roxy_allocator roxy_malloc_allocator = {
-    /*alloc=*/    roxy_malloc_alloc_fn,
-    /*free=*/     roxy_malloc_free_fn,
-    /*owns=*/     roxy_malloc_owns_fn,
-    /*userdata=*/ nullptr,
+    /*alloc=*/roxy_malloc_alloc_fn,
+    /*free=*/roxy_malloc_free_fn,
+    /*owns=*/roxy_malloc_owns_fn,
+    /*userdata=*/nullptr,
 };
 
 // ===== Process-wide slab (lazy, ref-counted) =====
@@ -204,7 +206,8 @@ void roxy_rt_init(void) {
 }
 
 void roxy_rt_shutdown(void) {
-    if (g_rt_init_refcount == 0) return;
+    if (g_rt_init_refcount == 0)
+        return;
     if (--g_rt_init_refcount == 0) {
         if (g_global_slab) {
             g_global_slab->shutdown();
@@ -237,17 +240,17 @@ roxy_allocator* roxy_rt_default_allocator(void) {
 
 static inline roxy_allocator* current_allocator() {
     roxy_ctx* ctx = roxy_get_ctx();
-    if (ctx && ctx->allocator) return ctx->allocator;
+    if (ctx && ctx->allocator)
+        return ctx->allocator;
     return &roxy_malloc_allocator;
 }
 
 void* roxy_alloc(uint32_t data_size, uint32_t type_id) {
     roxy_allocator* alloc = current_allocator();
     uint64_t generation = 0;
-    void* raw = alloc->alloc(alloc->userdata,
-                             sizeof(roxy_object_header) + data_size,
-                             &generation);
-    if (!raw) return nullptr;
+    void* raw = alloc->alloc(alloc->userdata, sizeof(roxy_object_header) + data_size, &generation);
+    if (!raw)
+        return nullptr;
 
     auto* header = static_cast<roxy_object_header*>(raw);
     header->weak_generation = generation;
@@ -260,7 +263,8 @@ void* roxy_alloc(uint32_t data_size, uint32_t type_id) {
 }
 
 void roxy_free(void* data) {
-    if (!data) return;
+    if (!data)
+        return;
     auto* header = roxy_get_header(data);
     // Free-trap (constraint-reference model), kept in lockstep with the VM's
     // object_free so the two runtimes never disagree on whether a borrowed
@@ -284,19 +288,21 @@ void roxy_free(void* data) {
 }
 
 roxy_object_header* roxy_get_header(void* data) {
-    return reinterpret_cast<roxy_object_header*>(
-        reinterpret_cast<uint8_t*>(data) - sizeof(roxy_object_header));
+    return reinterpret_cast<roxy_object_header*>(reinterpret_cast<uint8_t*>(data) -
+                                                 sizeof(roxy_object_header));
 }
 
 // ===== Reference Counting =====
 
 void roxy_ref_inc(void* data) {
-    if (!data) return;
+    if (!data)
+        return;
     roxy_get_header(data)->ref_count++;
 }
 
 void roxy_ref_dec(void* data) {
-    if (!data) return;
+    if (!data)
+        return;
     auto* header = roxy_get_header(data);
     if (header->ref_count == 0) {
         // Underflow — an unbalanced dec. The VM reports this (object.cpp ref_dec:
@@ -325,35 +331,41 @@ roxy_weak roxy_weak_create(void* data) {
 }
 
 bool roxy_weak_valid(void* ptr, uint64_t generation) {
-    if (!ptr || generation == 0) return false;
+    if (!ptr || generation == 0)
+        return false;
     return roxy_get_header(ptr)->weak_generation == generation;
 }
 
 uint64_t roxy_weak_generation(void* data) {
-    if (!data) return 0;
+    if (!data)
+        return 0;
     return roxy_get_header(data)->weak_generation;
 }
 
 // ===== String Operations =====
 
-static roxy_string_header* string_hdr(void* s) {
-    return static_cast<roxy_string_header*>(s);
-}
+static roxy_string_header* string_hdr(void* s) { return static_cast<roxy_string_header*>(s); }
 
 void roxy_string_retain(void* s) {
-    if (!s) return;
+    if (!s)
+        return;
     roxy_object_header* h = roxy_get_header(s);
-    if (h->ref_count != ROXY_STR_IMMORTAL) h->ref_count++;
+    if (h->ref_count != ROXY_STR_IMMORTAL)
+        h->ref_count++;
 }
 
 void roxy_string_release(void* s) {
-    if (!s) return;
+    if (!s)
+        return;
     roxy_object_header* h = roxy_get_header(s);
-    if (h->ref_count == ROXY_STR_IMMORTAL) return;
+    if (h->ref_count == ROXY_STR_IMMORTAL)
+        return;
     // Defensive: a balanced scheme never releases at 0. Guard so a stray release
     // can't wrap to UINT32_MAX (== IMMORTAL) and silently immortalize the object.
-    if (h->ref_count == 0) return;
-    if (--h->ref_count == 0) roxy_free(s);
+    if (h->ref_count == 0)
+        return;
+    if (--h->ref_count == 0)
+        roxy_free(s);
 }
 
 // Shared allocation core for both string constructors. `immortal` selects the
@@ -367,13 +379,14 @@ static void* roxy_string_alloc_impl(const char* data, uint32_t length, bool immo
     void* intern = immortal && ctx ? ctx->string_intern : nullptr;
     if (intern && data && length > 0) {
         if (void* existing = roxy_string_intern_lookup(intern, data, length)) {
-            return existing;  // already immortal
+            return existing; // already immortal
         }
     }
 
     uint32_t data_size = static_cast<uint32_t>(sizeof(roxy_string_header)) + length + 1;
     void* s = roxy_alloc(data_size, ROXY_TYPEID_STRING);
-    if (!s) return nullptr;
+    if (!s)
+        return nullptr;
 
     // roxy_alloc zero-inits ref_count; set the owner count / immortal sentinel.
     roxy_get_header(s)->ref_count = immortal ? ROXY_STR_IMMORTAL : 1u;
@@ -381,7 +394,8 @@ static void* roxy_string_alloc_impl(const char* data, uint32_t length, bool immo
     auto* hdr = string_hdr(s);
     hdr->length = length;
 
-    char* chars = reinterpret_cast<char*>(reinterpret_cast<uint8_t*>(s) + sizeof(roxy_string_header));
+    char* chars =
+        reinterpret_cast<char*>(reinterpret_cast<uint8_t*>(s) + sizeof(roxy_string_header));
     if (length > 0) {
         memcpy(chars, data, length);
     }
@@ -409,13 +423,10 @@ void* roxy_string_new_owned(const char* data, uint32_t length) {
 }
 
 char* roxy_string_chars(void* s) {
-    return reinterpret_cast<char*>(
-        reinterpret_cast<uint8_t*>(s) + sizeof(roxy_string_header));
+    return reinterpret_cast<char*>(reinterpret_cast<uint8_t*>(s) + sizeof(roxy_string_header));
 }
 
-int32_t roxy_string_len(void* s) {
-    return static_cast<int32_t>(string_hdr(s)->length);
-}
+int32_t roxy_string_len(void* s) { return static_cast<int32_t>(string_hdr(s)->length); }
 
 void roxy_print(void* s) {
     if (!s) {
@@ -427,13 +438,13 @@ void roxy_print(void* s) {
 
 // Per-type print overloads — formats match the roxy_*_to_string functions so
 // print(x) and print(f"{x}") produce identical output.
-void roxy_print_bool(bool v)   { printf("%s\n", v ? "true" : "false"); }
+void roxy_print_bool(bool v) { printf("%s\n", v ? "true" : "false"); }
 void roxy_print_i32(int32_t v) { printf("%d\n", v); }
 void roxy_print_i64(int64_t v) { printf("%lld\n", (long long)v); }
 void roxy_print_u32(uint32_t v) { printf("%u\n", v); }
 void roxy_print_u64(uint64_t v) { printf("%llu\n", (unsigned long long)v); }
-void roxy_print_f32(float v)   { printf("%g\n", (double)v); }
-void roxy_print_f64(double v)  { printf("%g\n", v); }
+void roxy_print_f32(float v) { printf("%g\n", (double)v); }
+void roxy_print_f64(double v) { printf("%g\n", v); }
 
 void* roxy_string_concat(void* a, void* b) {
     uint32_t len_a = string_hdr(a)->length;
@@ -441,16 +452,16 @@ void* roxy_string_concat(void* a, void* b) {
     // Compute the total width in size_t so two near-4GB strings don't overflow
     // the u32 length; reject a result that wouldn't fit a u32 string length.
     size_t total = static_cast<size_t>(len_a) + len_b;
-    if (total > UINT32_MAX) return nullptr;
+    if (total > UINT32_MAX)
+        return nullptr;
 
     // Build the concatenated bytes in a temp buffer so `roxy_string_from_literal`
     // can dedup against the intern table. Short cases use the stack; longer
     // ones take a one-shot malloc.
     char stack_buf[256];
-    char* buf = (total < sizeof(stack_buf))
-        ? stack_buf
-        : static_cast<char*>(malloc(total + 1));
-    if (!buf) return nullptr;
+    char* buf = (total < sizeof(stack_buf)) ? stack_buf : static_cast<char*>(malloc(total + 1));
+    if (!buf)
+        return nullptr;
 
     memcpy(buf, roxy_string_chars(a), len_a);
     memcpy(buf + len_a, roxy_string_chars(b), len_b);
@@ -458,27 +469,27 @@ void* roxy_string_concat(void* a, void* b) {
 
     void* result = roxy_string_new_owned(buf, static_cast<uint32_t>(total));
 
-    if (buf != stack_buf) free(buf);
+    if (buf != stack_buf)
+        free(buf);
     return result;
 }
 
 bool roxy_string_eq(void* a, void* b) {
-    if (a == b) return true;
+    if (a == b)
+        return true;
     uint32_t len_a = string_hdr(a)->length;
     uint32_t len_b = string_hdr(b)->length;
-    if (len_a != len_b) return false;
+    if (len_a != len_b)
+        return false;
     return memcmp(roxy_string_chars(a), roxy_string_chars(b), len_a) == 0;
 }
 
-bool roxy_string_ne(void* a, void* b) {
-    return !roxy_string_eq(a, b);
-}
+bool roxy_string_ne(void* a, void* b) { return !roxy_string_eq(a, b); }
 
 int32_t roxy_string_char_at(void* s, int32_t index) {
     assert(s && "str_char_at: null string");
     uint32_t len = static_cast<uint32_t>(roxy_string_len(s));
-    assert(index >= 0 && static_cast<uint32_t>(index) < len &&
-           "str_char_at: index out of bounds");
+    assert(index >= 0 && static_cast<uint32_t>(index) < len && "str_char_at: index out of bounds");
     const char* chars = roxy_string_chars(s);
     return static_cast<int32_t>(static_cast<uint8_t>(chars[index]));
 }
@@ -489,8 +500,7 @@ void* roxy_string_substr(void* s, int32_t start, int32_t len) {
     // Overflow-safe bounds check (matches vm/natives.cpp): require start <=
     // str_len, then len <= str_len - start (computed in u32 — safe to subtract
     // because the preceding clause short-circuits when start is past the end).
-    assert(start >= 0 && len >= 0 &&
-           static_cast<uint32_t>(start) <= str_len &&
+    assert(start >= 0 && len >= 0 && static_cast<uint32_t>(start) <= str_len &&
            static_cast<uint32_t>(len) <= str_len - static_cast<uint32_t>(start) &&
            "str_substr: index out of bounds");
     const char* chars = roxy_string_chars(s);
@@ -588,15 +598,14 @@ static inline uint32_t* list_element_ptr(roxy_list_header* hdr, uint32_t index) 
     return hdr->elements + static_cast<size_t>(index) * hdr->element_slot_count;
 }
 
-// Element-borrow pin (see lifetimes.md "Container element lvalues"). A structural mutation on a pinned
-// list is refused so the borrowed element pointer can't dangle.
-void roxy_list_pin(void* self) {
-    static_cast<roxy_list_header*>(self)->borrow_count++;
-}
+// Element-borrow pin (see lifetimes.md "Container element lvalues"). A structural mutation on a
+// pinned list is refused so the borrowed element pointer can't dangle.
+void roxy_list_pin(void* self) { static_cast<roxy_list_header*>(self)->borrow_count++; }
 void roxy_list_unpin(void* self) {
     auto* hdr = static_cast<roxy_list_header*>(self);
     assert(hdr->borrow_count > 0 && "roxy_list_unpin: borrow_count underflow");
-    if (hdr->borrow_count > 0) hdr->borrow_count--;
+    if (hdr->borrow_count > 0)
+        hdr->borrow_count--;
 }
 
 // Returns true (and raises the runtime trap) when `hdr` has an outstanding
@@ -612,10 +621,11 @@ static inline bool list_mutation_blocked(const roxy_list_header* hdr) {
 
 void* roxy_list_alloc(int32_t element_slot_count, int32_t element_is_inline) {
     void* data = roxy_alloc(sizeof(roxy_list_header), ROXY_TYPEID_LIST);
-    if (!data) return nullptr;
+    if (!data)
+        return nullptr;
     auto* hdr = static_cast<roxy_list_header*>(data);
-    hdr->element_slot_count = element_slot_count > 0
-        ? static_cast<uint32_t>(element_slot_count) : 2u;
+    hdr->element_slot_count =
+        element_slot_count > 0 ? static_cast<uint32_t>(element_slot_count) : 2u;
     hdr->element_is_inline = element_is_inline != 0 ? 1 : 0;
     // length/capacity/elements already zero-initialised by roxy_alloc.
     return data;
@@ -626,9 +636,8 @@ void roxy_list_init(void* self, int32_t capacity) {
     hdr->length = 0;
     // Preserve element_slot_count / element_is_inline set by roxy_list_alloc.
     if (capacity > 0) {
-        hdr->elements = static_cast<uint32_t*>(calloc(
-            static_cast<size_t>(capacity) * hdr->element_slot_count,
-            sizeof(uint32_t)));
+        hdr->elements = static_cast<uint32_t*>(
+            calloc(static_cast<size_t>(capacity) * hdr->element_slot_count, sizeof(uint32_t)));
         // On allocation failure leave a valid empty list rather than a non-zero
         // capacity with a null buffer.
         hdr->capacity = hdr->elements ? static_cast<uint32_t>(capacity) : 0;
@@ -665,15 +674,16 @@ void roxy_list_push(void* self, const void* value_src) {
     auto* hdr = static_cast<roxy_list_header*>(self);
     // push may realloc the backing buffer (grow), invalidating any borrowed
     // element pointer — refuse it while the list is pinned.
-    if (list_mutation_blocked(hdr)) return;
+    if (list_mutation_blocked(hdr))
+        return;
     uint32_t esc = hdr->element_slot_count;
     if (hdr->length >= hdr->capacity) {
         uint32_t new_cap = hdr->capacity == 0 ? 8 : hdr->capacity * 2;
         // malloc + memcpy + free rather than realloc — keeps the path uniform
         // for variable element widths and matches the VM's growth strategy.
-        auto* new_elements = static_cast<uint32_t*>(malloc(
-            sizeof(uint32_t) * esc * new_cap));
-        if (!new_elements) return;
+        auto* new_elements = static_cast<uint32_t*>(malloc(sizeof(uint32_t) * esc * new_cap));
+        if (!new_elements)
+            return;
         if (hdr->elements) {
             memcpy(new_elements, hdr->elements, sizeof(uint32_t) * esc * hdr->length);
             free(hdr->elements);
@@ -692,7 +702,8 @@ void* roxy_list_pop(void* self) {
     // or be overwritten while the borrow still points at it. Refuse it while the
     // list is pinned, leaving the buffer untouched (lifetimes.md "Container
     // element lvalues" soundness table; mirrors roxy_list_push).
-    if (list_mutation_blocked(hdr)) return nullptr;
+    if (list_mutation_blocked(hdr))
+        return nullptr;
     assert(hdr->length > 0);
     hdr->length--;
     // Return a pointer to the now-out-of-bounds slot; bytes remain valid until
@@ -715,23 +726,25 @@ void roxy_list_set(void* self, int32_t index, const void* value_src) {
 
 // A `ref T` element occupies 2 inline u32 slots packing a borrow pointer.
 static inline void* list_ref_element(const uint32_t* elem_slot) {
-    return reinterpret_cast<void*>(
-        static_cast<uint64_t>(elem_slot[0]) | (static_cast<uint64_t>(elem_slot[1]) << 32));
+    return reinterpret_cast<void*>(static_cast<uint64_t>(elem_slot[0]) |
+                                   (static_cast<uint64_t>(elem_slot[1]) << 32));
 }
 
 void* roxy_list_copy(void* src) {
-    if (!src) return nullptr;
+    if (!src)
+        return nullptr;
     auto* src_hdr = static_cast<roxy_list_header*>(src);
 
     void* dst = roxy_list_alloc(static_cast<int32_t>(src_hdr->element_slot_count),
                                 static_cast<int32_t>(src_hdr->element_is_inline));
-    if (!dst) return nullptr;
+    if (!dst)
+        return nullptr;
 
     auto* dst_hdr = static_cast<roxy_list_header*>(dst);
     dst_hdr->element_is_ref = src_hdr->element_is_ref;
     if (src_hdr->capacity > 0) {
-        auto* elements = static_cast<uint32_t*>(malloc(
-            sizeof(uint32_t) * src_hdr->element_slot_count * src_hdr->capacity));
+        auto* elements = static_cast<uint32_t*>(
+            malloc(sizeof(uint32_t) * src_hdr->element_slot_count * src_hdr->capacity));
         // On allocation failure leave dst an empty valid list (its header was
         // zero-initialised by roxy_list_alloc) rather than copying into null.
         if (elements) {
@@ -743,7 +756,8 @@ void* roxy_list_copy(void* src) {
             // The copy now holds its own borrow on each element pointee.
             if (dst_hdr->element_is_ref) {
                 for (uint32_t i = 0; i < dst_hdr->length; i++) {
-                    roxy_ref_inc(list_ref_element(elements + static_cast<size_t>(i) * dst_hdr->element_slot_count));
+                    roxy_ref_inc(list_ref_element(elements + static_cast<size_t>(i) *
+                                                                 dst_hdr->element_slot_count));
                 }
             }
         }
@@ -752,7 +766,8 @@ void* roxy_list_copy(void* src) {
 }
 
 void roxy_list_mark_ref_elements(void* self) {
-    if (self) static_cast<roxy_list_header*>(self)->element_is_ref = 1;
+    if (self)
+        static_cast<roxy_list_header*>(self)->element_is_ref = 1;
 }
 
 // ===== Hash Functions =====
@@ -775,58 +790,43 @@ static uint64_t hash_fnv1a(const char* data, uint32_t length) {
     return h;
 }
 
-uint64_t roxy_bool_hash(bool val) {
-    return hash_splitmix64(val ? 1u : 0u);
-}
+uint64_t roxy_bool_hash(bool val) { return hash_splitmix64(val ? 1u : 0u); }
 
-uint64_t roxy_i8_hash(int8_t val) {
-    return hash_splitmix64(static_cast<uint64_t>(val));
-}
+uint64_t roxy_i8_hash(int8_t val) { return hash_splitmix64(static_cast<uint64_t>(val)); }
 
-uint64_t roxy_i16_hash(int16_t val) {
-    return hash_splitmix64(static_cast<uint64_t>(val));
-}
+uint64_t roxy_i16_hash(int16_t val) { return hash_splitmix64(static_cast<uint64_t>(val)); }
 
-uint64_t roxy_i32_hash(int32_t val) {
-    return hash_splitmix64(static_cast<uint64_t>(val));
-}
+uint64_t roxy_i32_hash(int32_t val) { return hash_splitmix64(static_cast<uint64_t>(val)); }
 
-uint64_t roxy_i64_hash(int64_t val) {
-    return hash_splitmix64(static_cast<uint64_t>(val));
-}
+uint64_t roxy_i64_hash(int64_t val) { return hash_splitmix64(static_cast<uint64_t>(val)); }
 
-uint64_t roxy_u8_hash(uint8_t val) {
-    return hash_splitmix64(static_cast<uint64_t>(val));
-}
+uint64_t roxy_u8_hash(uint8_t val) { return hash_splitmix64(static_cast<uint64_t>(val)); }
 
-uint64_t roxy_u16_hash(uint16_t val) {
-    return hash_splitmix64(static_cast<uint64_t>(val));
-}
+uint64_t roxy_u16_hash(uint16_t val) { return hash_splitmix64(static_cast<uint64_t>(val)); }
 
-uint64_t roxy_u32_hash(uint32_t val) {
-    return hash_splitmix64(static_cast<uint64_t>(val));
-}
+uint64_t roxy_u32_hash(uint32_t val) { return hash_splitmix64(static_cast<uint64_t>(val)); }
 
-uint64_t roxy_u64_hash(uint64_t val) {
-    return hash_splitmix64(val);
-}
+uint64_t roxy_u64_hash(uint64_t val) { return hash_splitmix64(val); }
 
 uint64_t roxy_f32_hash(float val) {
-    if (val == 0.0f) val = 0.0f;  // Normalize -0
+    if (val == 0.0f)
+        val = 0.0f; // Normalize -0
     uint32_t bits;
     memcpy(&bits, &val, sizeof(uint32_t));
     return hash_splitmix64(static_cast<uint64_t>(bits));
 }
 
 uint64_t roxy_f64_hash(double val) {
-    if (val == 0.0) val = 0.0;  // Normalize -0
+    if (val == 0.0)
+        val = 0.0; // Normalize -0
     uint64_t bits;
     memcpy(&bits, &val, sizeof(uint64_t));
     return hash_splitmix64(bits);
 }
 
 uint64_t roxy_string_hash(void* val) {
-    if (!val) return 0;
+    if (!val)
+        return 0;
     // Read the cached low-32 hash. The high bits are filled with 0; the
     // map's probe mask only uses the low 32 bits anyway (capacity is u32).
     return static_cast<uint64_t>(string_hdr(val)->hash);
@@ -834,18 +834,15 @@ uint64_t roxy_string_hash(void* val) {
 
 // ===== Map Operations =====
 
-static roxy_map_header* map_hdr(void* self) {
-    return static_cast<roxy_map_header*>(self);
-}
+static roxy_map_header* map_hdr(void* self) { return static_cast<roxy_map_header*>(self); }
 
 // Element-borrow pin (see lifetimes.md "Container element lvalues"), mirroring the list pin.
-void roxy_map_pin(void* self) {
-    map_hdr(self)->borrow_count++;
-}
+void roxy_map_pin(void* self) { map_hdr(self)->borrow_count++; }
 void roxy_map_unpin(void* self) {
     auto* hdr = map_hdr(self);
     assert(hdr->borrow_count > 0 && "roxy_map_unpin: borrow_count underflow");
-    if (hdr->borrow_count > 0) hdr->borrow_count--;
+    if (hdr->borrow_count > 0)
+        hdr->borrow_count--;
 }
 
 // True (and raises the runtime trap) when `hdr` has an outstanding value borrow,
@@ -878,7 +875,8 @@ static uint64_t map_hash_key(const uint32_t* key_src, const roxy_map_header* hdr
         case ROXY_MAP_KEY_FLOAT32: {
             float val;
             memcpy(&val, key_src, sizeof(float));
-            if (val == 0.0f) val = 0.0f;
+            if (val == 0.0f)
+                val = 0.0f;
             uint32_t bits;
             memcpy(&bits, &val, sizeof(uint32_t));
             return hash_splitmix64(static_cast<uint64_t>(bits));
@@ -886,7 +884,8 @@ static uint64_t map_hash_key(const uint32_t* key_src, const roxy_map_header* hdr
         case ROXY_MAP_KEY_FLOAT64: {
             double val;
             memcpy(&val, key_src, sizeof(double));
-            if (val == 0.0) val = 0.0;
+            if (val == 0.0)
+                val = 0.0;
             uint64_t bits;
             memcpy(&bits, &val, sizeof(uint64_t));
             return hash_splitmix64(bits);
@@ -894,7 +893,8 @@ static uint64_t map_hash_key(const uint32_t* key_src, const roxy_map_header* hdr
         case ROXY_MAP_KEY_STRING: {
             uint64_t ptr_bits = read_packed_u64(key_src);
             void* str = reinterpret_cast<void*>(ptr_bits);
-            if (!str) return 0;
+            if (!str)
+                return 0;
             // Read the cached hash from the string header — same field the
             // VM-side `Map<string,V>` lookup at vm/map.cpp:84 uses.
             return static_cast<uint64_t>(string_hdr(str)->hash);
@@ -916,8 +916,7 @@ static uint64_t map_hash_key(const uint32_t* key_src, const roxy_map_header* hdr
 // the C output via the existing struct-by-pointer convention) — no calling-
 // convention dance needed here, unlike the VM where `other: K` arrives as
 // packed-by-value bytes.
-static bool map_keys_equal(const uint32_t* a, const uint32_t* b,
-                           const roxy_map_header* hdr) {
+static bool map_keys_equal(const uint32_t* a, const uint32_t* b, const roxy_map_header* hdr) {
     switch (hdr->key_kind) {
         case ROXY_MAP_KEY_INTEGER:
             return read_packed_u64(a) == read_packed_u64(b);
@@ -936,8 +935,7 @@ static bool map_keys_equal(const uint32_t* a, const uint32_t* b,
         case ROXY_MAP_KEY_STRING: {
             uint64_t a_bits = read_packed_u64(a);
             uint64_t b_bits = read_packed_u64(b);
-            return roxy_string_eq(reinterpret_cast<void*>(a_bits),
-                                  reinterpret_cast<void*>(b_bits));
+            return roxy_string_eq(reinterpret_cast<void*>(a_bits), reinterpret_cast<void*>(b_bits));
         }
         case ROXY_MAP_KEY_STRUCT:
             if (hdr->eq_fn) {
@@ -958,18 +956,18 @@ static inline uint32_t* map_value_ptr(const roxy_map_header* hdr, uint32_t pos) 
 
 // A `ref V` value occupies 2 inline u32 slots packing a borrow pointer.
 static inline void* map_ref_value(const uint32_t* value_slot) {
-    return reinterpret_cast<void*>(
-        static_cast<uint64_t>(value_slot[0]) | (static_cast<uint64_t>(value_slot[1]) << 32));
+    return reinterpret_cast<void*>(static_cast<uint64_t>(value_slot[0]) |
+                                   (static_cast<uint64_t>(value_slot[1]) << 32));
 }
 
 static void map_alloc_buckets(roxy_map_header* hdr, uint32_t capacity) {
     assert(capacity > 0 && (capacity & (capacity - 1)) == 0);
     hdr->capacity = capacity;
     hdr->distances = static_cast<uint8_t*>(calloc(capacity, sizeof(uint8_t)));
-    hdr->keys = static_cast<uint32_t*>(calloc(
-        static_cast<size_t>(capacity) * hdr->key_slot_count, sizeof(uint32_t)));
-    hdr->values = static_cast<uint32_t*>(calloc(
-        static_cast<size_t>(capacity) * hdr->value_slot_count, sizeof(uint32_t)));
+    hdr->keys = static_cast<uint32_t*>(
+        calloc(static_cast<size_t>(capacity) * hdr->key_slot_count, sizeof(uint32_t)));
+    hdr->values = static_cast<uint32_t*>(
+        calloc(static_cast<size_t>(capacity) * hdr->value_slot_count, sizeof(uint32_t)));
 }
 
 static void map_free_buckets(roxy_map_header* hdr) {
@@ -989,8 +987,7 @@ static void map_free_buckets(roxy_map_header* hdr) {
 // buffers for both, so the entry being placed survives multiple displacements
 // in the chain. The defensive memcpy of caller's bytes into buf_a defends
 // against `value_src` / `key_src` aliasing the bucket array (rehash case).
-static void map_insert_internal(roxy_map_header* hdr,
-                                const uint32_t* key_src,
+static void map_insert_internal(roxy_map_header* hdr, const uint32_t* key_src,
                                 const uint32_t* value_src) {
     uint32_t mask = hdr->capacity - 1;
     uint8_t ksc = hdr->key_slot_count;
@@ -1001,10 +998,14 @@ static void map_insert_internal(roxy_map_header* hdr,
 
     uint32_t stack_ka[16], stack_kb[16];
     uint32_t stack_va[16], stack_vb[16];
-    uint32_t* kbuf_a = (ksc <= 16) ? stack_ka : static_cast<uint32_t*>(malloc(sizeof(uint32_t) * ksc));
-    uint32_t* kbuf_b = (ksc <= 16) ? stack_kb : static_cast<uint32_t*>(malloc(sizeof(uint32_t) * ksc));
-    uint32_t* vbuf_a = (vsc <= 16) ? stack_va : static_cast<uint32_t*>(malloc(sizeof(uint32_t) * vsc));
-    uint32_t* vbuf_b = (vsc <= 16) ? stack_vb : static_cast<uint32_t*>(malloc(sizeof(uint32_t) * vsc));
+    uint32_t* kbuf_a =
+        (ksc <= 16) ? stack_ka : static_cast<uint32_t*>(malloc(sizeof(uint32_t) * ksc));
+    uint32_t* kbuf_b =
+        (ksc <= 16) ? stack_kb : static_cast<uint32_t*>(malloc(sizeof(uint32_t) * ksc));
+    uint32_t* vbuf_a =
+        (vsc <= 16) ? stack_va : static_cast<uint32_t*>(malloc(sizeof(uint32_t) * vsc));
+    uint32_t* vbuf_b =
+        (vsc <= 16) ? stack_vb : static_cast<uint32_t*>(malloc(sizeof(uint32_t) * vsc));
 
     memcpy(kbuf_a, key_src, sizeof(uint32_t) * ksc);
     memcpy(vbuf_a, value_src, sizeof(uint32_t) * vsc);
@@ -1018,10 +1019,14 @@ static void map_insert_internal(roxy_map_header* hdr,
             hdr->distances[pos] = dist;
             memcpy(map_key_ptr(hdr, pos), ksrc, sizeof(uint32_t) * ksc);
             memcpy(map_value_ptr(hdr, pos), vsrc, sizeof(uint32_t) * vsc);
-            if (kbuf_a != stack_ka) free(kbuf_a);
-            if (kbuf_b != stack_kb) free(kbuf_b);
-            if (vbuf_a != stack_va) free(vbuf_a);
-            if (vbuf_b != stack_vb) free(vbuf_b);
+            if (kbuf_a != stack_ka)
+                free(kbuf_a);
+            if (kbuf_b != stack_kb)
+                free(kbuf_b);
+            if (vbuf_a != stack_va)
+                free(vbuf_a);
+            if (vbuf_b != stack_vb)
+                free(vbuf_b);
             return;
         }
         if (hdr->distances[pos] < dist) {
@@ -1032,8 +1037,12 @@ static void map_insert_internal(roxy_map_header* hdr,
             memcpy(map_key_ptr(hdr, pos), ksrc, sizeof(uint32_t) * ksc);
             memcpy(map_value_ptr(hdr, pos), vsrc, sizeof(uint32_t) * vsc);
             dist = tmp_dist;
-            uint32_t* tmp = ksrc; ksrc = kscratch; kscratch = tmp;
-            tmp = vsrc; vsrc = vscratch; vscratch = tmp;
+            uint32_t* tmp = ksrc;
+            ksrc = kscratch;
+            kscratch = tmp;
+            tmp = vsrc;
+            vsrc = vscratch;
+            vscratch = tmp;
         }
         pos = (pos + 1) & mask;
         dist++;
@@ -1043,7 +1052,7 @@ static void map_insert_internal(roxy_map_header* hdr,
 
 static void map_grow(roxy_map_header* hdr) {
     uint32_t old_capacity = hdr->capacity;
-    uint8_t*  old_distances = hdr->distances;
+    uint8_t* old_distances = hdr->distances;
     uint32_t* old_keys = hdr->keys;
     uint32_t* old_values = hdr->values;
     uint8_t ksc = hdr->key_slot_count;
@@ -1067,17 +1076,17 @@ static void map_grow(roxy_map_header* hdr) {
     free(old_values);
 }
 
-void* roxy_map_alloc(int32_t key_slot_count, int32_t key_is_inline,
-                     int32_t value_slot_count, int32_t value_is_inline,
-                     roxy_map_hash_fn hash_fn, roxy_map_eq_fn eq_fn) {
+void* roxy_map_alloc(int32_t key_slot_count, int32_t key_is_inline, int32_t value_slot_count,
+                     int32_t value_is_inline, roxy_map_hash_fn hash_fn, roxy_map_eq_fn eq_fn) {
     void* data = roxy_alloc(sizeof(roxy_map_header), ROXY_TYPEID_MAP);
-    if (!data) return nullptr;
+    if (!data)
+        return nullptr;
     auto* hdr = map_hdr(data);
-    hdr->key_slot_count = key_slot_count > 0
-        ? static_cast<uint8_t>(key_slot_count) : static_cast<uint8_t>(2);
+    hdr->key_slot_count =
+        key_slot_count > 0 ? static_cast<uint8_t>(key_slot_count) : static_cast<uint8_t>(2);
     hdr->key_is_inline = key_is_inline != 0 ? 1 : 0;
-    hdr->value_slot_count = value_slot_count > 0
-        ? static_cast<uint8_t>(value_slot_count) : static_cast<uint8_t>(2);
+    hdr->value_slot_count =
+        value_slot_count > 0 ? static_cast<uint8_t>(value_slot_count) : static_cast<uint8_t>(2);
     hdr->value_is_inline = value_is_inline != 0 ? 1 : 0;
     hdr->hash_fn = hash_fn;
     hdr->eq_fn = eq_fn;
@@ -1096,7 +1105,8 @@ void roxy_map_init(void* self, int32_t key_kind, int32_t capacity) {
 
     if (capacity > 0) {
         uint32_t actual = 8;
-        while (actual < static_cast<uint32_t>(capacity)) actual *= 2;
+        while (actual < static_cast<uint32_t>(capacity))
+            actual *= 2;
         map_alloc_buckets(hdr, actual);
     }
 }
@@ -1104,21 +1114,19 @@ void roxy_map_init(void* self, int32_t key_kind, int32_t capacity) {
 void roxy_map_delete(void* self) {
     auto* hdr = map_hdr(self);
     if (hdr->borrow_count != 0) {
-        roxy_runtime_error_set(
-            "cannot delete a Map while a value of it is borrowed (inout/out)");
+        roxy_runtime_error_set("cannot delete a Map while a value of it is borrowed (inout/out)");
         return;
     }
     map_free_buckets(hdr);
     hdr->length = 0;
 }
 
-int32_t roxy_map_len(void* self) {
-    return static_cast<int32_t>(map_hdr(self)->length);
-}
+int32_t roxy_map_len(void* self) { return static_cast<int32_t>(map_hdr(self)->length); }
 
 bool roxy_map_contains(void* self, const void* key_src) {
     auto* hdr = map_hdr(self);
-    if (hdr->capacity == 0 || hdr->length == 0) return false;
+    if (hdr->capacity == 0 || hdr->length == 0)
+        return false;
 
     uint32_t mask = hdr->capacity - 1;
     auto* k = static_cast<const uint32_t*>(key_src);
@@ -1127,10 +1135,11 @@ bool roxy_map_contains(void* self, const void* key_src) {
     uint8_t dist = 1;
 
     while (true) {
-        if (hdr->distances[pos] == 0) return false;
-        if (hdr->distances[pos] < dist) return false;
-        if (hdr->distances[pos] == dist &&
-            map_keys_equal(map_key_ptr(hdr, pos), k, hdr)) {
+        if (hdr->distances[pos] == 0)
+            return false;
+        if (hdr->distances[pos] < dist)
+            return false;
+        if (hdr->distances[pos] == dist && map_keys_equal(map_key_ptr(hdr, pos), k, hdr)) {
             return true;
         }
         pos = (pos + 1) & mask;
@@ -1168,18 +1177,21 @@ static inline bool map_key_is_counted(const roxy_map_header* hdr) {
 }
 
 static inline void map_key_retain(const roxy_map_header* hdr, const uint32_t* key_src) {
-    if (map_key_is_counted(hdr)) roxy_string_retain(map_ref_value(key_src));
+    if (map_key_is_counted(hdr))
+        roxy_string_retain(map_ref_value(key_src));
 }
 
 static inline void map_key_release(const roxy_map_header* hdr, const uint32_t* key_slot) {
-    if (map_key_is_counted(hdr)) roxy_string_release(map_ref_value(key_slot));
+    if (map_key_is_counted(hdr))
+        roxy_string_release(map_ref_value(key_slot));
 }
 
 // Non-asserting Robin Hood probe shared by roxy_map_get / roxy_map_get_or.
 // Returns a pointer to the stored value bytes on a hit, nullptr on a miss
 // (including an empty map).
 static void* map_probe_value(roxy_map_header* hdr, const void* key_src) {
-    if (hdr->capacity == 0 || hdr->length == 0) return nullptr;
+    if (hdr->capacity == 0 || hdr->length == 0)
+        return nullptr;
 
     uint32_t mask = hdr->capacity - 1;
     auto* k = static_cast<const uint32_t*>(key_src);
@@ -1193,8 +1205,7 @@ static void* map_probe_value(roxy_map_header* hdr, const void* key_src) {
         if (hdr->distances[pos] == 0 || hdr->distances[pos] < dist) {
             return nullptr;
         }
-        if (hdr->distances[pos] == dist &&
-            map_keys_equal(map_key_ptr(hdr, pos), k, hdr)) {
+        if (hdr->distances[pos] == dist && map_keys_equal(map_key_ptr(hdr, pos), k, hdr)) {
             return map_value_ptr(hdr, pos);
         }
         pos = (pos + 1) & mask;
@@ -1223,7 +1234,8 @@ void* roxy_map_get_or(void* self, const void* key_src, const void* default_src) 
 
 void roxy_map_insert(void* self, const void* key_src, const void* value_src) {
     auto* hdr = map_hdr(self);
-    if (map_mutation_blocked(hdr)) return;  // covers map[k]=v (roxy_map_index_mut)
+    if (map_mutation_blocked(hdr))
+        return; // covers map[k]=v (roxy_map_index_mut)
     uint8_t vsc = hdr->value_slot_count;
     auto* k = static_cast<const uint32_t*>(key_src);
     auto* v = static_cast<const uint32_t*>(value_src);
@@ -1236,10 +1248,11 @@ void roxy_map_insert(void* self, const void* key_src, const void* value_src) {
         uint8_t dist = 1;
 
         while (true) {
-            if (hdr->distances[pos] == 0) break;
-            if (hdr->distances[pos] < dist) break;
-            if (hdr->distances[pos] == dist &&
-                map_keys_equal(map_key_ptr(hdr, pos), k, hdr)) {
+            if (hdr->distances[pos] == 0)
+                break;
+            if (hdr->distances[pos] < dist)
+                break;
+            if (hdr->distances[pos] == dist && map_keys_equal(map_key_ptr(hdr, pos), k, hdr)) {
                 // Replace: release the old borrow, acquire the new one.
                 if (hdr->value_is_ref) {
                     roxy_ref_dec(map_ref_value(map_value_ptr(hdr, pos)));
@@ -1258,7 +1271,8 @@ void roxy_map_insert(void* self, const void* key_src, const void* value_src) {
         map_grow(hdr);
     }
 
-    if (hdr->value_is_ref) roxy_ref_inc(map_ref_value(v));  // acquire the borrow
+    if (hdr->value_is_ref)
+        roxy_ref_inc(map_ref_value(v)); // acquire the borrow
     // Only on this path: the replace branch above returns early, and it keeps
     // the key already stored, so the incoming one is never held.
     map_key_retain(hdr, k);
@@ -1268,8 +1282,10 @@ void roxy_map_insert(void* self, const void* key_src, const void* value_src) {
 
 bool roxy_map_remove(void* self, const void* key_src) {
     auto* hdr = map_hdr(self);
-    if (map_mutation_blocked(hdr)) return false;
-    if (hdr->capacity == 0 || hdr->length == 0) return false;
+    if (map_mutation_blocked(hdr))
+        return false;
+    if (hdr->capacity == 0 || hdr->length == 0)
+        return false;
 
     uint8_t ksc = hdr->key_slot_count;
     uint8_t vsc = hdr->value_slot_count;
@@ -1280,10 +1296,11 @@ bool roxy_map_remove(void* self, const void* key_src) {
     uint8_t dist = 1;
 
     while (true) {
-        if (hdr->distances[pos] == 0) return false;
-        if (hdr->distances[pos] < dist) return false;
-        if (hdr->distances[pos] == dist &&
-            map_keys_equal(map_key_ptr(hdr, pos), k, hdr)) {
+        if (hdr->distances[pos] == 0)
+            return false;
+        if (hdr->distances[pos] < dist)
+            return false;
+        if (hdr->distances[pos] == dist && map_keys_equal(map_key_ptr(hdr, pos), k, hdr)) {
             break;
         }
         pos = (pos + 1) & mask;
@@ -1293,7 +1310,8 @@ bool roxy_map_remove(void* self, const void* key_src) {
     // Release the removed entry's counts. The backward-shift below only *moves*
     // surviving entries down, so their counts are unaffected — but it overwrites
     // this bucket, so the key must be released while it is still readable.
-    if (hdr->value_is_ref) roxy_ref_dec(map_ref_value(map_value_ptr(hdr, pos)));
+    if (hdr->value_is_ref)
+        roxy_ref_dec(map_ref_value(map_value_ptr(hdr, pos)));
     map_key_release(hdr, map_key_ptr(hdr, pos));
 
     // Backward-shift deletion
@@ -1307,24 +1325,26 @@ bool roxy_map_remove(void* self, const void* key_src) {
             return true;
         }
         hdr->distances[pos] = hdr->distances[next] - 1;
-        memcpy(map_key_ptr(hdr, pos), map_key_ptr(hdr, next),
-               sizeof(uint32_t) * ksc);
-        memcpy(map_value_ptr(hdr, pos), map_value_ptr(hdr, next),
-               sizeof(uint32_t) * vsc);
+        memcpy(map_key_ptr(hdr, pos), map_key_ptr(hdr, next), sizeof(uint32_t) * ksc);
+        memcpy(map_value_ptr(hdr, pos), map_value_ptr(hdr, next), sizeof(uint32_t) * vsc);
         pos = next;
     }
 }
 
 void roxy_map_clear(void* self) {
     auto* hdr = map_hdr(self);
-    if (map_mutation_blocked(hdr)) return;
+    if (map_mutation_blocked(hdr))
+        return;
     bool release_keys = map_key_is_counted(hdr);
     bool release_values = hdr->value_is_ref != 0;
     if ((release_keys || release_values) && hdr->capacity > 0) {
         for (uint32_t i = 0; i < hdr->capacity; i++) {
-            if (hdr->distances[i] == 0) continue;
-            if (release_values) roxy_ref_dec(map_ref_value(map_value_ptr(hdr, i)));
-            if (release_keys) map_key_release(hdr, map_key_ptr(hdr, i));
+            if (hdr->distances[i] == 0)
+                continue;
+            if (release_values)
+                roxy_ref_dec(map_ref_value(map_value_ptr(hdr, i)));
+            if (release_keys)
+                map_key_release(hdr, map_key_ptr(hdr, i));
         }
     }
     hdr->length = 0;
@@ -1342,7 +1362,8 @@ void* roxy_map_keys(void* self) {
     // Mirror the key layout into the produced List<K>.
     void* lst = roxy_list_alloc(static_cast<int32_t>(hdr->key_slot_count),
                                 static_cast<int32_t>(hdr->key_is_inline));
-    if (!lst) return nullptr;
+    if (!lst)
+        return nullptr;
     roxy_list_init(lst, static_cast<int32_t>(hdr->length));
 
     // The produced List<K> is a second owner of each counted key, and releases
@@ -1350,9 +1371,11 @@ void* roxy_map_keys(void* self) {
     // list would be spending.
     bool retain_keys = map_key_is_counted(hdr);
     for (uint32_t i = 0; i < hdr->capacity; i++) {
-        if (hdr->distances[i] == 0) continue;
+        if (hdr->distances[i] == 0)
+            continue;
         roxy_list_push(lst, map_key_ptr(hdr, i));
-        if (retain_keys) map_key_retain(hdr, map_key_ptr(hdr, i));
+        if (retain_keys)
+            map_key_retain(hdr, map_key_ptr(hdr, i));
     }
     return lst;
 }
@@ -1362,7 +1385,8 @@ void* roxy_map_values(void* self) {
     // Mirror the value layout into the produced List<V>.
     void* lst = roxy_list_alloc(static_cast<int32_t>(hdr->value_slot_count),
                                 static_cast<int32_t>(hdr->value_is_inline));
-    if (!lst) return nullptr;
+    if (!lst)
+        return nullptr;
     roxy_list_init(lst, static_cast<int32_t>(hdr->length));
 
     for (uint32_t i = 0; i < hdr->capacity; i++) {
@@ -1371,23 +1395,26 @@ void* roxy_map_values(void* self) {
             // For a Map<_, ref V>, the produced List<ref V> holds counted
             // borrows: RefInc each value so the list's per-element RefDec on
             // destruction balances. Tag the list too, so copying it re-incs.
-            if (hdr->value_is_ref) roxy_ref_inc(map_ref_value(map_value_ptr(hdr, i)));
+            if (hdr->value_is_ref)
+                roxy_ref_inc(map_ref_value(map_value_ptr(hdr, i)));
         }
     }
-    if (hdr->value_is_ref) static_cast<roxy_list_header*>(lst)->element_is_ref = 1;
+    if (hdr->value_is_ref)
+        static_cast<roxy_list_header*>(lst)->element_is_ref = 1;
     return lst;
 }
 
 void* roxy_map_copy(void* src) {
-    if (!src) return nullptr;
+    if (!src)
+        return nullptr;
     auto* src_hdr = map_hdr(src);
 
-    void* dst = roxy_map_alloc(static_cast<int32_t>(src_hdr->key_slot_count),
-                               static_cast<int32_t>(src_hdr->key_is_inline),
-                               static_cast<int32_t>(src_hdr->value_slot_count),
-                               static_cast<int32_t>(src_hdr->value_is_inline),
-                               src_hdr->hash_fn, src_hdr->eq_fn);
-    if (!dst) return nullptr;
+    void* dst = roxy_map_alloc(
+        static_cast<int32_t>(src_hdr->key_slot_count), static_cast<int32_t>(src_hdr->key_is_inline),
+        static_cast<int32_t>(src_hdr->value_slot_count),
+        static_cast<int32_t>(src_hdr->value_is_inline), src_hdr->hash_fn, src_hdr->eq_fn);
+    if (!dst)
+        return nullptr;
 
     auto* dst_hdr = map_hdr(dst);
     dst_hdr->key_kind = src_hdr->key_kind;
@@ -1399,7 +1426,8 @@ void* roxy_map_copy(void* src) {
         memcpy(dst_hdr->keys, src_hdr->keys,
                sizeof(uint32_t) * static_cast<size_t>(src_hdr->capacity) * src_hdr->key_slot_count);
         memcpy(dst_hdr->values, src_hdr->values,
-               sizeof(uint32_t) * static_cast<size_t>(src_hdr->capacity) * src_hdr->value_slot_count);
+               sizeof(uint32_t) * static_cast<size_t>(src_hdr->capacity) *
+                   src_hdr->value_slot_count);
 
         // The copy is a second owner of every counted key and of every borrowed
         // value, and releases both when destroyed — so acquire here. Values of
@@ -1407,12 +1435,15 @@ void* roxy_map_copy(void* src) {
         // retain loop over the result); only keys and `ref` values are closed
         // sets of kinds the runtime can walk.
         bool retain_keys = map_key_is_counted(dst_hdr);
-        bool retain_values = dst_hdr->value_is_ref != 0;   // the copy holds its own borrow
+        bool retain_values = dst_hdr->value_is_ref != 0; // the copy holds its own borrow
         if (retain_keys || retain_values) {
             for (uint32_t i = 0; i < dst_hdr->capacity; i++) {
-                if (dst_hdr->distances[i] == 0) continue;
-                if (retain_keys) map_key_retain(dst_hdr, map_key_ptr(dst_hdr, i));
-                if (retain_values) roxy_ref_inc(map_ref_value(map_value_ptr(dst_hdr, i)));
+                if (dst_hdr->distances[i] == 0)
+                    continue;
+                if (retain_keys)
+                    map_key_retain(dst_hdr, map_key_ptr(dst_hdr, i));
+                if (retain_values)
+                    roxy_ref_inc(map_ref_value(map_value_ptr(dst_hdr, i)));
             }
         }
     }
@@ -1420,12 +1451,11 @@ void* roxy_map_copy(void* src) {
 }
 
 void roxy_map_mark_ref_values(void* self) {
-    if (self) map_hdr(self)->value_is_ref = 1;
+    if (self)
+        map_hdr(self)->value_is_ref = 1;
 }
 
-void* roxy_map_index(void* self, const void* key_src) {
-    return roxy_map_get(self, key_src);
-}
+void* roxy_map_index(void* self, const void* key_src) { return roxy_map_get(self, key_src); }
 
 void roxy_map_index_mut(void* self, const void* key_src, const void* value_src) {
     roxy_map_insert(self, key_src, value_src);
@@ -1433,16 +1463,15 @@ void roxy_map_index_mut(void* self, const void* key_src, const void* value_src) 
 
 // ===== Internal map iteration =====
 
-int32_t roxy_map_iter_capacity(void* self) {
-    return static_cast<int32_t>(map_hdr(self)->capacity);
-}
+int32_t roxy_map_iter_capacity(void* self) { return static_cast<int32_t>(map_hdr(self)->capacity); }
 
 int32_t roxy_map_iter_next_occupied(void* self, int32_t idx) {
     auto* hdr = map_hdr(self);
     for (int32_t i = idx; i < static_cast<int32_t>(hdr->capacity); i++) {
-        if (hdr->distances[i] != 0) return i;
+        if (hdr->distances[i] != 0)
+            return i;
     }
-    return static_cast<int32_t>(hdr->capacity);  // Sentinel: past end
+    return static_cast<int32_t>(hdr->capacity); // Sentinel: past end
 }
 
 uint64_t roxy_map_iter_key_at(void* self, int32_t idx) {
@@ -1450,8 +1479,7 @@ uint64_t roxy_map_iter_key_at(void* self, int32_t idx) {
     auto* hdr = map_hdr(self);
     uint32_t copy_slots = hdr->key_slot_count <= 2 ? hdr->key_slot_count : 2u;
     uint64_t packed = 0;
-    memcpy(&packed,
-           hdr->keys + static_cast<size_t>(idx) * hdr->key_slot_count,
+    memcpy(&packed, hdr->keys + static_cast<size_t>(idx) * hdr->key_slot_count,
            sizeof(uint32_t) * copy_slots);
     return packed;
 }
@@ -1462,8 +1490,7 @@ uint64_t roxy_map_iter_value_at(void* self, int32_t idx) {
     auto* hdr = map_hdr(self);
     uint32_t copy_slots = hdr->value_slot_count <= 2 ? hdr->value_slot_count : 2u;
     uint64_t packed = 0;
-    memcpy(&packed,
-           hdr->values + static_cast<size_t>(idx) * hdr->value_slot_count,
+    memcpy(&packed, hdr->values + static_cast<size_t>(idx) * hdr->value_slot_count,
            sizeof(uint32_t) * copy_slots);
     return packed;
 }

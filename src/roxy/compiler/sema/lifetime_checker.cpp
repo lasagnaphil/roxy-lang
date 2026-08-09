@@ -5,7 +5,7 @@ namespace rx {
 // ===== Move-State Tracking for Uniq Variables =====
 
 void LifetimeChecker::merge_move_states(const MoveStateSnapshot& then_states,
-                                          const MoveStateSnapshot& else_states) {
+                                        const MoveStateSnapshot& else_states) {
     // For each tracked variable, merge states from both branches
     for (auto it = m_move_states.begin(); it != m_move_states.end(); ++it) {
         Symbol* sym = it->first;
@@ -25,9 +25,9 @@ void LifetimeChecker::merge_move_states(const MoveStateSnapshot& then_states,
 }
 
 void LifetimeChecker::merge_two_branches(const MoveStateSnapshot& pre_branch,
-                                          const MoveStateSnapshot& then_states,
-                                          const MoveStateSnapshot& else_states,
-                                          bool then_terminates, bool else_terminates) {
+                                         const MoveStateSnapshot& then_states,
+                                         const MoveStateSnapshot& else_states, bool then_terminates,
+                                         bool else_terminates) {
     // Terminating branches contribute no state to the post-merge point.
     // Pick the surviving branch's snapshot; if both terminate, the code
     // after is unreachable but we pick then_states arbitrarily.
@@ -43,11 +43,12 @@ void LifetimeChecker::merge_two_branches(const MoveStateSnapshot& pre_branch,
 }
 
 bool LifetimeChecker::merge_branch_snapshots(const Vector<MoveStateSnapshot>& snapshots,
-                                              const Vector<bool>& terminates) {
+                                             const Vector<bool>& terminates) {
     // Pairwise-merge only the surviving (non-terminating) snapshots.
     bool have_survivor = false;
     for (u32 i = 0; i < snapshots.size(); i++) {
-        if (terminates[i]) continue;
+        if (terminates[i])
+            continue;
         if (!have_survivor) {
             restore_move_states(snapshots[i]);
             have_survivor = true;
@@ -67,7 +68,8 @@ bool LifetimeChecker::merge_branch_snapshots(const Vector<MoveStateSnapshot>& sn
 }
 
 bool LifetimeChecker::expr_references_name(Expr* expr, StringView name) const {
-    if (!expr) return false;
+    if (!expr)
+        return false;
     switch (expr->kind) {
         case AstKind::ExprIdentifier:
             return expr->identifier.name == name;
@@ -86,9 +88,11 @@ bool LifetimeChecker::expr_references_name(Expr* expr, StringView name) const {
                    expr_references_name(expr->ternary.then_expr, name) ||
                    expr_references_name(expr->ternary.else_expr, name);
         case AstKind::ExprCall: {
-            if (expr_references_name(expr->call.callee, name)) return true;
+            if (expr_references_name(expr->call.callee, name))
+                return true;
             for (const auto& arg : expr->call.arguments) {
-                if (expr_references_name(arg.expr, name)) return true;
+                if (expr_references_name(arg.expr, name))
+                    return true;
             }
             return false;
         }
@@ -104,13 +108,15 @@ bool LifetimeChecker::expr_references_name(Expr* expr, StringView name) const {
             return expr_references_name(expr->grouping.expr, name);
         case AstKind::ExprStructLiteral: {
             for (const auto& field : expr->struct_literal.fields) {
-                if (expr_references_name(field.value, name)) return true;
+                if (expr_references_name(field.value, name))
+                    return true;
             }
             return false;
         }
         case AstKind::ExprStringInterp: {
             for (Expr* sub : expr->string_interp.expressions) {
-                if (expr_references_name(sub, name)) return true;
+                if (expr_references_name(sub, name))
+                    return true;
             }
             return false;
         }
@@ -122,7 +128,8 @@ bool LifetimeChecker::expr_references_name(Expr* expr, StringView name) const {
 }
 
 bool LifetimeChecker::loop_reassigns_var_first(Stmt* body, StringView var_name) const {
-    if (!body) return false;
+    if (!body)
+        return false;
 
     // Find the leading statement. For a braced block, that is its first
     // declaration — which must be a plain expression statement (a leading var
@@ -130,51 +137,61 @@ bool LifetimeChecker::loop_reassigns_var_first(Stmt* body, StringView var_name) 
     // `Decl::kind` holds the statement kind directly for statement-wrapped decls.
     Stmt* first = body;
     if (body->kind == AstKind::StmtBlock) {
-        if (body->block.declarations.size() == 0) return false;
+        if (body->block.declarations.size() == 0)
+            return false;
         Decl* decl = body->block.declarations[0];
-        if (!decl || decl->kind != AstKind::StmtExpr) return false;
+        if (!decl || decl->kind != AstKind::StmtExpr)
+            return false;
         first = &decl->stmt;
     }
 
     // The leading statement must be a plain `var_name = rhs` assignment.
-    if (first->kind != AstKind::StmtExpr) return false;
+    if (first->kind != AstKind::StmtExpr)
+        return false;
     Expr* e = first->expr_stmt.expr;
-    if (!e || e->kind != AstKind::ExprAssign) return false;
+    if (!e || e->kind != AstKind::ExprAssign)
+        return false;
     const AssignExpr& assign = e->assign;
-    if (assign.op != AssignOp::Assign) return false;  // compound ops read the target first
-    if (!assign.target || assign.target->kind != AstKind::ExprIdentifier) return false;
-    if (assign.target->identifier.name != var_name) return false;
+    if (assign.op != AssignOp::Assign)
+        return false; // compound ops read the target first
+    if (!assign.target || assign.target->kind != AstKind::ExprIdentifier)
+        return false;
+    if (assign.target->identifier.name != var_name)
+        return false;
 
     // The RHS must not read the variable (else it observes a possibly-moved value).
     return !expr_references_name(assign.value, var_name);
 }
 
-void LifetimeChecker::check_loop_cross_iteration_moves(
-        Stmt* body,
-        const MoveStateSnapshot& pre_loop_states,
-        const MoveStateSnapshot& post_body_states,
-        SourceLocation loc) {
+void LifetimeChecker::check_loop_cross_iteration_moves(Stmt* body,
+                                                       const MoveStateSnapshot& pre_loop_states,
+                                                       const MoveStateSnapshot& post_body_states,
+                                                       SourceLocation loc) {
     for (auto& [sym, pre_state] : pre_loop_states) {
-        if (pre_state != MoveState::Live) continue;
+        if (pre_state != MoveState::Live)
+            continue;
         auto post_it = post_body_states.find(sym);
-        if (post_it == post_body_states.end()) continue;
+        if (post_it == post_body_states.end())
+            continue;
         MoveState post = post_it->second;
-        if (post != MoveState::Moved && post != MoveState::MaybeValid) continue;
+        if (post != MoveState::Moved && post != MoveState::MaybeValid)
+            continue;
 
         // A variable refreshed by the body's leading statement is Live again
         // before any use on every iteration, so the back-edge state is harmless.
-        if (sym && loop_reassigns_var_first(body, sym->name)) continue;
+        if (sym && loop_reassigns_var_first(body, sym->name))
+            continue;
 
         if (post == MoveState::Moved) {
             m_reporter.error_fmt(loc,
-                "variable '{}' is moved in the loop body and never reassigned; "
-                "it would be used after move on the next iteration",
-                sym ? sym->name : StringView());
+                                 "variable '{}' is moved in the loop body and never reassigned; "
+                                 "it would be used after move on the next iteration",
+                                 sym ? sym->name : StringView());
         } else {
             m_reporter.error_fmt(loc,
-                "variable '{}' may be moved in the loop body without being "
-                "reassigned; it could be used after move on the next iteration",
-                sym ? sym->name : StringView());
+                                 "variable '{}' may be moved in the loop body without being "
+                                 "reassigned; it could be used after move on the next iteration",
+                                 sym ? sym->name : StringView());
         }
     }
 }
@@ -184,9 +201,11 @@ bool LifetimeChecker::check_not_moved(StringView name, SourceLocation loc) {
 }
 
 bool LifetimeChecker::check_not_moved(Symbol* sym, StringView name, SourceLocation loc) {
-    if (!sym) return true;
+    if (!sym)
+        return true;
     auto it = m_move_states.find(sym);
-    if (it == m_move_states.end()) return true;  // Not tracked (not noncopyable)
+    if (it == m_move_states.end())
+        return true; // Not tracked (not noncopyable)
 
     if (it->second == MoveState::Moved) {
         m_reporter.error_fmt(loc, "use of moved value '{}'", name);
@@ -200,10 +219,12 @@ bool LifetimeChecker::check_not_moved(Symbol* sym, StringView name, SourceLocati
 }
 
 bool LifetimeChecker::check_not_field_move(Expr* expr, SourceLocation loc) {
-    if (expr->kind != AstKind::ExprGet) return true;
+    if (expr->kind != AstKind::ExprGet)
+        return true;
 
     Type* field_type = expr->resolved_type;
-    if (!field_type || field_type->is_copy()) return true;
+    if (!field_type || field_type->is_copy())
+        return true;
 
     // A noncopyable *value-struct* field can't be moved out. The containing
     // struct is destroyed by a type-level descriptor that walks every field, so
@@ -213,8 +234,8 @@ bool LifetimeChecker::check_not_field_move(Expr* expr, SourceLocation loc) {
     // are fine — they are nulled in the root at the move (see the IR builder).
     if (field_type->is_struct()) {
         m_reporter.error(loc, "cannot move a value-type struct field out of a struct: the "
-                   "container can't track a partial move. Move the whole struct, "
-                   "borrow the field with 'ref', or make the field 'uniq'");
+                              "container can't track a partial move. Move the whole struct, "
+                              "borrow the field with 'ref', or make the field 'uniq'");
         return false;
     }
 
@@ -234,7 +255,8 @@ bool LifetimeChecker::check_not_field_move(Expr* expr, SourceLocation loc) {
     while (current->kind == AstKind::ExprGet) {
         Type* parent_type = current->resolved_type;
         if (!parent_type || parent_type->is_reference() || !parent_type->is_struct()) {
-            m_reporter.error(loc, "cannot move out of a struct field; consider borrowing with 'ref' instead");
+            m_reporter.error(
+                loc, "cannot move out of a struct field; consider borrowing with 'ref' instead");
             return false;
         }
         current = current->get.object;
@@ -254,18 +276,21 @@ bool LifetimeChecker::check_not_field_move(Expr* expr, SourceLocation loc) {
         }
     }
 
-    m_reporter.error(loc, "cannot move out of a struct field; consider borrowing with 'ref' instead");
+    m_reporter.error(loc,
+                     "cannot move out of a struct field; consider borrowing with 'ref' instead");
     return false;
 }
 
 bool LifetimeChecker::is_out_inout_param(Expr* expr) {
-    if (!expr || expr->kind != AstKind::ExprIdentifier) return false;
+    if (!expr || expr->kind != AstKind::ExprIdentifier)
+        return false;
     Symbol* sym = m_symbols.lookup(expr->identifier.name);
     return sym && sym->kind == SymbolKind::Parameter && sym->is_out_inout;
 }
 
 bool LifetimeChecker::is_borrowed_native_accessor(Expr* expr) const {
-    if (!expr) return false;
+    if (!expr)
+        return false;
 
     // The two spellings that reach a container accessor: `c[k]` dispatches to
     // the `index` method, and `c.get(k)` names its method directly. Both resolve
@@ -275,8 +300,7 @@ bool LifetimeChecker::is_borrowed_native_accessor(Expr* expr) const {
     if (expr->kind == AstKind::ExprIndex) {
         receiver = expr->index.object;
         method_name = "index"_sv;
-    } else if (expr->kind == AstKind::ExprCall &&
-               expr->call.callee &&
+    } else if (expr->kind == AstKind::ExprCall && expr->call.callee &&
                expr->call.callee->kind == AstKind::ExprGet) {
         receiver = expr->call.callee->get.object;
         method_name = expr->call.callee->get.name;
@@ -286,7 +310,8 @@ bool LifetimeChecker::is_borrowed_native_accessor(Expr* expr) const {
 
     // A null receiver type means `object` names an imported module, not a value
     // (see the annotation contract in ast.hpp) — no receiver, no accessor.
-    if (!receiver || !receiver->resolved_type) return false;
+    if (!receiver || !receiver->resolved_type)
+        return false;
 
     const MethodInfo* method =
         m_types.lookup_method(receiver->resolved_type->base_type(), method_name);
@@ -294,9 +319,11 @@ bool LifetimeChecker::is_borrowed_native_accessor(Expr* expr) const {
 }
 
 void LifetimeChecker::consume_noncopyable(Expr* expr, SourceLocation loc) {
-    if (!expr) return;
+    if (!expr)
+        return;
     Type* type = expr->resolved_type;
-    if (!type || type->is_copy()) return;
+    if (!type || type->is_copy())
+        return;
 
     // Look through parenthesization: `(p)` denotes the same storage as `p`
     // (is_lvalue() recurses through grouping the same way). A move whose source
@@ -305,22 +332,21 @@ void LifetimeChecker::consume_noncopyable(Expr* expr, SourceLocation loc) {
     // and leaves `p` Live — a use-after-move false negative.
     while (expr->kind == AstKind::ExprGrouping) {
         expr = expr->grouping.expr;
-        if (!expr) return;
+        if (!expr)
+            return;
     }
 
-    // Second-class family (lifetimes.md "The second-class family"): an `out`/`inout` parameter borrows
-    // the caller's value and the caller retains ownership, so a noncopyable
-    // out/inout cannot be moved out of this frame (binding it, returning it,
-    // passing it by value, storing it, capturing it by move) — that would
-    // transfer and then free the caller's value, leaving it dangling. It may
-    // still be used in place or passed onward as another out/inout argument
-    // (the downward path, which does not consume). Copyable out/inout aren't
-    // affected: a copy escapes nothing, and the type system already blocks
-    // converting a value to `ref`/`weak`.
+    // Second-class family (lifetimes.md "The second-class family"): an `out`/`inout` parameter
+    // borrows the caller's value and the caller retains ownership, so a noncopyable out/inout
+    // cannot be moved out of this frame (binding it, returning it, passing it by value, storing it,
+    // capturing it by move) — that would transfer and then free the caller's value, leaving it
+    // dangling. It may still be used in place or passed onward as another out/inout argument (the
+    // downward path, which does not consume). Copyable out/inout aren't affected: a copy escapes
+    // nothing, and the type system already blocks converting a value to `ref`/`weak`.
     if (is_out_inout_param(expr)) {
         m_reporter.error(loc, "cannot move an 'out'/'inout' parameter out of its frame; it "
-                   "borrows the caller's value (use it in place, or pass it "
-                   "onward as an 'out'/'inout' argument)");
+                              "borrows the caller's value (use it in place, or pass it "
+                              "onward as an 'out'/'inout' argument)");
         return;
     }
 
@@ -343,35 +369,34 @@ void LifetimeChecker::consume_noncopyable(Expr* expr, SourceLocation loc) {
     // "The `borrowed` type modifier".
     if (is_borrowed_native_accessor(expr)) {
         m_reporter.error(loc, "cannot move a noncopyable value out of a container element; "
-                   "borrow it with 'ref' or remove it from the container instead");
+                              "borrow it with 'ref' or remove it from the container instead");
         return;
     }
 
-    if (!check_not_field_move(expr, loc)) return;
+    if (!check_not_field_move(expr, loc))
+        return;
 
     if (expr->kind == AstKind::ExprIdentifier) {
         mark_moved(expr->identifier.name);
     }
 }
 
-void LifetimeChecker::mark_moved(StringView name) {
-    mark_moved(m_symbols.lookup(name));
-}
+void LifetimeChecker::mark_moved(StringView name) { mark_moved(m_symbols.lookup(name)); }
 
 void LifetimeChecker::mark_moved(Symbol* sym) {
-    if (!sym) return;
+    if (!sym)
+        return;
     auto it = m_move_states.find(sym);
     if (it != m_move_states.end()) {
         it.value() = MoveState::Moved;
     }
 }
 
-void LifetimeChecker::mark_live(StringView name) {
-    mark_live(m_symbols.lookup(name));
-}
+void LifetimeChecker::mark_live(StringView name) { mark_live(m_symbols.lookup(name)); }
 
 void LifetimeChecker::mark_live(Symbol* sym) {
-    if (!sym) return;
+    if (!sym)
+        return;
     auto it = m_move_states.find(sym);
     if (it != m_move_states.end()) {
         it.value() = MoveState::Live;
@@ -380,22 +405,27 @@ void LifetimeChecker::mark_live(Symbol* sym) {
 
 void LifetimeChecker::check_scope_exit_uniq_destructors(const Scope* scope, SourceLocation loc) {
     for (Symbol* sym : scope->symbols) {
-        if (sym->kind != SymbolKind::Variable && sym->kind != SymbolKind::Parameter) continue;
+        if (sym->kind != SymbolKind::Variable && sym->kind != SymbolKind::Parameter)
+            continue;
 
         Type* type = sym->type;
-        if (!type || type->kind != TypeKind::Uniq) continue;
+        if (!type || type->kind != TypeKind::Uniq)
+            continue;
 
         // Check if the variable is still live (not moved/deleted)
         auto it = m_move_states.find(sym);
-        if (it == m_move_states.end() || it->second != MoveState::Live) continue;
+        if (it == m_move_states.end() || it->second != MoveState::Live)
+            continue;
 
         // Get the inner struct type
         Type* inner = type->inner_type();
-        if (!inner || inner->kind != TypeKind::Struct) continue;
+        if (!inner || inner->kind != TypeKind::Struct)
+            continue;
 
         // Check if struct has destructors but no default (unnamed) destructor
         const StructTypeInfo& struct_info = inner->struct_info;
-        if (struct_info.destructors.size() == 0) continue;
+        if (struct_info.destructors.size() == 0)
+            continue;
 
         bool has_default = false;
         for (const DestructorInfo& dtor : struct_info.destructors) {
@@ -406,9 +436,11 @@ void LifetimeChecker::check_scope_exit_uniq_destructors(const Scope* scope, Sour
         }
 
         if (!has_default) {
-            m_reporter.error_fmt(loc, "variable '{}' of type 'uniq {}' has only named destructors; "
-                          "must be explicitly deleted with 'delete {}.name(args)' before scope exit",
-                      sym->name, struct_info.name, sym->name);
+            m_reporter.error_fmt(
+                loc,
+                "variable '{}' of type 'uniq {}' has only named destructors; "
+                "must be explicitly deleted with 'delete {}.name(args)' before scope exit",
+                sym->name, struct_info.name, sym->name);
         }
     }
 }
@@ -417,9 +449,10 @@ void LifetimeChecker::check_all_scopes_uniq_destructors(SourceLocation loc, Scop
     Scope* scope = m_symbols.current_scope();
     while (scope) {
         check_scope_exit_uniq_destructors(scope, loc);
-        if (scope->kind == stop_kind) break;
+        if (scope->kind == stop_kind)
+            break;
         scope = scope->parent;
     }
 }
 
-}
+} // namespace rx

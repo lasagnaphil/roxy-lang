@@ -16,20 +16,29 @@ ObjectHeader* Value::get_object_header() const {
 }
 
 bool Value::is_weak_valid() const {
-    if (type != Weak) return false;
-    if (as_weak.ptr == nullptr) return false;
+    if (type != Weak)
+        return false;
+    if (as_weak.ptr == nullptr)
+        return false;
     return weak_ref_valid(as_weak.ptr, as_weak.generation);
 }
 
 const char* value_type_to_string(Value::Type type) {
     switch (type) {
-        case Value::Null:   return "null";
-        case Value::Bool:   return "bool";
-        case Value::Int:    return "int";
-        case Value::Float:  return "float";
-        case Value::Ptr:    return "ptr";
-        case Value::Weak:   return "weak";
-        default:            return "unknown";
+        case Value::Null:
+            return "null";
+        case Value::Bool:
+            return "bool";
+        case Value::Int:
+            return "int";
+        case Value::Float:
+            return "float";
+        case Value::Ptr:
+            return "ptr";
+        case Value::Weak:
+            return "weak";
+        default:
+            return "unknown";
     }
 }
 
@@ -60,4 +69,4 @@ void value_to_string(const Value& value, char* buf, u32 buf_size) {
     }
 }
 
-}
+} // namespace rx

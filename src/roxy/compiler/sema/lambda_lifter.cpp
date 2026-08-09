@@ -8,7 +8,8 @@ namespace rx {
 Vector<u32> LambdaLifter::collect_crossed_lambda_contexts(const Scope* stop_scope) {
     Vector<u32> crossed_ctx_indices;
     for (Scope* sc = m_symbols.current_scope(); sc; sc = sc->parent) {
-        if (sc == stop_scope) break;
+        if (sc == stop_scope)
+            break;
         if (sc->kind == ScopeKind::Lambda) {
             for (u32 i = 0; i < m_lambda_contexts.size(); i++) {
                 if (m_lambda_contexts[i]->boundary_scope == sc) {
@@ -28,13 +29,10 @@ bool LambdaLifter::try_capture_identifier(Expr* expr, Symbol* sym, Type** out) {
     // resolves to a symbol defined past a `ScopeKind::Lambda` boundary, treat it
     // as a closure capture. Function / struct / enum / trait / module / imported
     // symbols are never captured — they're effectively top-level.
-    bool is_capturable_kind =
-        sym->kind != SymbolKind::Function &&
-        sym->kind != SymbolKind::Struct &&
-        sym->kind != SymbolKind::Enum &&
-        sym->kind != SymbolKind::Trait &&
-        sym->kind != SymbolKind::Module &&
-        sym->kind != SymbolKind::ImportedFunction;
+    bool is_capturable_kind = sym->kind != SymbolKind::Function &&
+                              sym->kind != SymbolKind::Struct && sym->kind != SymbolKind::Enum &&
+                              sym->kind != SymbolKind::Trait && sym->kind != SymbolKind::Module &&
+                              sym->kind != SymbolKind::ImportedFunction;
 
     if (!is_capturable_kind || !sym->defining_scope || m_lambda_contexts.empty()) {
         return false;
@@ -46,7 +44,8 @@ bool LambdaLifter::try_capture_identifier(Expr* expr, Symbol* sym, Type** out) {
     // the symbol so it can be passed inward through env-fields.
     Vector<u32> crossed_ctx_indices = collect_crossed_lambda_contexts(sym->defining_scope);
 
-    if (crossed_ctx_indices.empty()) return false;
+    if (crossed_ctx_indices.empty())
+        return false;
 
     StringView captured_name = id.name;
     SourceLocation captured_loc = expr->loc;
@@ -63,9 +62,9 @@ bool LambdaLifter::try_capture_identifier(Expr* expr, Symbol* sym, Type** out) {
         LambdaCaptureContext& innermost = *m_lambda_contexts[crossed_ctx_indices[0]];
         if (innermost.by_symbol.find(sym) == innermost.by_symbol.end()) {
             m_reporter.error_fmt(captured_loc,
-                "cannot implicitly capture '{}' of noncopyable type; "
-                "use 'fun[move {}](...)' to move it into the closure",
-                captured_name, captured_name);
+                                 "cannot implicitly capture '{}' of noncopyable type; "
+                                 "use 'fun[move {}](...)' to move it into the closure",
+                                 captured_name, captured_name);
             *out = m_types.error_type();
             return true;
         }
@@ -88,10 +87,10 @@ bool LambdaLifter::try_capture_identifier(Expr* expr, Symbol* sym, Type** out) {
         for (i32 i = static_cast<i32>(crossed_ctx_indices.size()) - 1; i >= 0; i--) {
             u32 ctx_idx = crossed_ctx_indices[i];
             LambdaCaptureContext& ctx = *m_lambda_contexts[ctx_idx];
-            if (ctx.by_symbol.find(sym) != ctx.by_symbol.end()) continue;
+            if (ctx.by_symbol.find(sym) != ctx.by_symbol.end())
+                continue;
 
-            bool is_outermost_crossed =
-                (i == static_cast<i32>(crossed_ctx_indices.size()) - 1);
+            bool is_outermost_crossed = (i == static_cast<i32>(crossed_ctx_indices.size()) - 1);
 
             Expr* src;
             if (is_outermost_crossed) {
@@ -102,20 +101,17 @@ bool LambdaLifter::try_capture_identifier(Expr* expr, Symbol* sym, Type** out) {
                 // crossed_ctx_indices is innermost-first, so the
                 // *enclosing* of ctx is at crossed_ctx_indices[i+1].
                 u32 enclosing_ctx_idx = crossed_ctx_indices[i + 1];
-                Type* enclosing_env_type =
-                    m_lambda_contexts[enclosing_ctx_idx]->env_struct_type;
-                Type* enclosing_env_ref = enclosing_env_type
-                    ? m_types.ref_type(enclosing_env_type)
-                    : nullptr;
+                Type* enclosing_env_type = m_lambda_contexts[enclosing_ctx_idx]->env_struct_type;
+                Type* enclosing_env_ref =
+                    enclosing_env_type ? m_types.ref_type(enclosing_env_type) : nullptr;
 
-                Expr* env_id = make_identifier_expr("__env"_sv,
-                                                    enclosing_env_ref, captured_loc);
+                Expr* env_id = make_identifier_expr("__env"_sv, enclosing_env_ref, captured_loc);
                 src = make_get_expr(env_id, captured_name, captured_type, captured_loc);
             }
 
             u32 index = static_cast<u32>(ctx.captures.size());
             CaptureInfo info{captured_name, captured_type, CaptureMode::Copy,
-                             sym, captured_loc, src};
+                             sym,           captured_loc,  src};
             ctx.captures.push_back(info);
             ctx.by_symbol[sym] = index;
         }
@@ -126,12 +122,9 @@ bool LambdaLifter::try_capture_identifier(Expr* expr, Symbol* sym, Type** out) {
     // currently analyzing the body of).
     LambdaCaptureContext& innermost = *m_lambda_contexts[crossed_ctx_indices[0]];
     Type* innermost_env_type = innermost.env_struct_type;
-    Type* innermost_env_ref = innermost_env_type
-        ? m_types.ref_type(innermost_env_type)
-        : nullptr;
+    Type* innermost_env_ref = innermost_env_type ? m_types.ref_type(innermost_env_type) : nullptr;
 
-    Expr* env_id = make_identifier_expr("__env"_sv,
-                                        innermost_env_ref, captured_loc);
+    Expr* env_id = make_identifier_expr("__env"_sv, innermost_env_ref, captured_loc);
 
     expr->kind = AstKind::ExprGet;
     expr->get.object = env_id;
@@ -152,8 +145,10 @@ static StringView alloc_view(BumpAllocator& alloc, const char* str) {
 static StringView alloc_view_fmt(BumpAllocator& alloc, const char* fmt, u32 id) {
     char tmp[64];
     int n = snprintf(tmp, sizeof(tmp), fmt, id);
-    if (n < 0) n = 0;
-    if (n > (int)sizeof(tmp) - 1) n = (int)sizeof(tmp) - 1;
+    if (n < 0)
+        n = 0;
+    if (n > (int)sizeof(tmp) - 1)
+        n = (int)sizeof(tmp) - 1;
     char* buf = reinterpret_cast<char*>(alloc.alloc_bytes(static_cast<u32>(n), 1));
     memcpy(buf, tmp, static_cast<u32>(n));
     return StringView(buf, static_cast<u32>(n));
@@ -187,10 +182,12 @@ Expr* LambdaLifter::make_this_expr(Type* type, SourceLocation loc) {
 }
 
 void LambdaLifter::ensure_self_captured_through(u32 target_idx, Type* struct_type,
-                                                    SourceLocation loc) {
-    if (target_idx >= m_lambda_contexts.size()) return;
+                                                SourceLocation loc) {
+    if (target_idx >= m_lambda_contexts.size())
+        return;
     LambdaCaptureContext& ctx = *m_lambda_contexts[target_idx];
-    if (ctx.has_self_capture) return;
+    if (ctx.has_self_capture)
+        return;
 
     // Recurse outward first: the source for level N depends on level N-1
     // having `__self` available in its env.
@@ -211,9 +208,8 @@ void LambdaLifter::ensure_self_captured_through(u32 target_idx, Type* struct_typ
         // That outer's `__self` field was just populated by the recursive call
         // above (or was already there from a previous capture).
         LambdaCaptureContext& outer = *m_lambda_contexts[target_idx - 1];
-        Type* outer_env_ref = outer.env_struct_type
-            ? m_types.ref_type(outer.env_struct_type)
-            : nullptr;
+        Type* outer_env_ref =
+            outer.env_struct_type ? m_types.ref_type(outer.env_struct_type) : nullptr;
 
         Expr* env_id = make_identifier_expr("__env"_sv, outer_env_ref, loc);
         src = make_get_expr(env_id, "__self"_sv, ref_self, loc);
@@ -222,7 +218,7 @@ void LambdaLifter::ensure_self_captured_through(u32 target_idx, Type* struct_typ
     CaptureInfo info{};
     info.name = "__self"_sv;
     info.type = ref_self;
-    info.mode = CaptureMode::Copy;       // ref pointer copied
+    info.mode = CaptureMode::Copy; // ref pointer copied
     info.source_symbol = nullptr;
     info.loc = loc;
     info.source_expr = src;
@@ -247,11 +243,14 @@ Type* LambdaLifter::analyze_lambda_expr(Expr* expr) {
     Vector<Type*> sig_param_types;
     for (auto& p : le.params) {
         Type* pt = m_context.resolve_type_expr(p.type);
-        if (pt->is_error()) return m_types.error_type();
+        if (pt->is_error())
+            return m_types.error_type();
         sig_param_types.push_back(pt);
     }
-    Type* ret_type = le.return_type ? m_context.resolve_type_expr(le.return_type) : m_types.void_type();
-    if (ret_type->is_error()) return m_types.error_type();
+    Type* ret_type =
+        le.return_type ? m_context.resolve_type_expr(le.return_type) : m_types.void_type();
+    if (ret_type->is_error())
+        return m_types.error_type();
 
     u32 lambda_id = m_lambda_id_counter++;
     StringView env_name = alloc_view_fmt(m_allocator, "__lambda_%u_env", lambda_id);
@@ -275,11 +274,12 @@ Type* LambdaLifter::analyze_lambda_expr(Expr* expr) {
     m_type_env.register_named_type(env_name, env_type);
 
     LambdaCaptureContext context;
-    context.boundary_scope = nullptr;       // set after pushing the Lambda scope
+    context.boundary_scope = nullptr; // set after pushing the Lambda scope
     context.env_struct_type = env_type;
 
     // Phase 1: pre-validate and collect the capture list into `context`.
-    if (!validate_lambda_captures(le, context)) return m_types.error_type();
+    if (!validate_lambda_captures(le, context))
+        return m_types.error_type();
 
     // Phase 2: synthesize the lifted call function and analyze its body.
     Decl* synth_decl = synthesize_lambda_call_fn(expr, le, fun_name, env_name, ret_type, context);
@@ -294,14 +294,14 @@ Type* LambdaLifter::analyze_lambda_expr(Expr* expr) {
         if (cap.mode == CaptureMode::Move) {
             // Moving an out/inout parameter into a closure env transfers the
             // caller's value to the env (which frees it on drop) — a second-class
-            // escape (lifetimes.md "The second-class family"), even when the closure itself does not
-            // escape. Reject it (this move site bypasses consume_noncopyable).
+            // escape (lifetimes.md "The second-class family"), even when the closure itself does
+            // not escape. Reject it (this move site bypasses consume_noncopyable).
             Symbol* cap_sym = m_symbols.lookup(cap.name);
             if (cap_sym && cap_sym->kind == SymbolKind::Parameter && cap_sym->is_out_inout) {
                 m_reporter.error_fmt(expr->loc,
-                          "cannot move an 'out'/'inout' parameter ('{}') into a "
-                          "closure; it borrows the caller's value",
-                          cap.name);
+                                     "cannot move an 'out'/'inout' parameter ('{}') into a "
+                                     "closure; it borrows the caller's value",
+                                     cap.name);
                 continue;
             }
             m_lifetimes.mark_moved(cap_sym);
@@ -335,7 +335,8 @@ bool LambdaLifter::validate_lambda_captures(LambdaExpr& le, LambdaCaptureContext
     // ref-self captures so the inner lambda can read self via the enclosing
     // env's `__self` field at construction time.
     auto self_lambda_method_struct = [this]() -> Type* {
-        if (!m_symbols.is_in_struct()) return nullptr;
+        if (!m_symbols.is_in_struct())
+            return nullptr;
         return m_symbols.current_struct_type();
     };
 
@@ -343,20 +344,23 @@ bool LambdaLifter::validate_lambda_captures(LambdaExpr& le, LambdaCaptureContext
         if (entry.mode == CaptureMode::Move) {
             Symbol* outer_sym = m_symbols.lookup(entry.name);
             if (!outer_sym) {
-                m_reporter.error_fmt(entry.loc, "capture list references unknown variable '{}'", entry.name);
+                m_reporter.error_fmt(entry.loc, "capture list references unknown variable '{}'",
+                                     entry.name);
                 return false;
             }
             if (!outer_sym->type || outer_sym->type->is_copy()) {
                 m_reporter.error_fmt(entry.loc,
-                    "move captures only apply to noncopyable types; '{}' is copyable, capture it implicitly",
-                    entry.name);
+                                     "move captures only apply to noncopyable types; '{}' is "
+                                     "copyable, capture it implicitly",
+                                     entry.name);
                 return false;
             }
             if (context.by_symbol.find(outer_sym) != context.by_symbol.end()) {
                 m_reporter.error_fmt(entry.loc, "duplicate capture entry for '{}'", entry.name);
                 return false;
             }
-            if (!m_lifetimes.check_not_moved(outer_sym, entry.name, entry.loc)) return false;
+            if (!m_lifetimes.check_not_moved(outer_sym, entry.name, entry.loc))
+                return false;
 
             // Walk crossed Lambda boundaries between this lambda and the
             // symbol's defining scope. For each one, propagate a Move-mode
@@ -378,13 +382,11 @@ bool LambdaLifter::validate_lambda_captures(LambdaExpr& le, LambdaCaptureContext
                 if (enclosing_ctx_idx < 0) {
                     return make_identifier_expr(entry.name, outer_sym->type, entry.loc);
                 }
-                LambdaCaptureContext& enclosing_ctx =
-                    *m_lambda_contexts[enclosing_ctx_idx];
+                LambdaCaptureContext& enclosing_ctx = *m_lambda_contexts[enclosing_ctx_idx];
                 Type* enclosing_env_ref = enclosing_ctx.env_struct_type
-                    ? m_types.ref_type(enclosing_ctx.env_struct_type)
-                    : nullptr;
-                Expr* env_id = make_identifier_expr("__env"_sv,
-                                                    enclosing_env_ref, entry.loc);
+                                              ? m_types.ref_type(enclosing_ctx.env_struct_type)
+                                              : nullptr;
+                Expr* env_id = make_identifier_expr("__env"_sv, enclosing_env_ref, entry.loc);
                 return make_get_expr(env_id, entry.name, outer_sym->type, entry.loc);
             };
 
@@ -395,15 +397,15 @@ bool LambdaLifter::validate_lambda_captures(LambdaExpr& le, LambdaCaptureContext
                 LambdaCaptureContext& ctx = *m_lambda_contexts[ctx_idx];
                 if (ctx.by_symbol.find(outer_sym) != ctx.by_symbol.end()) {
                     m_reporter.error_fmt(entry.loc,
-                        "'{}' is already captured implicitly by an enclosing "
-                        "lambda; declare '[move {}]' on it (or refactor) so the "
-                        "ownership chain is consistent", entry.name, entry.name);
+                                         "'{}' is already captured implicitly by an enclosing "
+                                         "lambda; declare '[move {}]' on it (or refactor) so the "
+                                         "ownership chain is consistent",
+                                         entry.name, entry.name);
                     return false;
                 }
                 bool is_outermost = (i == static_cast<i32>(crossed_ctx_indices.size()) - 1);
-                i32 enclosing_idx = is_outermost
-                    ? -1
-                    : static_cast<i32>(crossed_ctx_indices[i + 1]);
+                i32 enclosing_idx =
+                    is_outermost ? -1 : static_cast<i32>(crossed_ctx_indices[i + 1]);
                 Expr* src = build_src_for_level(enclosing_idx);
 
                 u32 index = static_cast<u32>(ctx.captures.size());
@@ -421,9 +423,8 @@ bool LambdaLifter::validate_lambda_captures(LambdaExpr& le, LambdaCaptureContext
             // This (innermost) lambda's own capture entry. Source reads from
             // the immediate enclosing lambda's env (if any), else from the
             // function scope directly.
-            i32 imm_enclosing_idx = crossed_ctx_indices.empty()
-                ? -1
-                : static_cast<i32>(crossed_ctx_indices[0]);
+            i32 imm_enclosing_idx =
+                crossed_ctx_indices.empty() ? -1 : static_cast<i32>(crossed_ctx_indices[0]);
             Expr* src = build_src_for_level(imm_enclosing_idx);
 
             u32 index = static_cast<u32>(context.captures.size());
@@ -441,8 +442,8 @@ bool LambdaLifter::validate_lambda_captures(LambdaExpr& le, LambdaCaptureContext
 
         // [copy self] and [weak self] — both are self-only in this commit.
         if (entry.name != "self"_sv) {
-            m_reporter.error_fmt(entry.loc,
-                "[copy ...] / [weak ...] captures are currently restricted to 'self'");
+            m_reporter.error_fmt(
+                entry.loc, "[copy ...] / [weak ...] captures are currently restricted to 'self'");
             return false;
         }
         if (context.has_self_capture) {
@@ -452,9 +453,8 @@ bool LambdaLifter::validate_lambda_captures(LambdaExpr& le, LambdaCaptureContext
 
         Type* struct_type = self_lambda_method_struct();
         if (!struct_type) {
-            m_reporter.error_fmt(entry.loc,
-                "[{} self] is only valid inside a struct method",
-                entry.mode == CaptureMode::Copy ? "copy" : "weak");
+            m_reporter.error_fmt(entry.loc, "[{} self] is only valid inside a struct method",
+                                 entry.mode == CaptureMode::Copy ? "copy" : "weak");
             return false;
         }
 
@@ -477,9 +477,8 @@ bool LambdaLifter::validate_lambda_captures(LambdaExpr& le, LambdaCaptureContext
                 return make_this_expr(ref_self, loc);
             }
             LambdaCaptureContext& outer = *m_lambda_contexts.back();
-            Type* outer_env_ref = outer.env_struct_type
-                ? m_types.ref_type(outer.env_struct_type)
-                : nullptr;
+            Type* outer_env_ref =
+                outer.env_struct_type ? m_types.ref_type(outer.env_struct_type) : nullptr;
 
             Expr* env_id = make_identifier_expr("__env"_sv, outer_env_ref, loc);
             return make_get_expr(env_id, "__self"_sv, ref_self, loc);
@@ -487,15 +486,16 @@ bool LambdaLifter::validate_lambda_captures(LambdaExpr& le, LambdaCaptureContext
 
         if (entry.mode == CaptureMode::Copy) {
             if (struct_type->noncopyable()) {
-                m_reporter.error_fmt(entry.loc,
+                m_reporter.error_fmt(
+                    entry.loc,
                     "cannot [copy self] of noncopyable struct '{}'; use [weak self] instead",
                     struct_type->struct_info.name);
                 return false;
             }
             if (struct_type->struct_info.when_clauses.size() > 0) {
                 m_reporter.error_fmt(entry.loc,
-                    "[copy self] on tagged-union struct '{}' is not yet supported",
-                    struct_type->struct_info.name);
+                                     "[copy self] on tagged-union struct '{}' is not yet supported",
+                                     struct_type->struct_info.name);
                 return false;
             }
 
@@ -510,8 +510,8 @@ bool LambdaLifter::validate_lambda_captures(LambdaExpr& le, LambdaCaptureContext
             for (u32 i = 0; i < fields.size(); i++) {
                 Expr* self_ref = build_outer_self_ref_source(entry.loc);
 
-                Expr* field_get = make_get_expr(self_ref, fields[i].name,
-                                                fields[i].type, entry.loc);
+                Expr* field_get =
+                    make_get_expr(self_ref, fields[i].name, fields[i].type, entry.loc);
 
                 inits[i].name = fields[i].name;
                 inits[i].value = field_get;
@@ -529,17 +529,17 @@ bool LambdaLifter::validate_lambda_captures(LambdaExpr& le, LambdaCaptureContext
 
             CaptureInfo info{};
             info.name = "__self"_sv;
-            info.type = struct_type;     // value-Self in env
+            info.type = struct_type; // value-Self in env
             info.mode = CaptureMode::Copy;
             info.source_symbol = nullptr;
             info.loc = entry.loc;
             info.source_expr = src;
-            info.needs_heap_check = false;  // dereferences happen via known-heap outer env
+            info.needs_heap_check = false; // dereferences happen via known-heap outer env
 
             context.self_capture_index = static_cast<u32>(context.captures.size());
             context.captures.push_back(info);
             context.has_self_capture = true;
-        } else {  // CaptureMode::Weak
+        } else { // CaptureMode::Weak
             Type* weak_self = m_types.weak_type(struct_type);
             // For nested cases the source comes through outer's __env (a heap ref
             // already), so the receiver-on-heap requirement is satisfied
@@ -570,9 +570,9 @@ bool LambdaLifter::validate_lambda_captures(LambdaExpr& le, LambdaCaptureContext
     return true;
 }
 
-Decl* LambdaLifter::synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le,
-                                                  StringView fun_name, StringView env_name,
-                                                  Type* ret_type, LambdaCaptureContext& context) {
+Decl* LambdaLifter::synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le, StringView fun_name,
+                                              StringView env_name, Type* ret_type,
+                                              LambdaCaptureContext& context) {
     // Signature: fun __lambda_<id>_call(__env: ref __lambda_<id>_env, params...): R
     Decl* synth_decl = m_allocator.emplace<Decl>();
     synth_decl->kind = AstKind::DeclFun;
@@ -645,7 +645,7 @@ Decl* LambdaLifter::synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le,
                 m_reporter.error_fmt(p.loc, "duplicate parameter name '{}'", p.name);
             } else if (is_synthesized_env || m_context.check_no_local_shadowing(p.name, p.loc)) {
                 m_symbols.define_parameter(p.name, ptype, p.loc, i,
-                                       p.modifier != ParamModifier::None);
+                                           p.modifier != ParamModifier::None);
             }
             if (ptype && ptype->noncopyable()) {
                 m_lifetimes.track_live(m_symbols.lookup(p.name));
@@ -664,11 +664,11 @@ Decl* LambdaLifter::synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le,
         }
 
         m_lifetimes.check_scope_exit_uniq_destructors(m_symbols.current_scope(), expr->loc);
-        m_symbols.pop_scope();  // function scope
+        m_symbols.pop_scope(); // function scope
         // context_scope restores the outer per-function context at block end.
     }
     m_lambda_contexts.pop_back();
-    m_symbols.pop_scope();  // lambda boundary scope
+    m_symbols.pop_scope(); // lambda boundary scope
     return synth_decl;
 }
 
@@ -714,7 +714,7 @@ void LambdaLifter::backfill_lambda_env(Type* env_type, const LambdaCaptureContex
     if (any_noncopyable) {
         DestructorInfo* dtor = reinterpret_cast<DestructorInfo*>(
             m_allocator.alloc_bytes(sizeof(DestructorInfo), alignof(DestructorInfo)));
-        dtor->name = StringView();      // empty = default destructor
+        dtor->name = StringView(); // empty = default destructor
         dtor->param_types = Span<Type*>();
         dtor->decl = nullptr;
         env_type->struct_info.destructors = Span<DestructorInfo>(dtor, 1);
@@ -732,7 +732,8 @@ void LambdaLifter::backfill_lambda_env(Type* env_type, const LambdaCaptureContex
 Type* LambdaLifter::try_rewrite_self_capture(Expr* expr, Type* struct_type) {
     // No active lambda context, or the struct scope is reached without
     // crossing a Lambda boundary: `self` is a plain method receiver.
-    if (m_lambda_contexts.empty()) return nullptr;
+    if (m_lambda_contexts.empty())
+        return nullptr;
     if (collect_crossed_lambda_contexts(m_symbols.current_struct_scope()).empty()) {
         return nullptr;
     }
@@ -756,9 +757,8 @@ Type* LambdaLifter::try_rewrite_self_capture(Expr* expr, Type* struct_type) {
     // Rewrite the ExprThis in-place to `__env.__self`. The env field type
     // drives the resulting expr's resolved_type (ref Self for implicit /
     // `[ref]`-equivalent, value Self for [copy], weak Self for [weak]).
-    Type* env_ref = innermost.env_struct_type
-        ? m_types.ref_type(innermost.env_struct_type)
-        : nullptr;
+    Type* env_ref =
+        innermost.env_struct_type ? m_types.ref_type(innermost.env_struct_type) : nullptr;
     Expr* env_id = make_identifier_expr("__env"_sv, env_ref, expr->loc);
 
     expr->kind = AstKind::ExprGet;
@@ -767,4 +767,4 @@ Type* LambdaLifter::try_rewrite_self_capture(Expr* expr, Type* struct_type) {
     return info.type;
 }
 
-}
+} // namespace rx

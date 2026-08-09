@@ -1,19 +1,19 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
+#include "roxy/compiler/driver/module_registry.hpp"
+#include "roxy/compiler/sema/semantic.hpp"
+#include "roxy/compiler/types/symbol_table.hpp"
+#include "roxy/compiler/types/type_env.hpp"
+#include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/string.hpp"
 #include "roxy/core/string_view.hpp"
-#include "roxy/core/vector.hpp"
-#include "roxy/core/bump_allocator.hpp"
-#include "roxy/core/unique_ptr.hpp"
 #include "roxy/core/tsl/robin_map.h"
 #include "roxy/core/tsl/robin_set.h"
-#include "roxy/compiler/types/type_env.hpp"
-#include "roxy/compiler/driver/module_registry.hpp"
-#include "roxy/compiler/types/symbol_table.hpp"
-#include "roxy/compiler/sema/semantic.hpp"
-#include "roxy/lsp/syntax_tree.hpp"
+#include "roxy/core/types.hpp"
+#include "roxy/core/unique_ptr.hpp"
+#include "roxy/core/vector.hpp"
 #include "roxy/lsp/indexer.hpp"
+#include "roxy/lsp/syntax_tree.hpp"
 
 namespace rx {
 
@@ -23,10 +23,10 @@ class CstLowering;
 
 // Result of analyzing a single function body
 struct BodyAnalysisResult {
-    Decl* decl = nullptr;               // The lowered AST declaration
-    SymbolTable* symbols = nullptr;      // Symbol table populated during analysis
-    Vector<SemanticError> errors;         // Any semantic errors found
-    bool success = false;                // true if analysis completed without fatal errors
+    Decl* decl = nullptr;           // The lowered AST declaration
+    SymbolTable* symbols = nullptr; // Symbol table populated during analysis
+    Vector<SemanticError> errors;   // Any semantic errors found
+    bool success = false;           // true if analysis completed without fatal errors
 };
 
 // LspAnalysisContext owns persistent type-system state and provides
@@ -45,15 +45,14 @@ public:
         StringView uri;
         const char* source;
         u32 source_length;
-        SyntaxNode* cst_root;  // Pre-parsed CST root
+        SyntaxNode* cst_root; // Pre-parsed CST root
     };
     void rebuild_declarations(Span<SourceFile> files);
 
     // Analyze a single function body on demand (pass 3 equivalent).
     // The CST node should be a function/method/constructor/destructor.
     // Returns analysis result with resolved types and symbols.
-    BodyAnalysisResult analyze_function_body(SyntaxNode* fn_cst,
-                                             BumpAllocator& ast_allocator);
+    BodyAnalysisResult analyze_function_body(SyntaxNode* fn_cst, BumpAllocator& ast_allocator);
 
     // Access to type system for formatting/lookups
     TypeEnv& type_env() { return *m_type_env; }
@@ -71,14 +70,12 @@ public:
     // Collect all local variable/parameter names and their resolved types from
     // an analyzed function AST. Walks the function body to build a flat map.
     // Includes "self" for method/constructor/destructor decls.
-    void collect_local_variables(Decl* analyzed_decl,
-                                 tsl::robin_map<String, Type*>& out_vars);
+    void collect_local_variables(Decl* analyzed_decl, tsl::robin_map<String, Type*>& out_vars);
 
     // Collect just local variable/parameter names from an analyzed function AST
     // (no type info needed). Used for fast local-variable disambiguation in
     // find-references and rename.
-    static void collect_local_var_names(Decl* analyzed_decl,
-                                        tsl::robin_set<String>& out_names);
+    static void collect_local_var_names(Decl* analyzed_decl, tsl::robin_set<String>& out_names);
 
     // Resolve the type of a CST expression using collected local variables
     // and the type system. Returns nullptr if unresolvable.

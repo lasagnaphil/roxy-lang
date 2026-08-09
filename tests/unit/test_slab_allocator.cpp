@@ -4,11 +4,11 @@
 #include "roxy/vm/object.hpp"
 #include "roxy/vm/vm.hpp"
 
-#include <random>
 #include <algorithm>
 #include <array>
-#include <vector>
 #include <cstring>
+#include <random>
+#include <vector>
 
 using namespace rx;
 
@@ -19,7 +19,8 @@ static u32 calc_slots_per_slab(u32 slot_size) {
     // Slab allocator uses: max(1 page, ceil(slot_size * 64 / page_size) pages)
     u64 min_slab_size = static_cast<u64>(slot_size) * 64;
     u32 page_count = static_cast<u32>((min_slab_size + page_size - 1) / page_size);
-    if (page_count < 1) page_count = 1;
+    if (page_count < 1)
+        page_count = 1;
     u64 slab_size = static_cast<u64>(page_count) * page_size;
     return static_cast<u32>(slab_size / slot_size);
 }
@@ -278,14 +279,14 @@ TEST_SUITE("Slab Allocator") {
             void* ptr;
             u64 generation;
             u32 size;
-            u32 magic;  // Pattern to verify memory integrity
+            u32 magic; // Pattern to verify memory integrity
         };
 
         std::vector<AllocInfo> allocs;
         allocs.reserve(NUM_OBJECTS);
 
         // Phase 1: Allocate many objects with varying sizes
-        std::mt19937 rng(42);  // Fixed seed for reproducibility
+        std::mt19937 rng(42); // Fixed seed for reproducibility
         std::uniform_int_distribution<u32> size_dist(1, 4096);
 
         for (u32 i = 0; i < NUM_OBJECTS; i++) {
@@ -346,8 +347,10 @@ TEST_SUITE("Slab Allocator") {
             bool should_alloc = (action < 60) && (live_allocs.size() < MAX_LIVE);
             bool should_free = (action >= 60) && !live_allocs.empty();
 
-            if (live_allocs.empty()) should_alloc = true;
-            if (live_allocs.size() >= MAX_LIVE) should_free = true;
+            if (live_allocs.empty())
+                should_alloc = true;
+            if (live_allocs.size() >= MAX_LIVE)
+                should_free = true;
 
             if (should_alloc) {
                 AllocInfo info;
@@ -464,7 +467,7 @@ TEST_SUITE("Slab Allocator") {
         // Sort and check for duplicates
         std::sort(generations.begin(), generations.end());
         for (size_t i = 1; i < generations.size(); i++) {
-            CHECK(generations[i] != generations[i-1]);
+            CHECK(generations[i] != generations[i - 1]);
         }
 
         allocator.shutdown();
@@ -512,8 +515,8 @@ TEST_SUITE("Slab Allocator") {
         // alloc_large path. One page plus a byte guarantees at least one full
         // page of padding.
         u32 request_size = static_cast<u32>(page_size + 1);
-        u32 page_count = (request_size + static_cast<u32>(page_size) - 1) /
-                         static_cast<u32>(page_size);
+        u32 page_count =
+            (request_size + static_cast<u32>(page_size) - 1) / static_cast<u32>(page_size);
         u64 alloc_size = static_cast<u64>(page_count) * page_size;
 
         u64 gen;
@@ -721,10 +724,10 @@ TEST_SUITE("Slab Allocator") {
         // pops the most-recently-freed slot (LIFO).
         void* b = object_alloc(&vm, type_id, 16);
         REQUIRE(b != nullptr);
-        CHECK(b == a);  // confirm we actually recycled the slot
+        CHECK(b == a); // confirm we actually recycled the slot
         u64 gen_b = weak_ref_create(b);
         CHECK(gen_b != 0);
-        CHECK(gen_b != gen_a);  // fresh random gen, distinct from old
+        CHECK(gen_b != gen_a); // fresh random gen, distinct from old
 
         // The old weak ref must now reject: slot reads as alive (b's gen)
         // but the gen does not match the cached gen_a.
@@ -819,7 +822,8 @@ TEST_SUITE("Slab Allocator") {
         // owns() should return true.
         for (size_t i = 0; i < all_ptrs.size(); i++) {
             u32 sz = all_sizes[i];
-            if (sz < 16) continue;
+            if (sz < 16)
+                continue;
             void* mid = static_cast<u8*>(all_ptrs[i]) + (sz / 2);
             CHECK(allocator.owns(mid));
         }
@@ -830,7 +834,8 @@ TEST_SUITE("Slab Allocator") {
         // size-class match by luck.
         std::mt19937 rng(0xC0FFEE);
         std::vector<size_t> order(all_ptrs.size());
-        for (size_t i = 0; i < order.size(); i++) order[i] = i;
+        for (size_t i = 0; i < order.size(); i++)
+            order[i] = i;
         std::shuffle(order.begin(), order.end(), rng);
 
         for (size_t i : order) {
@@ -838,9 +843,9 @@ TEST_SUITE("Slab Allocator") {
             // routed to the wrong slab, the slot would be tombstoned in
             // someone else's slab and this would mis-account live_count there.
             CHECK(*static_cast<u8*>(all_ptrs[i]) ==
-                  static_cast<u8>(std::find(std::begin(SIZE_CLASSES),
-                                            std::end(SIZE_CLASSES), all_sizes[i])
-                                  - std::begin(SIZE_CLASSES)));
+                  static_cast<u8>(
+                      std::find(std::begin(SIZE_CLASSES), std::end(SIZE_CLASSES), all_sizes[i]) -
+                      std::begin(SIZE_CLASSES)));
             allocator.free(all_ptrs[i]);
         }
 
@@ -975,9 +980,10 @@ TEST_SUITE("Slab Allocator") {
         REQUIRE(allocator.init());
 
         // Allocate enough objects to COMPLETELY fill at least one slab
-        // Slots per slab varies by platform (page size): 4KB=128 slots, 16KB=512 slots for 32-byte class
+        // Slots per slab varies by platform (page size): 4KB=128 slots, 16KB=512 slots for 32-byte
+        // class
         u32 slots_per_slab = calc_slots_per_slab(32);
-        u32 NUM_OBJECTS = slots_per_slab + 20;  // Fill one slab completely + some extra
+        u32 NUM_OBJECTS = slots_per_slab + 20; // Fill one slab completely + some extra
         struct AllocInfo {
             void* ptr;
             u64 gen;
@@ -1012,7 +1018,7 @@ TEST_SUITE("Slab Allocator") {
         // Allocate enough to fill multiple slabs
         // Slots per slab varies by platform (page size)
         u32 slots_per_slab = calc_slots_per_slab(32);
-        u32 NUM_OBJECTS = slots_per_slab * 2 + 50;  // Fill 2+ slabs
+        u32 NUM_OBJECTS = slots_per_slab * 2 + 50; // Fill 2+ slabs
         struct AllocInfo {
             void* ptr;
             u64 gen;
@@ -1120,7 +1126,7 @@ TEST_SUITE("Slab Allocator") {
         for (u32 i = 0; i < NUM_OBJECTS; i++) {
             u8* bytes = static_cast<u8*>(ptrs[i]);
             for (u32 j = 0; j < 32; j++) {
-                sum += bytes[j];  // Just read the memory to verify it's accessible
+                sum += bytes[j]; // Just read the memory to verify it's accessible
             }
         }
         // The sum will be something - we just want to verify no crash
@@ -1144,7 +1150,7 @@ TEST_SUITE("Slab Allocator") {
         for (u32 c = 0; c < NUM_CLASSES; c++) {
             // Calculate how many objects needed to fill at least one slab for this size class
             u32 slots_per_slab = calc_slots_per_slab(SIZE_CLASSES[c]);
-            u32 objects_to_alloc = slots_per_slab + 20;  // Fill one slab + extra
+            u32 objects_to_alloc = slots_per_slab + 20; // Fill one slab + extra
             allocs[c].resize(objects_to_alloc);
             for (u32 i = 0; i < objects_to_alloc; i++) {
                 allocs[c][i] = allocator.alloc(SIZE_CLASSES[c], &gen);
@@ -1217,7 +1223,8 @@ TEST_SUITE("Slab Allocator") {
                         object_free(&vm, threads[t].objects[idx]);
 
                         // Verify weak ref now invalid
-                        CHECK(!weak_ref_valid(threads[t].objects[idx], threads[t].generations[idx]));
+                        CHECK(
+                            !weak_ref_valid(threads[t].objects[idx], threads[t].generations[idx]));
 
                         // Reallocate
                         threads[t].objects[idx] = object_alloc(&vm, type_id, 32);
@@ -1287,7 +1294,7 @@ TEST_SUITE("Slab Allocator") {
         CHECK(allocator.init());
 
         u64 gen;
-        void* base = allocator.alloc(8192, &gen);  // > 4096 → large object
+        void* base = allocator.alloc(8192, &gen); // > 4096 → large object
         REQUIRE(base != nullptr);
         auto* header = reinterpret_cast<roxy_object_header*>(base);
 
@@ -1321,4 +1328,4 @@ TEST_SUITE("Slab Allocator") {
         CHECK(allocator.resolve_header(base) == nullptr);
     }
 
-}  // TEST_SUITE("Slab Allocator")
+} // TEST_SUITE("Slab Allocator")

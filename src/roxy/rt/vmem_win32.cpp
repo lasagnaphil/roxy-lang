@@ -21,7 +21,7 @@ bool VirtualMemoryOps::decommit(void* addr, u64 size) {
 }
 
 void VirtualMemoryOps::release(void* addr, u64 size) {
-    (void)size;  // Windows ignores size for MEM_RELEASE
+    (void)size; // Windows ignores size for MEM_RELEASE
     VirtualFree(addr, 0, MEM_RELEASE);
 }
 
@@ -39,6 +39,6 @@ u64 VirtualMemoryOps::page_size() {
     return static_cast<u64>(si.dwPageSize);
 }
 
-}
+} // namespace rx
 
 #endif // _WIN32

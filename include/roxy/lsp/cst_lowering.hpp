@@ -1,8 +1,8 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
-#include "roxy/core/bump_allocator.hpp"
 #include "roxy/compiler/parse/ast.hpp"
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/types.hpp"
 #include "roxy/lsp/syntax_tree.hpp"
 
 namespace rx {
@@ -71,7 +71,7 @@ private:
     Span<TypeParam> lower_type_param_list(SyntaxNode* node);
 
     // Helpers
-    template<typename T> T* alloc();
+    template <typename T> T* alloc();
     SyntaxNode* find_child(SyntaxNode* node, SyntaxKind kind);
     SyntaxNode* find_child_after(SyntaxNode* node, SyntaxKind kind, u32 start);
     bool has_child(SyntaxNode* node, SyntaxKind kind);

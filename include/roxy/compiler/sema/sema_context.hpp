@@ -53,12 +53,8 @@ struct SemaContext {
     Type* resolve_type_expr(TypeExpr* type_expr) const {
         return resolve_type_expr_fn(analyzer, type_expr);
     }
-    Type* analyze_expr(Expr* expr) const {
-        return analyze_expr_fn(analyzer, expr);
-    }
-    void analyze_stmt(Stmt* stmt) const {
-        analyze_stmt_fn(analyzer, stmt);
-    }
+    Type* analyze_expr(Expr* expr) const { return analyze_expr_fn(analyzer, expr); }
+    void analyze_stmt(Stmt* stmt) const { analyze_stmt_fn(analyzer, stmt); }
 
     // Local-shadowing ban (C#/Java tier): a local declaration — `var`, catch
     // variable, or lambda parameter — may not reuse a name already bound to a
@@ -71,4 +67,4 @@ struct SemaContext {
     bool check_no_local_shadowing(StringView name, SourceLocation loc) const;
 };
 
-}
+} // namespace rx

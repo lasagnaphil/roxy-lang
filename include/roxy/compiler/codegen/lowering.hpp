@@ -1,9 +1,9 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
-#include "roxy/core/vector.hpp"
 #include "roxy/compiler/ir/ssa_ir.hpp"
 #include "roxy/compiler/types/symbol_table.hpp"
+#include "roxy/core/types.hpp"
+#include "roxy/core/vector.hpp"
 #include "roxy/vm/bytecode.hpp"
 
 #include "roxy/core/tsl/robin_map.h"
@@ -22,14 +22,14 @@ class TypeEnv;
 
 // Liveness data for register allocation
 struct LiveRange {
-    u32 def_point;       // program point where value is defined
-    u32 last_use_point;  // latest program point where value is read
+    u32 def_point;      // program point where value is defined
+    u32 last_use_point; // latest program point where value is read
 };
 
 // Active allocation entry for free-list register allocator
 struct ActiveAlloc {
-    u32 last_use;  // when this value dies
-    u8 reg;        // its allocated register
+    u32 last_use; // when this value dies
+    u8 reg;       // its allocated register
 };
 
 // BytecodeBuilder lowers SSA IR to bytecode
@@ -73,7 +73,7 @@ private:
     u8 allocate_register(ValueId value);
     u8 get_register(ValueId value);
     bool has_register(ValueId value) const;
-    u8 bump_register();  // Allocate next fresh register with bounds check
+    u8 bump_register(); // Allocate next fresh register with bounds check
     // Insert a register into the active set, sorted by last_use (expiry order).
     void insert_active(u8 reg, u32 last_use);
     // Allocate a contiguous multi-register value (weak refs, register-resident
@@ -191,8 +191,8 @@ private:
 
     // Jump patching
     struct JumpPatch {
-        u32 instruction_index;  // Index of instruction to patch
-        BlockId target_block;   // Target block
+        u32 instruction_index; // Index of instruction to patch
+        BlockId target_block;  // Target block
     };
     Vector<JumpPatch> m_jump_patches;
 
@@ -202,7 +202,7 @@ private:
     // transformation that gave the ValueId side tables their win (dbd74a6).
     // See OPTIMIZATION.md §3.3.
     static constexpr u32 NO_OFFSET = 0xFFFFFFFFu;
-    Vector<u32> m_block_offsets;  // BlockId.id -> code offset (NO_OFFSET = unset)
+    Vector<u32> m_block_offsets; // BlockId.id -> code offset (NO_OFFSET = unset)
 
     // Code offset recorded for a block, or NO_OFFSET if the id is out of range
     // (e.g. a one-past-the-last probe) or the block was never emitted.
@@ -220,10 +220,10 @@ private:
     // Nullify positions: tracks where ownership was transferred for each value.
     // Used to narrow cleanup record scopes (Nullify is a compile-time annotation,
     // not a runtime instruction).
-    tsl::robin_map<u32, u32> m_nullify_pcs;  // ValueId.id -> PC where ownership transferred
+    tsl::robin_map<u32, u32> m_nullify_pcs; // ValueId.id -> PC where ownership transferred
     // ValueId.id -> PC of its RefInc. Used to narrow a call-site receiver
-    // borrow's cleanup-record scope_start to the RefInc (lifetimes.md "Counting mechanics" / "Promotion"):
-    // the block-derived start would wrongly cover earlier-in-block argument
+    // borrow's cleanup-record scope_start to the RefInc (lifetimes.md "Counting mechanics" /
+    // "Promotion"): the block-derived start would wrongly cover earlier-in-block argument
     // evaluation, so a throw there would RefDec a not-yet-initialized register.
     tsl::robin_map<u32, u32> m_ref_inc_pcs;
     // ValueId-indexed: the PC just past the instruction that produces each value,
@@ -264,7 +264,8 @@ private:
     // Append the current PC (just past the last emitted instruction) to the
     // value's kill list, if a cleanup record tracks the value.
     void record_cleanup_kill_pc(ValueId value) {
-        if (!value.is_valid()) return;
+        if (!value.is_valid())
+            return;
         auto it = m_cleanup_kill_pcs.find(value.id);
         if (it != m_cleanup_kill_pcs.end()) {
             it.value().push_back(static_cast<u32>(m_current_func->code.size()));
@@ -286,7 +287,8 @@ private:
     // Note a call-argument use of a tracked value; call right after emitting
     // the call instruction words (before return materialization).
     void note_call_use(ValueId value) {
-        if (!value.is_valid()) return;
+        if (!value.is_valid())
+            return;
         if (m_cleanup_kill_pcs.find(value.id) != m_cleanup_kill_pcs.end()) {
             m_call_use_pcs[value.id] = static_cast<u32>(m_current_func->code.size());
         }
@@ -359,11 +361,11 @@ private:
     // as u16 so registers 0..255 all fit alongside the out-of-band NO_REG sentinel.
     static constexpr u16 NO_REG = 0xFFFF;
     Vector<u16> m_value_to_reg;
-    u16 m_next_reg = 0;  // u16 to prevent silent wraparound; capped at 255
+    u16 m_next_reg = 0; // u16 to prevent silent wraparound; capped at 255
 
     // Liveness data (computed per function)
     Vector<LiveRange> m_live_ranges;
-    Vector<bool> m_value_same_block;    // true if value's def and last use are in the same block
+    Vector<bool> m_value_same_block; // true if value's def and last use are in the same block
 
     // Dense ValueId-indexed flag: true if the value has at least one use that
     // requires a register. Built by compute_const_use_modes(). A numeric Const*
@@ -394,7 +396,9 @@ private:
     // semantics), matching the old invariant that a free register appears once.
     u64 m_free_mask[4] = {};
 
-    void free_regs_reset() { m_free_mask[0] = m_free_mask[1] = m_free_mask[2] = m_free_mask[3] = 0; }
+    void free_regs_reset() {
+        m_free_mask[0] = m_free_mask[1] = m_free_mask[2] = m_free_mask[3] = 0;
+    }
     void free_reg_add(u8 r) { m_free_mask[r >> 6] |= (u64(1) << (r & 63)); }
     bool free_regs_empty() const {
         return (m_free_mask[0] | m_free_mask[1] | m_free_mask[2] | m_free_mask[3]) == 0;
@@ -404,11 +408,11 @@ private:
         for (u32 w = 0; w < 4; w++) {
             if (m_free_mask[w] != 0) {
                 u32 bit = static_cast<u32>(std::countr_zero(m_free_mask[w]));
-                m_free_mask[w] &= m_free_mask[w] - 1;  // clear lowest set bit
+                m_free_mask[w] &= m_free_mask[w] - 1; // clear lowest set bit
                 return static_cast<u8>(w * 64 + bit);
             }
         }
-        return 0xFF;  // unreachable when non-empty
+        return 0xFF; // unreachable when non-empty
     }
     void free_reg_clear_range(u8 base, u32 count) {
         for (u32 r = base; r < static_cast<u32>(base) + count; r++) {
@@ -416,16 +420,16 @@ private:
         }
     }
 
-    Vector<ActiveAlloc> m_active;      // sorted by last_use ascending
+    Vector<ActiveAlloc> m_active; // sorted by last_use ascending
 
     // Register spilling state
-    tsl::robin_map<u32, u32> m_spill_slots;   // ValueId.id -> spill stack slot offset
+    tsl::robin_map<u32, u32> m_spill_slots; // ValueId.id -> spill stack slot offset
     // Reverse map register -> ValueId.id, as a fixed 256-entry table (NO_VALUE =
     // register free). Only 256 possible register keys, so an array beats a map.
-    static constexpr u32 NO_VALUE = UINT32_MAX;  // == ValueId::invalid().id
+    static constexpr u32 NO_VALUE = UINT32_MAX; // == ValueId::invalid().id
     u32 m_reg_to_value[256] = {};
     bool m_has_spilling = false;
-    u8 m_scratch_regs[2] = {0xFF, 0xFF};      // two scratch registers for reload/spill
+    u8 m_scratch_regs[2] = {0xFF, 0xFF}; // two scratch registers for reload/spill
 
     u32 m_next_stack_slot = 0;
 
@@ -459,4 +463,4 @@ private:
     const char* m_error = nullptr;
 };
 
-}
+} // namespace rx

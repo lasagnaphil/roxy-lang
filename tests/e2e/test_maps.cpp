@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -230,7 +230,8 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.stdout_output == "2\n10\n20\n");
     }
 
-    TEST_CASE("Map missing key runtime error") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE("Map missing key runtime error") { // VM-only: runtime-trap/abort behavior differs on
+                                                 // C backend (VM-only by nature)
         const char* source = R"(
         fun main(): i32 {
             var m: Map<i32, i32> = Map<i32, i32>();
@@ -274,7 +275,9 @@ TEST_SUITE("E2E Maps") {
     // bytes decoded by get() were whatever the second frame had just written.)
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("Map<string, Struct>: value survives subsequent method call with local struct", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE(
+        "Map<string, Struct>: value survives subsequent method call with local struct", Backend,
+        RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         struct Val { pub a: i32; pub b: i32; pub c: i32; }
         fun make_val(): Val { return Val { a = 43690, b = 48059, c = 52428 }; }
@@ -317,7 +320,8 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.value == 1);
     }
 
-    TEST_CASE_TEMPLATE("Map<string, Struct>: value preserved across List.push to enclosing list", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<string, Struct>: value preserved across List.push to enclosing list",
+                       Backend, RX_E2E_BACKENDS) {
         // Original TODO-report pattern: method A inserts into a nested map,
         // method B pushes to the enclosing list. Struct-valued map entries must
         // stay valid across the list push.
@@ -360,7 +364,8 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.value == 6);
     }
 
-    TEST_CASE_TEMPLATE("Map<i32, Struct>: rehash preserves struct values", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<i32, Struct>: rehash preserves struct values", Backend,
+                       RX_E2E_BACKENDS) {
         // Exercises map_grow + map_insert_internal's Robin Hood swap on
         // variable-sized values. Insert enough entries to trigger at least one
         // grow, then verify every value is intact.
@@ -392,7 +397,8 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.stdout_output == "7350\n");
     }
 
-    TEST_CASE_TEMPLATE("Map<i32, Struct>: remove keeps other entries intact", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<i32, Struct>: remove keeps other entries intact", Backend,
+                       RX_E2E_BACKENDS) {
         // Exercises backward-shift deletion with variable-sized values.
         const char* source = R"ROXY(
         struct Val { pub x: i32; pub y: i32; pub z: i32; }
@@ -523,7 +529,8 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.value == 42);
     }
 
-    TEST_CASE_TEMPLATE("Map<Struct, i32>: custom eq collapses bytewise-different keys", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<Struct, i32>: custom eq collapses bytewise-different keys", Backend,
+                       RX_E2E_BACKENDS) {
         // Custom Vec2.eq treats (a,b) and (b,a) as equal, so the second insert
         // overwrites the first and the map ends up with one entry.
         const char* source = R"ROXY(
@@ -550,7 +557,8 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.stdout_output == "1\n200\n");
     }
 
-    TEST_CASE_TEMPLATE("Map<Struct, i32>: only hash defined, eq falls back to bytewise", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<Struct, i32>: only hash defined, eq falls back to bytewise", Backend,
+                       RX_E2E_BACKENDS) {
         // No user-defined eq → bytewise memcmp. Two distinct-byte keys remain
         // distinct entries even though they collide on hash.
         const char* source = R"ROXY(
@@ -572,7 +580,8 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.stdout_output == "2\n200\n");
     }
 
-    TEST_CASE_TEMPLATE("Map<Struct, i32>: hash method without `for Hash` is NOT dispatched", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<Struct, i32>: hash method without `for Hash` is NOT dispatched",
+                       Backend, RX_E2E_BACKENDS) {
         // Just defining `hash()` on a struct doesn't enable custom dispatch —
         // the struct must explicitly `impl Hash`. Without `for Hash`, the runtime
         // falls back to bytewise hash. This means two structs with different
@@ -631,7 +640,8 @@ TEST_SUITE("E2E Maps") {
     // Map<noncopyable-key, V> and Map<K, struct-value-with-owned-fields>.
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("Map<string, value-struct with destructor>: value cleanup", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<string, value-struct with destructor>: value cleanup", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Item { id: i32; }
         fun delete Item() { print(f"del {self.id}"); }
@@ -648,7 +658,8 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.stdout_output == "del 7\n");
     }
 
-    TEST_CASE_TEMPLATE("Map<string, struct with uniq field>: value field cleanup", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<string, struct with uniq field>: value field cleanup", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Inner { tag: i32; }
         fun delete Inner() { print(f"inner {self.tag}"); }
@@ -666,7 +677,8 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.stdout_output == "inner 30\n");
     }
 
-    TEST_CASE_TEMPLATE("Map<string, value-struct>: all occupied buckets cleaned up", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<string, value-struct>: all occupied buckets cleaned up", Backend,
+                       RX_E2E_BACKENDS) {
         // Order-independent: each destructor prints the same token, so the count of
         // tokens proves every occupied bucket was visited at the right slot base.
         const char* source = R"(
@@ -927,7 +939,7 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.stdout_output == "3,4\n7,8\n");
     }
 
-    TEST_CASE("Map get_or rejects a move-only value type") {  // VM-only: compile-time rejection
+    TEST_CASE("Map get_or rejects a move-only value type") { // VM-only: compile-time rejection
         // A move-only value can't be copied out (and returning the stored one
         // would alias the map's owned storage), so get_or is a compile error.
         const char* source = R"(
@@ -959,7 +971,8 @@ TEST_SUITE("E2E Maps") {
     // the key it already has, and remove must release that one rather than the
     // caller's equal-valued copy.
 
-    TEST_CASE_TEMPLATE("Map<string, V>: a key built per-iteration outlives its scope", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<string, V>: a key built per-iteration outlives its scope", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var m: Map<string, i32> = Map<string, i32>();
@@ -992,7 +1005,8 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.stdout_output == "1 4\n");
     }
 
-    TEST_CASE_TEMPLATE("Map<string, V>: remove and clear release their keys", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<string, V>: remove and clear release their keys", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var m: Map<string, i32> = Map<string, i32>();
@@ -1010,7 +1024,8 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.stdout_output == "3 false true\n0\n");
     }
 
-    TEST_CASE_TEMPLATE("Map<string, V>: keys() hands the list its own counts", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<string, V>: keys() hands the list its own counts", Backend,
+                       RX_E2E_BACKENDS) {
         // The produced List<string> is a second owner and releases on destroy,
         // so it must acquire — otherwise it spends the map's count and the keys
         // die while the list still points at them.
@@ -1040,7 +1055,8 @@ TEST_SUITE("E2E Maps") {
     // Masked until now by the release-at-zero guard in roxy_string_release,
     // which turned the double release into a silent under-count.
 
-    TEST_CASE_TEMPLATE("Map<_, string>: values() owns what it hands back", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<_, string>: values() owns what it hands back", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var m: Map<i32, string> = Map<i32, string>();
@@ -1056,7 +1072,8 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.stdout_output == "v1\n");
     }
 
-    TEST_CASE_TEMPLATE("Map<_, struct>: values() walks the element's members", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<_, struct>: values() walks the element's members", Backend,
+                       RX_E2E_BACKENDS) {
         // A struct value lives INLINE in the bucket, so the retain walk has to
         // address it (`__map_iter_value_ptr_at`) rather than read its leading two
         // slots as a packed value — that accessor is for pointer-shaped values,
@@ -1093,7 +1110,8 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.stdout_output == "v1\n");
     }
 
-    TEST_CASE_TEMPLATE("Map<_, string>: clear() releases counted values", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Map<_, string>: clear() releases counted values", Backend,
+                       RX_E2E_BACKENDS) {
         // `clear` used to gate on move-only-ness, so it discarded a counted value
         // without releasing it — a leak on every clear.
         const char* source = R"(
@@ -1111,4 +1129,4 @@ TEST_SUITE("E2E Maps") {
         CHECK(result.stdout_output == "0\n");
     }
 
-}  // TEST_SUITE("E2E Maps")
+} // TEST_SUITE("E2E Maps")

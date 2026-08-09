@@ -8,121 +8,216 @@ namespace rx {
 
 const char* ir_op_to_string(IROp op) {
     switch (op) {
-        case IROp::ConstNull:   return "const_null";
-        case IROp::ConstBool:   return "const_bool";
-        case IROp::ConstInt:    return "const_int";
-        case IROp::ConstF:      return "const_f";
-        case IROp::ConstD:      return "const_d";
-        case IROp::ConstString: return "const_string";
+        case IROp::ConstNull:
+            return "const_null";
+        case IROp::ConstBool:
+            return "const_bool";
+        case IROp::ConstInt:
+            return "const_int";
+        case IROp::ConstF:
+            return "const_f";
+        case IROp::ConstD:
+            return "const_d";
+        case IROp::ConstString:
+            return "const_string";
 
-        case IROp::AddI: return "add_i";
-        case IROp::SubI: return "sub_i";
-        case IROp::MulI: return "mul_i";
-        case IROp::DivI: return "div_i";
-        case IROp::ModI: return "mod_i";
-        case IROp::DivU: return "div_u";
-        case IROp::ModU: return "mod_u";
-        case IROp::NegI: return "neg_i";
+        case IROp::AddI:
+            return "add_i";
+        case IROp::SubI:
+            return "sub_i";
+        case IROp::MulI:
+            return "mul_i";
+        case IROp::DivI:
+            return "div_i";
+        case IROp::ModI:
+            return "mod_i";
+        case IROp::DivU:
+            return "div_u";
+        case IROp::ModU:
+            return "mod_u";
+        case IROp::NegI:
+            return "neg_i";
 
-        case IROp::AddF: return "add_f";
-        case IROp::SubF: return "sub_f";
-        case IROp::MulF: return "mul_f";
-        case IROp::DivF: return "div_f";
-        case IROp::NegF: return "neg_f";
+        case IROp::AddF:
+            return "add_f";
+        case IROp::SubF:
+            return "sub_f";
+        case IROp::MulF:
+            return "mul_f";
+        case IROp::DivF:
+            return "div_f";
+        case IROp::NegF:
+            return "neg_f";
 
-        case IROp::AddD: return "add_d";
-        case IROp::SubD: return "sub_d";
-        case IROp::MulD: return "mul_d";
-        case IROp::DivD: return "div_d";
-        case IROp::NegD: return "neg_d";
+        case IROp::AddD:
+            return "add_d";
+        case IROp::SubD:
+            return "sub_d";
+        case IROp::MulD:
+            return "mul_d";
+        case IROp::DivD:
+            return "div_d";
+        case IROp::NegD:
+            return "neg_d";
 
-        case IROp::EqI: return "eq_i";
-        case IROp::NeI: return "ne_i";
-        case IROp::LtI: return "lt_i";
-        case IROp::LeI: return "le_i";
-        case IROp::GtI: return "gt_i";
-        case IROp::GeI: return "ge_i";
+        case IROp::EqI:
+            return "eq_i";
+        case IROp::NeI:
+            return "ne_i";
+        case IROp::LtI:
+            return "lt_i";
+        case IROp::LeI:
+            return "le_i";
+        case IROp::GtI:
+            return "gt_i";
+        case IROp::GeI:
+            return "ge_i";
 
-        case IROp::LtU: return "lt_u";
-        case IROp::LeU: return "le_u";
-        case IROp::GtU: return "gt_u";
-        case IROp::GeU: return "ge_u";
+        case IROp::LtU:
+            return "lt_u";
+        case IROp::LeU:
+            return "le_u";
+        case IROp::GtU:
+            return "gt_u";
+        case IROp::GeU:
+            return "ge_u";
 
-        case IROp::EqF: return "eq_f";
-        case IROp::NeF: return "ne_f";
-        case IROp::LtF: return "lt_f";
-        case IROp::LeF: return "le_f";
-        case IROp::GtF: return "gt_f";
-        case IROp::GeF: return "ge_f";
+        case IROp::EqF:
+            return "eq_f";
+        case IROp::NeF:
+            return "ne_f";
+        case IROp::LtF:
+            return "lt_f";
+        case IROp::LeF:
+            return "le_f";
+        case IROp::GtF:
+            return "gt_f";
+        case IROp::GeF:
+            return "ge_f";
 
-        case IROp::EqD: return "eq_d";
-        case IROp::NeD: return "ne_d";
-        case IROp::LtD: return "lt_d";
-        case IROp::LeD: return "le_d";
-        case IROp::GtD: return "gt_d";
-        case IROp::GeD: return "ge_d";
+        case IROp::EqD:
+            return "eq_d";
+        case IROp::NeD:
+            return "ne_d";
+        case IROp::LtD:
+            return "lt_d";
+        case IROp::LeD:
+            return "le_d";
+        case IROp::GtD:
+            return "gt_d";
+        case IROp::GeD:
+            return "ge_d";
 
-        case IROp::Not:    return "not";
-        case IROp::And:    return "and";
-        case IROp::Or:     return "or";
+        case IROp::Not:
+            return "not";
+        case IROp::And:
+            return "and";
+        case IROp::Or:
+            return "or";
 
-        case IROp::BitAnd: return "bit_and";
-        case IROp::BitOr:  return "bit_or";
-        case IROp::BitXor: return "bit_xor";
-        case IROp::BitNot: return "bit_not";
-        case IROp::Shl:    return "shl";
-        case IROp::Shr:    return "shr";
-        case IROp::UShr:   return "ushr";
+        case IROp::BitAnd:
+            return "bit_and";
+        case IROp::BitOr:
+            return "bit_or";
+        case IROp::BitXor:
+            return "bit_xor";
+        case IROp::BitNot:
+            return "bit_not";
+        case IROp::Shl:
+            return "shl";
+        case IROp::Shr:
+            return "shr";
+        case IROp::UShr:
+            return "ushr";
 
-        case IROp::I_TO_F64: return "i_to_f64";
-        case IROp::F64_TO_I: return "f64_to_i";
-        case IROp::I_TO_B:   return "i_to_b";
-        case IROp::B_TO_I:   return "b_to_i";
+        case IROp::I_TO_F64:
+            return "i_to_f64";
+        case IROp::F64_TO_I:
+            return "f64_to_i";
+        case IROp::I_TO_B:
+            return "i_to_b";
+        case IROp::B_TO_I:
+            return "b_to_i";
 
-        case IROp::StackAlloc: return "stack_alloc";
-        case IROp::GlobalAddr: return "global_addr";
-        case IROp::GetField: return "get_field";
-        case IROp::GetFieldAddr: return "get_field_addr";
-        case IROp::SetField: return "set_field";
-        case IROp::RefInc:    return "ref_inc";
-        case IROp::RefDec:    return "ref_dec";
-        case IROp::StrRetain: return "str_retain";
-        case IROp::StrRelease: return "str_release";
-        case IROp::WeakCheck: return "weak_check";
-        case IROp::WeakCreate: return "weak_create";
+        case IROp::StackAlloc:
+            return "stack_alloc";
+        case IROp::GlobalAddr:
+            return "global_addr";
+        case IROp::GetField:
+            return "get_field";
+        case IROp::GetFieldAddr:
+            return "get_field_addr";
+        case IROp::SetField:
+            return "set_field";
+        case IROp::RefInc:
+            return "ref_inc";
+        case IROp::RefDec:
+            return "ref_dec";
+        case IROp::StrRetain:
+            return "str_retain";
+        case IROp::StrRelease:
+            return "str_release";
+        case IROp::WeakCheck:
+            return "weak_check";
+        case IROp::WeakCreate:
+            return "weak_create";
 
-        case IROp::New:    return "new";
-        case IROp::Delete: return "delete";
-        case IROp::Closure: return "closure";
-        case IROp::FuncIndex: return "func_index";
-        case IROp::AssertHeap: return "assert_heap";
+        case IROp::New:
+            return "new";
+        case IROp::Delete:
+            return "delete";
+        case IROp::Closure:
+            return "closure";
+        case IROp::FuncIndex:
+            return "func_index";
+        case IROp::AssertHeap:
+            return "assert_heap";
 
-        case IROp::Call:         return "call";
-        case IROp::CallNative:   return "call_native";
-        case IROp::CallExternal: return "call_external";
-        case IROp::CallIndirect: return "call_indirect";
+        case IROp::Call:
+            return "call";
+        case IROp::CallNative:
+            return "call_native";
+        case IROp::CallExternal:
+            return "call_external";
+        case IROp::CallIndirect:
+            return "call_indirect";
 
-        case IROp::IndexGet:     return "index_get";
-        case IROp::IndexSet:     return "index_set";
-        case IROp::IndexAddr:    return "index_addr";
-        case IROp::IndexTryAddr: return "index_try_addr";
-        case IROp::ContainerPin:   return "container_pin";
-        case IROp::ContainerUnpin: return "container_unpin";
+        case IROp::IndexGet:
+            return "index_get";
+        case IROp::IndexSet:
+            return "index_set";
+        case IROp::IndexAddr:
+            return "index_addr";
+        case IROp::IndexTryAddr:
+            return "index_try_addr";
+        case IROp::ContainerPin:
+            return "container_pin";
+        case IROp::ContainerUnpin:
+            return "container_unpin";
 
-        case IROp::BlockArg: return "block_arg";
-        case IROp::Copy:     return "copy";
+        case IROp::BlockArg:
+            return "block_arg";
+        case IROp::Copy:
+            return "copy";
 
-        case IROp::StructCopy: return "struct_copy";
+        case IROp::StructCopy:
+            return "struct_copy";
 
-        case IROp::LoadPtr:  return "load_ptr";
-        case IROp::StorePtr: return "store_ptr";
+        case IROp::LoadPtr:
+            return "load_ptr";
+        case IROp::StorePtr:
+            return "store_ptr";
 
-        case IROp::Cast:     return "cast";
+        case IROp::Cast:
+            return "cast";
 
-        case IROp::Nullify:  return "nullify";
-        case IROp::Throw:    return "throw";
+        case IROp::Nullify:
+            return "nullify";
+        case IROp::Throw:
+            return "throw";
 
-        case IROp::Yield:    return "yield";
+        case IROp::Yield:
+            return "yield";
     }
     return "unknown";
 }
@@ -146,7 +241,8 @@ static void append_value_id(String& out, ValueId v) {
     }
     StaticString<32> tmp;
     format_to(tmp, "v{}", v.id);
-    for (char c : tmp) out.push_back(c);
+    for (char c : tmp)
+        out.push_back(c);
 }
 
 static void append_block_id(String& out, BlockId b) {
@@ -156,7 +252,8 @@ static void append_block_id(String& out, BlockId b) {
     }
     StaticString<32> tmp;
     format_to(tmp, "b{}", b.id);
-    for (char c : tmp) out.push_back(c);
+    for (char c : tmp)
+        out.push_back(c);
 }
 
 void ir_inst_to_string(const IRInst* inst, String& out) {
@@ -177,21 +274,24 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
         case IROp::ConstInt: {
             StaticString<32> tmp;
             format_to(tmp, " {}", inst->const_data.int_val);
-            for (char c : tmp) out.push_back(c);
+            for (char c : tmp)
+                out.push_back(c);
             break;
         }
 
         case IROp::ConstF: {
             StaticString<32> tmp;
             format_to(tmp, " {}f", inst->const_data.f32_val);
-            for (char c : tmp) out.push_back(c);
+            for (char c : tmp)
+                out.push_back(c);
             break;
         }
 
         case IROp::ConstD: {
             StaticString<32> tmp;
             format_to(tmp, " {}", inst->const_data.f64_val);
-            for (char c : tmp) out.push_back(c);
+            for (char c : tmp)
+                out.push_back(c);
             break;
         }
 
@@ -284,14 +384,16 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
         case IROp::StackAlloc: {
             StaticString<32> tmp;
             format_to(tmp, " {}", inst->stack_alloc.slot_count);
-            for (char c : tmp) out.push_back(c);
+            for (char c : tmp)
+                out.push_back(c);
             break;
         }
 
         case IROp::GlobalAddr: {
             StaticString<32> tmp;
             format_to(tmp, " @{}", inst->global_data.slot_offset);
-            for (char c : tmp) out.push_back(c);
+            for (char c : tmp)
+                out.push_back(c);
             break;
         }
 
@@ -331,7 +433,8 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
             }
             append_str(out, "(");
             for (u32 i = 0; i < inst->new_data.args.size(); i++) {
-                if (i > 0) append_str(out, ", ");
+                if (i > 0)
+                    append_str(out, ", ");
                 append_value_id(out, inst->new_data.args[i]);
             }
             append_str(out, ")");
@@ -345,7 +448,8 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
             }
             append_str(out, "(");
             for (u32 i = 0; i < inst->call.args.size(); i++) {
-                if (i > 0) append_str(out, ", ");
+                if (i > 0)
+                    append_str(out, ", ");
                 append_value_id(out, inst->call.args[i]);
             }
             append_str(out, ")");
@@ -358,7 +462,8 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
             append_string_view(out, inst->call_external.func_name);
             append_str(out, "(");
             for (u32 i = 0; i < inst->call_external.args.size(); i++) {
-                if (i > 0) append_str(out, ", ");
+                if (i > 0)
+                    append_str(out, ", ");
                 append_value_id(out, inst->call_external.args[i]);
             }
             append_str(out, ")");
@@ -369,7 +474,8 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
             append_value_id(out, inst->call_indirect.callee);
             append_str(out, "(");
             for (u32 i = 0; i < inst->call_indirect.args.size(); i++) {
-                if (i > 0) append_str(out, ", ");
+                if (i > 0)
+                    append_str(out, ", ");
                 append_value_id(out, inst->call_indirect.args[i]);
             }
             append_str(out, ")");
@@ -385,8 +491,7 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
                 append_value_id(out, inst->closure.captures[i]);
             }
             append_str(out, ")");
-        }
-            break;
+        } break;
 
         case IROp::FuncIndex:
             append_str(out, " &");
@@ -396,7 +501,8 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
         case IROp::BlockArg: {
             StaticString<32> tmp;
             format_to(tmp, " #{}", inst->block_arg_index);
-            for (char c : tmp) out.push_back(c);
+            for (char c : tmp)
+                out.push_back(c);
             break;
         }
 
@@ -407,8 +513,10 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
             append_value_id(out, inst->struct_copy.source_ptr);
             StaticString<32> tmp;
             format_to(tmp, " ({})", inst->struct_copy.slot_count);
-            for (char c : tmp) out.push_back(c);
-            if (inst->struct_copy.kind == StructCopyKind::Clone) append_str(out, " clone");
+            for (char c : tmp)
+                out.push_back(c);
+            if (inst->struct_copy.kind == StructCopyKind::Clone)
+                append_str(out, " clone");
             break;
         }
 
@@ -417,7 +525,8 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
             append_value_id(out, inst->load_ptr.ptr);
             StaticString<32> tmp;
             format_to(tmp, " ({})", inst->load_ptr.slot_count);
-            for (char c : tmp) out.push_back(c);
+            for (char c : tmp)
+                out.push_back(c);
             break;
         }
 
@@ -428,7 +537,8 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
             append_value_id(out, inst->store_ptr.value);
             StaticString<32> tmp;
             format_to(tmp, " ({})", inst->store_ptr.slot_count);
-            for (char c : tmp) out.push_back(c);
+            for (char c : tmp)
+                out.push_back(c);
             break;
         }
 
@@ -436,7 +546,8 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
         case IROp::IndexAddr:
         case IROp::IndexTryAddr: {
             append_str(out, inst->op == IROp::IndexGet ? " " : " &");
-            if (inst->op == IROp::IndexTryAddr) append_str(out, "try ");
+            if (inst->op == IROp::IndexTryAddr)
+                append_str(out, "try ");
             append_value_id(out, inst->index_data.container);
             append_str(out, "[");
             append_value_id(out, inst->index_data.index);
@@ -466,7 +577,8 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
             if (inst->cast.source_type) {
                 String type_str;
                 type_to_string(inst->cast.source_type, type_str);
-                for (char ch : type_str) out.push_back(ch);
+                for (char ch : type_str)
+                    out.push_back(ch);
             } else {
                 append_str(out, "?");
             }
@@ -474,7 +586,8 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
             if (inst->type) {
                 String type_str;
                 type_to_string(inst->type, type_str);
-                for (char ch : type_str) out.push_back(ch);
+                for (char ch : type_str)
+                    out.push_back(ch);
             } else {
                 append_str(out, "?");
             }
@@ -489,7 +602,8 @@ static void append_jump_target(String& out, const JumpTarget& target) {
     if (target.args.size() > 0) {
         append_str(out, "(");
         for (u32 i = 0; i < target.args.size(); i++) {
-            if (i > 0) append_str(out, ", ");
+            if (i > 0)
+                append_str(out, ", ");
             append_value_id(out, target.args[i].value);
         }
         append_str(out, ")");
@@ -509,7 +623,8 @@ void ir_block_to_string(const IRBlock* block, String& out) {
     if (!block->params.empty()) {
         append_str(out, "(");
         for (u32 i = 0; i < block->params.size(); i++) {
-            if (i > 0) append_str(out, ", ");
+            if (i > 0)
+                append_str(out, ", ");
             append_value_id(out, block->params[i].value);
             if (!block->params[i].name.empty()) {
                 append_str(out, ":");
@@ -572,7 +687,8 @@ void ir_function_to_string(const IRFunction* func, String& out) {
     }
     append_str(out, "(");
     for (u32 i = 0; i < func->params.size(); i++) {
-        if (i > 0) append_str(out, ", ");
+        if (i > 0)
+            append_str(out, ", ");
         append_value_id(out, func->params[i].value);
         if (!func->params[i].name.empty()) {
             append_str(out, ":");
@@ -587,7 +703,8 @@ void ir_function_to_string(const IRFunction* func, String& out) {
         append_str(out, " -> ");
         String type_str;
         type_to_string(func->return_type, type_str);
-        for (char c : type_str) out.push_back(c);
+        for (char c : type_str)
+            out.push_back(c);
     }
     append_str(out, " {\n");
 
@@ -601,14 +718,19 @@ void ir_function_to_string(const IRFunction* func, String& out) {
 
 void IRFunction::reorder_blocks_rpo() {
     u32 num_blocks = blocks.size();
-    if (num_blocks <= 1) return;
+    if (num_blocks <= 1)
+        return;
 
     // --- A. Compute RPO via iterative DFS ---
     Vector<bool> visited;
     visited.reserve(num_blocks);
-    for (u32 i = 0; i < num_blocks; i++) visited.push_back(false);
+    for (u32 i = 0; i < num_blocks; i++)
+        visited.push_back(false);
 
-    struct StackEntry { u32 block_idx; u8 phase; };
+    struct StackEntry {
+        u32 block_idx;
+        u8 phase;
+    };
     Vector<StackEntry> stack;
     stack.push_back({0, 0});
     visited[0] = true;
@@ -637,7 +759,8 @@ void IRFunction::reorder_blocks_rpo() {
         const Terminator& term = block->terminator;
 
         auto push_successor = [&](BlockId target_id) {
-            if (!target_id.is_valid() || target_id.id >= num_blocks) return;
+            if (!target_id.is_valid() || target_id.id >= num_blocks)
+                return;
             if (!visited[target_id.id]) {
                 visited[target_id.id] = true;
                 stack.push_back({target_id.id, 0});
@@ -669,7 +792,8 @@ void IRFunction::reorder_blocks_rpo() {
     // --- B. Build remap table: old_to_new[old_id] = new_rpo_position ---
     Vector<u32> old_to_new;
     old_to_new.reserve(num_blocks);
-    for (u32 i = 0; i < num_blocks; i++) old_to_new.push_back(0);
+    for (u32 i = 0; i < num_blocks; i++)
+        old_to_new.push_back(0);
     for (u32 new_pos = 0; new_pos < new_block_count; new_pos++) {
         old_to_new[rpo_order[new_pos]] = new_pos;
     }
@@ -678,9 +802,13 @@ void IRFunction::reorder_blocks_rpo() {
     if (new_block_count == num_blocks) {
         bool already_rpo = true;
         for (u32 i = 0; i < num_blocks; i++) {
-            if (old_to_new[i] != i) { already_rpo = false; break; }
+            if (old_to_new[i] != i) {
+                already_rpo = false;
+                break;
+            }
         }
-        if (already_rpo) return;
+        if (already_rpo)
+            return;
     }
 
     // --- C. Reorder blocks vector, remove unreachable, and remap BlockId references ---
@@ -728,7 +856,8 @@ void IRFunction::reorder_blocks_rpo() {
         remap(handler.try_entry);
         remap(handler.try_exit);
         remap(handler.handler_block);
-        for (BlockId& bid : handler.try_body_blocks) remap(bid);
+        for (BlockId& bid : handler.try_body_blocks)
+            remap(bid);
     }
 
     // Remap finally handler block IDs
@@ -760,8 +889,8 @@ void IRFunction::reorder_blocks_rpo() {
     // whole-function record already takes for the same reason.
     for (auto& ci : cleanup_info) {
         remap(ci.start_block);
-        bool end_was_dropped = ci.end_block.is_valid() && ci.end_block.id < num_blocks &&
-                               !visited[ci.end_block.id];
+        bool end_was_dropped =
+            ci.end_block.is_valid() && ci.end_block.id < num_blocks && !visited[ci.end_block.id];
         if (end_was_dropped) {
             ci.end_block = BlockId{new_block_count - 1};
             ci.ends_before_block = false;
@@ -787,4 +916,4 @@ void ir_module_to_string(const IRModule* module, String& out) {
     }
 }
 
-}
+} // namespace rx

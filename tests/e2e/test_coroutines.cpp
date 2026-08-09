@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 #include <string>
 
@@ -638,8 +638,8 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output == "99\n100\n");
     }
 
-    TEST_CASE_TEMPLATE("Coroutine destroyed in catch runs the exception's destructor",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Coroutine destroyed in catch runs the exception's destructor", Backend,
+                       RX_E2E_BACKENDS) {
         // The undrained case frees as `uniq MyErr`, not as raw memory, so a
         // user destructor still runs — and runs once. Printing from it is what
         // distinguishes "freed properly" from "freed type-erased", which the
@@ -676,8 +676,8 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output == "7\ndtor\n");
     }
 
-    TEST_CASE_TEMPLATE("Drained coroutine frees a caught exception exactly once",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Drained coroutine frees a caught exception exactly once", Backend,
+                       RX_E2E_BACKENDS) {
         // The other half of the fix: the catch scope frees the exception when
         // the resume path leaves the catch, so `$$delete` must NOT free it
         // again. The resume path clears the state field right after its Delete,
@@ -716,8 +716,8 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output == "7\ndtor\n100\n0\n");
     }
 
-    TEST_CASE_TEMPLATE("Coroutine destroyed in a catch-all frees the exception",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Coroutine destroyed in a catch-all frees the exception", Backend,
+                       RX_E2E_BACKENDS) {
         // A catch-all binds the erased `ExceptionRef`, whose drop plan is None —
         // so the field is freed because the *binding* owns it, not because its
         // type says so. Type-erased, hence no destructor call (the same
@@ -752,8 +752,8 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output == "1\n");
     }
 
-    TEST_CASE_TEMPLATE("Catch param sharing a name with a later local keeps its own field",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Catch param sharing a name with a later local keeps its own field", Backend,
+                       RX_E2E_BACKENDS) {
         // Two `e`s in disjoint scopes at different types. Promoted state fields
         // are keyed by (name, type), so they get a field each and the
         // destructor still knows which one holds the exception — it is reached
@@ -793,8 +793,8 @@ TEST_SUITE("E2E Coroutines") {
     // an i32 and a 4-slot struct. Sharing one field sized for the first meant
     // the struct's stores ran off its end — SIGSEGV on the VM, and a C++ type
     // error in the generated C, which is why this now runs on both backends.
-    TEST_CASE_TEMPLATE("Same-named locals in disjoint scopes get separate state fields",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Same-named locals in disjoint scopes get separate state fields", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Big { a: i32 = 0; b: i32 = 0; c: i32 = 0; d: i32 = 0; }
 
@@ -876,8 +876,8 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.value == 30);
     }
 
-    TEST_CASE_TEMPLATE("Coroutine promoted local read after a loop back-edge",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Coroutine promoted local read after a loop back-edge", Backend,
+                       RX_E2E_BACKENDS) {
         // A promoted local that is assigned once and never reassigned has no
         // block param at its definition, so its uses just named the dominating
         // definition in the entry block. Legal SSA — but lowering grafts resume
@@ -915,8 +915,8 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output == "40\n41\n42\n0\n");
     }
 
-    TEST_CASE_TEMPLATE("Coroutine promoted local, yield nested inside an inner loop",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Coroutine promoted local, yield nested inside an inner loop", Backend,
+                       RX_E2E_BACKENDS) {
         // The header widening is gated on the loop's subtree containing a yield,
         // and that test has to recurse: the yield is in the *inner* loop, but
         // resuming re-enters the outer loop's header too, so the outer header
@@ -961,8 +961,8 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output == "10\n11\n20\n21\n30\n0\n");
     }
 
-    TEST_CASE_TEMPLATE("Coroutine promoted local read across a for-loop back-edge",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Coroutine promoted local read across a for-loop back-edge", Backend,
+                       RX_E2E_BACKENDS) {
         // Same as above through `for`, whose header threads its own params.
         const char* source = R"(
         struct Res { id: i32 = 0; }
@@ -988,8 +988,8 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output == "60\n61\n62\n0\n");
     }
 
-    TEST_CASE_TEMPLATE("Coroutine value-struct local across a loop, run to completion",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Coroutine value-struct local across a loop, run to completion", Backend,
+                       RX_E2E_BACKENDS) {
         // The same shape with an inline value struct, driven to completion. Two
         // things have to agree here: the body's reads resolve against the state
         // field, and the completion path clears the struct's owned members so
@@ -1106,8 +1106,8 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output == "freed\n");
     }
 
-    TEST_CASE_TEMPLATE("Coroutine value-struct local owning a uniq, early drop",
-                       Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Coroutine value-struct local owning a uniq, early drop", Backend,
+                       RX_E2E_BACKENDS) {
         // A *value struct* that owns a resource, promoted across a yield. Since
         // value structs live inline in the state struct, its cleanup is not a
         // pointer-shaped field, and the state destructor's hand-written "uniq |
@@ -1228,7 +1228,8 @@ TEST_SUITE("E2E Coroutines") {
     // List/Map Cleanup in Coroutine Destructors
     // ============================================================================
 
-    TEST_CASE("Coroutine List<uniq T> cleanup on completion") {  // VM-only: C backend: coroutine uniq-field (List/Map) cleanup gap
+    TEST_CASE("Coroutine List<uniq T> cleanup on completion") { // VM-only: C backend: coroutine
+                                                                // uniq-field (List/Map) cleanup gap
         const char* source = R"CODE(
         struct Resource {
             id: i32;
@@ -1269,7 +1270,8 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output == "~Resource(1)\n~Resource(2)\n~Resource(3)\n");
     }
 
-    TEST_CASE("Coroutine List<uniq T> cleanup on early drop") {  // VM-only: C backend: coroutine uniq-field (List/Map) cleanup gap
+    TEST_CASE("Coroutine List<uniq T> cleanup on early drop") { // VM-only: C backend: coroutine
+                                                                // uniq-field (List/Map) cleanup gap
         const char* source = R"CODE(
         struct Resource {
             id: i32;
@@ -1309,7 +1311,9 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output == "~Resource(10)\n~Resource(20)\n");
     }
 
-    TEST_CASE("Coroutine Map<string, uniq T> cleanup on completion") {  // VM-only: C backend: coroutine uniq-field (List/Map) cleanup gap
+    TEST_CASE("Coroutine Map<string, uniq T> cleanup on completion") { // VM-only: C backend:
+                                                                       // coroutine uniq-field
+                                                                       // (List/Map) cleanup gap
         const char* source = R"CODE(
         struct Resource {
             id: i32;
@@ -1352,7 +1356,9 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output.find("~Resource(300)") != std::string::npos);
     }
 
-    TEST_CASE("Coroutine Map<string, uniq T> cleanup on early drop") {  // VM-only: C backend: coroutine uniq-field (List/Map) cleanup gap
+    TEST_CASE("Coroutine Map<string, uniq T> cleanup on early drop") { // VM-only: C backend:
+                                                                       // coroutine uniq-field
+                                                                       // (List/Map) cleanup gap
         const char* source = R"CODE(
         struct Resource {
             id: i32;
@@ -1400,7 +1406,8 @@ TEST_SUITE("E2E Coroutines") {
     // coroutine keeps the owner alive (deleting it early traps), and the count is
     // balanced whether the coro completes or is destroyed mid-iteration.
 
-    TEST_CASE_TEMPLATE("Coroutine ref param: balanced across resume + teardown", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Coroutine ref param: balanced across resume + teardown", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct P { x: i32; }
         fun gen(r: ref P): Coro<i32> {
@@ -1424,7 +1431,14 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.value == 11);
     }
 
-    TEST_CASE("Coroutine ref param: deleting the owner while the coro is live traps") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "Coroutine ref param: deleting the owner while the coro is live traps") { // VM-only:
+                                                                                  // runtime-trap/abort
+                                                                                  // behavior
+                                                                                  // differs on C
+                                                                                  // backend
+                                                                                  // (VM-only by
+                                                                                  // nature)
         // The borrow is acquired at creation, so the owner can't be freed while the
         // coroutine could still observe it — even before the first resume.
         const char* before_resume = R"(
@@ -1482,7 +1496,8 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.value == 3);
     }
 
-    TEST_CASE_TEMPLATE("Coroutine passed to a function (moved, erased param)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Coroutine passed to a function (moved, erased param)", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun gen(): Coro<i32> {
             yield 7;
@@ -1501,7 +1516,8 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.value == 7);
     }
 
-    TEST_CASE_TEMPLATE("Coroutine dynamic dispatch across source functions", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Coroutine dynamic dispatch across source functions", Backend,
+                       RX_E2E_BACKENDS) {
         // sum_two receives Coro<i32> values produced by two DIFFERENT coroutine
         // functions — the resume target cannot be statically bound.
         const char* source = R"(
@@ -1547,7 +1563,8 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.value == 3);
     }
 
-    TEST_CASE_TEMPLATE("Coroutine stored in annotated var, resume + done", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Coroutine stored in annotated var, resume + done", Backend,
+                       RX_E2E_BACKENDS) {
         // A `Coro<i32>` annotation resolves to the interned generic type (empty
         // func_name) — resume/done must still work via dynamic dispatch.
         const char* source = R"(
@@ -1568,7 +1585,8 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.value == 51);
     }
 
-    TEST_CASE_TEMPLATE("Erased coroutine dropped while suspended runs destructor", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Erased coroutine dropped while suspended runs destructor", Backend,
+                       RX_E2E_BACKENDS) {
         // take_first resumes once then drops the coroutine mid-iteration. The
         // erased Coro<i32> must run its state-struct destructor (dispatched by
         // runtime identity, since the concrete type is unknown at the drop site)
@@ -1741,7 +1759,8 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(VMBackend::run(source).success == false);
     }
 
-    TEST_CASE_TEMPLATE("Coroutine method on a uniq receiver drains correctly", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Coroutine method on a uniq receiver drains correctly", Backend,
+                       RX_E2E_BACKENDS) {
         // The heap counterpart of the case above: same shape, sound receiver.
         const char* source = R"(
         struct Counter { start: i32; }
@@ -1848,7 +1867,8 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.value == 62);
     }
 
-    TEST_CASE_TEMPLATE("Coroutine method inherited field and self method call", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Coroutine method inherited field and self method call", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Base { base_val: i32 = 0; }
         fun Base.get_base(): i32 { return self.base_val; }
@@ -1874,7 +1894,8 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.stdout_output == "5\n7\n5\n");
     }
 
-    TEST_CASE_TEMPLATE("Coroutine-returning method that forwards (no yield)", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Coroutine-returning method that forwards (no yield)", Backend,
+                       RX_E2E_BACKENDS) {
         // A non-yielding Coro<T>-returning method is an ordinary method that
         // returns a first-class coroutine value. Also confirms build_method uses
         // the MethodInfo return type (resolve_return_type would give `void`).
@@ -1984,7 +2005,8 @@ TEST_SUITE("E2E Coroutines") {
         // container cleanup at scope exit. run_and_capture asserts zero leaks.
     }
 
-    TEST_CASE_TEMPLATE("a Coro<T> element is borrowed, not moved, by indexing", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("a Coro<T> element is borrowed, not moved, by indexing", Backend,
+                       RX_E2E_BACKENDS) {
         // `Coro<T>` is one of the kinds where the `borrowed` modifier is the
         // identity, so the move-out is caught by the move checker rather than by
         // the type system. `pop()` is the sanctioned way to take ownership.
@@ -2046,7 +2068,7 @@ TEST_SUITE("E2E Coroutines") {
 
         BumpAllocator allocator(65536);
         BCModule* module = compile(allocator, source);
-        CHECK(module == nullptr);  // Should fail to compile
+        CHECK(module == nullptr); // Should fail to compile
     }
 
-}  // TEST_SUITE("E2E Coroutines")
+} // TEST_SUITE("E2E Coroutines")

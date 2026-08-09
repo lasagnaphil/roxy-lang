@@ -1,16 +1,16 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
+#include "roxy/compiler/types/symbol_table.hpp"
+#include "roxy/compiler/types/types.hpp"
+#include "roxy/core/bump_allocator.hpp"
 #include "roxy/core/span.hpp"
 #include "roxy/core/string_view.hpp"
+#include "roxy/core/types.hpp"
 #include "roxy/core/vector.hpp"
-#include "roxy/core/bump_allocator.hpp"
-#include "roxy/compiler/types/types.hpp"
-#include "roxy/compiler/types/symbol_table.hpp"
-#include "roxy/vm/bytecode.hpp"
-#include "roxy/vm/binding/type_traits.hpp"
-#include "roxy/vm/binding/function_traits.hpp"
 #include "roxy/vm/binding/binder.hpp"
+#include "roxy/vm/binding/function_traits.hpp"
+#include "roxy/vm/binding/type_traits.hpp"
+#include "roxy/vm/bytecode.hpp"
 
 #include "roxy/core/tsl/robin_map.h"
 
@@ -24,13 +24,22 @@ namespace rx {
 class TypeEnv;
 struct TypeExpr;
 
-// Type kind enum for deferred type creation (used by NativeFieldEntry for struct field registration)
+// Type kind enum for deferred type creation (used by NativeFieldEntry for struct field
+// registration)
 enum class NativeTypeKind : u8 {
-    Void, Bool,
-    I8, I16, I32, I64,
-    U8, U16, U32, U64,
-    F32, F64,
-    String,    // string
+    Void,
+    Bool,
+    I8,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    U64,
+    F32,
+    F64,
+    String, // string
 };
 
 // What kind of method entry this is
@@ -58,13 +67,13 @@ using TypeResolverFn = Type* (*)(TypeCache&);
 
 // How a native function's parameter/return types are described
 enum class NativeTypeInfoMode : u8 {
-    Resolver,   // TypeResolverFn deferred resolution — bind<>, bind_method<>
-    Parsed,     // TypeExpr AST from string signature — bind_native(func, sig), bind_method(func, sig)
+    Resolver, // TypeResolverFn deferred resolution — bind<>, bind_method<>
+    Parsed,   // TypeExpr AST from string signature — bind_native(func, sig), bind_method(func, sig)
 };
 
 // Entry for a registered native function (unified for both concrete and generic types)
 struct NativeFunctionEntry {
-    StringView name;                           // Mangled name for methods (e.g., "Point$$sum")
+    StringView name; // Mangled name for methods (e.g., "Point$$sum")
     // C++ symbol name the AOT C backend emits at call sites and declares
     // via `extern` in generated source. Defaults to the same StringView as
     // `name`; callers can override via the 2-string `bind<>` overload (e.g.
@@ -84,14 +93,14 @@ struct NativeFunctionEntry {
     Vector<TypeResolverFn> param_resolvers;
     TypeResolverFn return_resolver = nullptr;
     // Type info path: Parsed (TypeExpr AST from string signature)
-    Span<TypeExpr*> param_type_exprs;          // TypeExpr for each parameter
-    TypeExpr* return_type_expr = nullptr;      // TypeExpr for return type (nullptr = void)
+    Span<TypeExpr*> param_type_exprs;     // TypeExpr for each parameter
+    TypeExpr* return_type_expr = nullptr; // TypeExpr for return type (nullptr = void)
     u32 param_count;
-    u32 min_args;                              // = param_count normally; < param_count for optional params
-    bool is_method;                            // True if this is a struct method
-    GenericMethodKind method_kind;             // Method/Constructor/Destructor
-    StringView struct_name;                    // Non-empty for methods
-    StringView method_name;                    // Original unmangled method name
+    u32 min_args;                  // = param_count normally; < param_count for optional params
+    bool is_method;                // True if this is a struct method
+    GenericMethodKind method_kind; // Method/Constructor/Destructor
+    StringView struct_name;        // Non-empty for methods
+    StringView method_name;        // Original unmangled method name
 
     // Resolve parameter/return types using the given TypeCache (for Resolver mode).
     Type* resolve_return_type(TypeCache& types) const;
@@ -100,18 +109,18 @@ struct NativeFunctionEntry {
 
 // Resolved constructor info (returned by instantiate_generic_constructor)
 struct ResolvedConstructor {
-    StringView native_name;        // "List$$new"
-    Span<Type*> param_types;       // concrete types, excluding self
+    StringView native_name;  // "List$$new"
+    Span<Type*> param_types; // concrete types, excluding self
     u32 min_args;
 };
 
 // A registered generic native type (e.g., List<T>)
 struct NativeGenericTypeEntry {
-    StringView name;                               // "List"
-    u32 type_param_count;                          // 1
-    Vector<StringView> type_param_names;           // ["T"] for List, ["K", "V"] for Map
-    StringView alloc_native_name;                  // "list_alloc" (non-method allocator)
-    StringView copy_native_name;                   // "list_copy" (copy constructor for value params)
+    StringView name;                     // "List"
+    u32 type_param_count;                // 1
+    Vector<StringView> type_param_names; // ["T"] for List, ["K", "V"] for Map
+    StringView alloc_native_name;        // "list_alloc" (non-method allocator)
+    StringView copy_native_name;         // "list_copy" (copy constructor for value params)
 };
 
 // NativeRegistry provides unified registration for native functions
@@ -119,9 +128,7 @@ struct NativeGenericTypeEntry {
 class NativeRegistry {
 public:
     explicit NativeRegistry(BumpAllocator& allocator, TypeCache& types)
-        : m_allocator(allocator)
-        , m_types(types)
-    {}
+        : m_allocator(allocator), m_types(types) {}
 
     // Register a C++ function with automatic wrapper generation.
     // The bound C++ function takes its logical arguments only — no
@@ -129,12 +136,8 @@ public:
     // `roxy_get_ctx()` directly.
     // Usage: registry.bind<my_function>("my_function")
     //        registry.bind<my_function>("roxy_name", "cpp_symbol")  // 2-arg form
-    template<auto FnPtr>
-    void bind(const char* name) {
-        bind<FnPtr>(name, name);
-    }
-    template<auto FnPtr>
-    void bind(const char* name, const char* aot_symbol_name) {
+    template <auto FnPtr> void bind(const char* name) { bind<FnPtr>(name, name); }
+    template <auto FnPtr> void bind(const char* name, const char* aot_symbol_name) {
         using Traits = FunctionPointerTraits<FnPtr>;
 
         NativeFunctionEntry entry;
@@ -165,8 +168,7 @@ public:
     // Usage: registry.bind_native(func, "fun print(s: string)")
     //        registry.bind_native(func, "fun add(a: i32, b: i32): i32", "engine_add")
     void bind_native(NativeFunction func, const char* signature);
-    void bind_native(NativeFunction func, const char* signature,
-                     const char* aot_symbol_name);
+    void bind_native(NativeFunction func, const char* signature, const char* aot_symbol_name);
 
     // Register a native function with a name override (for $$-mangled names).
     // Usage: registry.bind_native("bool$$to_string", func, "fun to_string(val: bool): string")
@@ -190,16 +192,14 @@ public:
     // by the method's logical arguments. No `RoxyVM*` prefix.
     // Usage: registry.bind_method<point_sum>("Point", "sum")
     //        registry.bind_method<point_sum>("Point", "sum", "cpp_symbol")  // 3-arg
-    template<auto FnPtr>
-    void bind_method(const char* struct_name, const char* method_name) {
+    template <auto FnPtr> void bind_method(const char* struct_name, const char* method_name) {
         bind_method<FnPtr>(struct_name, method_name, /*aot_symbol_name=*/nullptr);
     }
-    template<auto FnPtr>
+    template <auto FnPtr>
     void bind_method(const char* struct_name, const char* method_name,
                      const char* aot_symbol_name) {
         using Traits = FunctionPointerTraits<FnPtr>;
-        static_assert(Traits::arity >= 1,
-                      "Method must have a self pointer as its first parameter");
+        static_assert(Traits::arity >= 1, "Method must have a self pointer as its first parameter");
 
         NativeFunctionEntry entry;
         entry.struct_name = make_string_view(struct_name);
@@ -209,10 +209,9 @@ public:
         // which the C emitter then mangles to "Point__sum". Callers can
         // override to a different C++ symbol (e.g. a free function in their
         // engine namespace).
-        entry.aot_symbol_name = aot_symbol_name
-            ? make_string_view(aot_symbol_name) : entry.name;
+        entry.aot_symbol_name = aot_symbol_name ? make_string_view(aot_symbol_name) : entry.name;
         entry.func = FunctionBinder<FnPtr>::get();
-        entry.param_count = Traits::arity - 1;  // Exclude self
+        entry.param_count = Traits::arity - 1; // Exclude self
         entry.min_args = entry.param_count;
         entry.type_info_mode = NativeTypeInfoMode::Resolver;
         entry.is_method = true;
@@ -238,15 +237,14 @@ public:
 
     // Register a generic native type from a type declaration string.
     // Usage: registry.register_generic_type("List<T>", "list_alloc", func)
-    void register_generic_type(const char* type_decl,
-                               const char* alloc_name, NativeFunction alloc_func);
+    void register_generic_type(const char* type_decl, const char* alloc_name,
+                               NativeFunction alloc_func);
 
     // Bind a destructor on a generic native type (receives self as first arg, no other params)
     void bind_generic_destructor(const char* type_name, NativeFunction func);
 
     // Bind a copy constructor on a generic native type (for deep-copy on value parameter passing)
-    void bind_generic_copy_constructor(const char* type_name,
-                                       const char* copy_func_name,
+    void bind_generic_copy_constructor(const char* type_name, const char* copy_func_name,
                                        NativeFunction func);
 
     bool has_generic_type(StringView name) const;
@@ -256,12 +254,12 @@ public:
 
     // Returns only kind==Method entries as Span<MethodInfo>
     Span<MethodInfo> instantiate_generic_methods(StringView name, Span<Type*> type_args,
-                                                  BumpAllocator& allocator, TypeCache& types) const;
+                                                 BumpAllocator& allocator, TypeCache& types) const;
 
     // Returns ResolvedConstructor (empty native_name if none registered)
     ResolvedConstructor instantiate_generic_constructor(StringView name, Span<Type*> type_args,
-                                                         BumpAllocator& allocator,
-                                                         TypeCache& types) const;
+                                                        BumpAllocator& allocator,
+                                                        TypeCache& types) const;
 
     // Create struct types from registered native structs and add to TypeEnv/SymbolTable
     void apply_structs_to_types(TypeEnv& type_env, BumpAllocator& allocator, SymbolTable& symbols);
@@ -308,9 +306,8 @@ private:
     // Mangle method name: "StructName$$method_name"
     StringView mangle_method_name(StringView struct_name, StringView method_name) {
         char buf[256];
-        snprintf(buf, sizeof(buf), "%.*s$$%.*s",
-                 static_cast<int>(struct_name.size()), struct_name.data(),
-                 static_cast<int>(method_name.size()), method_name.data());
+        snprintf(buf, sizeof(buf), "%.*s$$%.*s", static_cast<int>(struct_name.size()),
+                 struct_name.data(), static_cast<int>(method_name.size()), method_name.data());
         u32 len = static_cast<u32>(strlen(buf));
         char* ptr = reinterpret_cast<char*>(m_allocator.alloc_bytes(len + 1, 1));
         memcpy(ptr, buf, len + 1);
@@ -319,7 +316,7 @@ private:
 
     // Extract param resolvers for every element of the args tuple. Used by
     // `bind<>` since natives no longer prepend `RoxyVM*`.
-    template<typename Tuple, std::size_t... Is>
+    template <typename Tuple, std::size_t... Is>
     static Vector<TypeResolverFn> get_param_resolvers_all(std::index_sequence<Is...>) {
         Vector<TypeResolverFn> resolvers;
         (resolvers.push_back(&RoxyType<std::tuple_element_t<Is, Tuple>>::get), ...);
@@ -328,7 +325,7 @@ private:
 
     // Extract param resolvers, skipping the first element (self pointer).
     // Used by `bind_method<>`.
-    template<typename Tuple, std::size_t... Is>
+    template <typename Tuple, std::size_t... Is>
     static Vector<TypeResolverFn> get_param_resolvers_skip_first(std::index_sequence<Is...>) {
         Vector<TypeResolverFn> resolvers;
         (resolvers.push_back(&RoxyType<std::tuple_element_t<Is + 1, Tuple>>::get), ...);
@@ -346,12 +343,10 @@ private:
     // Resolve a TypeExpr to a Type*, substituting type param names with concrete type_args.
     // Also called from NativeFunctionEntry methods, so declared as a public static.
 public:
-    static Type* resolve_type_expr(TypeExpr* expr,
-                                   Span<StringView> type_param_names,
-                                   Span<Type*> type_args,
-                                   TypeCache& types);
-private:
+    static Type* resolve_type_expr(TypeExpr* expr, Span<StringView> type_param_names,
+                                   Span<Type*> type_args, TypeCache& types);
 
+private:
     BumpAllocator& m_allocator;
     TypeCache& m_types;
     Vector<NativeFunctionEntry> m_function_entries;
@@ -360,4 +355,4 @@ private:
     tsl::robin_map<StringView, NativeGenericTypeEntry> m_generic_types;
 };
 
-}
+} // namespace rx

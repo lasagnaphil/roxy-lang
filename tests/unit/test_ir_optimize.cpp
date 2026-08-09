@@ -1,17 +1,17 @@
 #include "roxy/core/doctest/doctest.h"
 
-#include "roxy/core/bump_allocator.hpp"
-#include "roxy/core/string.hpp"
-#include "roxy/shared/lexer.hpp"
+#include "roxy/compiler/driver/module_registry.hpp"
+#include "roxy/compiler/ir/ir_builder.hpp"
+#include "roxy/compiler/ir/ir_optimize.hpp"
+#include "roxy/compiler/ir/ssa_ir.hpp"
 #include "roxy/compiler/parse/parser.hpp"
 #include "roxy/compiler/sema/semantic.hpp"
 #include "roxy/compiler/types/type_env.hpp"
-#include "roxy/compiler/ir/ssa_ir.hpp"
-#include "roxy/compiler/ir/ir_builder.hpp"
-#include "roxy/compiler/ir/ir_optimize.hpp"
-#include "roxy/compiler/driver/module_registry.hpp"
-#include "roxy/vm/natives.hpp"
+#include "roxy/core/bump_allocator.hpp"
+#include "roxy/core/string.hpp"
+#include "roxy/shared/lexer.hpp"
 #include "roxy/vm/binding/registry.hpp"
+#include "roxy/vm/natives.hpp"
 
 using namespace rx;
 
@@ -21,7 +21,8 @@ namespace {
 // tests see the same IR shape that IRBuilder produces in production.
 IRModule* build_ir(BumpAllocator& allocator, const char* source) {
     u32 len = 0;
-    while (source[len]) len++;
+    while (source[len])
+        len++;
 
     TypeEnv type_env(allocator);
     NativeRegistry registry(allocator, type_env.types());
@@ -30,13 +31,15 @@ IRModule* build_ir(BumpAllocator& allocator, const char* source) {
     Lexer lexer(source, len);
     Parser parser(lexer, allocator);
     Program* program = parser.parse();
-    if (!program || parser.has_error()) return nullptr;
+    if (!program || parser.has_error())
+        return nullptr;
 
     ModuleRegistry modules(allocator);
     modules.register_native_module(BUILTIN_MODULE_NAME, &registry, type_env.types());
 
     SemanticAnalyzer analyzer(allocator, type_env, modules);
-    if (!analyzer.analyze(program)) return nullptr;
+    if (!analyzer.analyze(program))
+        return nullptr;
 
     IRBuilder builder(allocator, type_env, registry, analyzer.symbols(), modules);
     return builder.build(program);
@@ -44,7 +47,8 @@ IRModule* build_ir(BumpAllocator& allocator, const char* source) {
 
 IRModule* build_and_optimize(BumpAllocator& allocator, const char* source) {
     IRModule* module = build_ir(allocator, source);
-    if (!module) return nullptr;
+    if (!module)
+        return nullptr;
     optimize_module(module, allocator);
     return module;
 }
@@ -53,7 +57,8 @@ int count_op(IRFunction* func, IROp op) {
     int n = 0;
     for (IRBlock* block : func->blocks) {
         for (IRInst* inst : block->instructions) {
-            if (inst->op == op) n++;
+            if (inst->op == op)
+                n++;
         }
     }
     return n;
@@ -61,12 +66,13 @@ int count_op(IRFunction* func, IROp op) {
 
 IRFunction* find_function(IRModule* module, const char* name) {
     for (IRFunction* func : module->functions) {
-        if (func->name == name) return func;
+        if (func->name == name)
+            return func;
     }
     return nullptr;
 }
 
-}  // namespace
+} // namespace
 
 TEST_SUITE("IR Optimize") {
 
@@ -249,7 +255,8 @@ TEST_SUITE("IR Optimize") {
             return x;
         }
     )";
-        IRModule* module = build_ir(allocator, source);  // do NOT optimize — we test the analysis primitive
+        IRModule* module =
+            build_ir(allocator, source); // do NOT optimize — we test the analysis primitive
         REQUIRE(module != nullptr);
         IRFunction* func = find_function(module, "branchy");
         REQUIRE(func != nullptr);
@@ -282,7 +289,7 @@ TEST_SUITE("IR Optimize") {
         bool first_copy = run_copy_propagation(func);
         bool first_dce = run_dce(func);
         (void)first_copy;
-        CHECK(first_dce);  // dead AddI was removed
+        CHECK(first_dce); // dead AddI was removed
 
         // Second run: must be a no-op (fixed point).
         CHECK_FALSE(run_copy_propagation(func));
@@ -298,12 +305,13 @@ TEST_SUITE("IR Optimize") {
     int count_terminator(IRFunction* func, TerminatorKind kind) {
         int n = 0;
         for (IRBlock* block : func->blocks) {
-            if (block->terminator.kind == kind) n++;
+            if (block->terminator.kind == kind)
+                n++;
         }
         return n;
     }
 
-    }  // namespace
+    } // namespace
 
     TEST_CASE("branch folding: if(true) keeps then arm") {
         BumpAllocator allocator(4096);
@@ -328,8 +336,10 @@ TEST_SUITE("IR Optimize") {
         for (IRBlock* block : func->blocks) {
             for (IRInst* inst : block->instructions) {
                 if (inst->op == IROp::ConstInt) {
-                    if (inst->const_data.int_val == 1) found_one = true;
-                    if (inst->const_data.int_val == 2) found_two = true;
+                    if (inst->const_data.int_val == 1)
+                        found_one = true;
+                    if (inst->const_data.int_val == 2)
+                        found_two = true;
                 }
             }
         }
@@ -358,8 +368,10 @@ TEST_SUITE("IR Optimize") {
         for (IRBlock* block : func->blocks) {
             for (IRInst* inst : block->instructions) {
                 if (inst->op == IROp::ConstInt) {
-                    if (inst->const_data.int_val == 1) found_one = true;
-                    if (inst->const_data.int_val == 2) found_two = true;
+                    if (inst->const_data.int_val == 1)
+                        found_one = true;
+                    if (inst->const_data.int_val == 2)
+                        found_two = true;
                 }
             }
         }
@@ -437,8 +449,11 @@ TEST_SUITE("IR Optimize") {
         // `params` typically has function args. The join block, originally
         // with one param, should now have zero.
         bool any_join_param = false;
-        for (u32 i = 1; i < func->blocks.size(); i++) {  // skip entry
-            if (func->blocks[i]->params.size() > 0) { any_join_param = true; break; }
+        for (u32 i = 1; i < func->blocks.size(); i++) { // skip entry
+            if (func->blocks[i]->params.size() > 0) {
+                any_join_param = true;
+                break;
+            }
         }
         CHECK_FALSE(any_join_param);
     }
@@ -468,7 +483,7 @@ TEST_SUITE("IR Optimize") {
         for (u32 i = 1; i < func->blocks.size(); i++) {
             total_non_entry_params += static_cast<u32>(func->blocks[i]->params.size());
         }
-        CHECK(total_non_entry_params >= 2);  // at least i and s survive
+        CHECK(total_non_entry_params >= 2); // at least i and s survive
     }
 
     TEST_CASE("Phase 3 driver is idempotent") {
@@ -700,4 +715,4 @@ TEST_SUITE("IR Optimize") {
         }
     }
 
-}  // TEST_SUITE("IR Optimize")
+} // TEST_SUITE("IR Optimize")

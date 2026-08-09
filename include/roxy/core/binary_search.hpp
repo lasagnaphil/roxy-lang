@@ -4,10 +4,10 @@
 
 namespace rx {
 
-// Optimized branchless binary search from https://en.algorithmica.org/hpc/data-structures/binary-search/.
+// Optimized branchless binary search from
+// https://en.algorithmica.org/hpc/data-structures/binary-search/.
 
-template <typename T, typename Index>
-Index binary_search(const T* arr, Index n, T x) {
+template <typename T, typename Index> Index binary_search(const T* arr, Index n, T x) {
     const T* base = arr;
     Index len = n;
     while (len > 1) {
@@ -22,4 +22,4 @@ Index binary_search(const T* arr, Index n, T x) {
     return base - arr;
 }
 
-}
+} // namespace rx

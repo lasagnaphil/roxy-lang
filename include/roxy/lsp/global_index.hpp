@@ -1,11 +1,11 @@
 #pragma once
 
-#include "roxy/core/types.hpp"
 #include "roxy/core/string.hpp"
-#include "roxy/core/vector.hpp"
 #include "roxy/core/tsl/robin_map.h"
-#include "roxy/lsp/syntax_tree.hpp"
+#include "roxy/core/types.hpp"
+#include "roxy/core/vector.hpp"
 #include "roxy/lsp/indexer.hpp"
+#include "roxy/lsp/syntax_tree.hpp"
 
 namespace rx {
 
@@ -30,7 +30,8 @@ public:
 
     // Qualified lookups — key = "StructName.memberName"
     const SymbolLocation* find_method(StringView struct_name, StringView method_name) const;
-    const SymbolLocation* find_constructor(StringView struct_name, StringView constructor_name) const;
+    const SymbolLocation* find_constructor(StringView struct_name,
+                                           StringView constructor_name) const;
     const SymbolLocation* find_field(StringView struct_name, StringView field_name) const;
 
     // Search all categories for a name, return all matches
@@ -64,27 +65,27 @@ public:
     bool field_has_default(StringView struct_name, StringView field_name) const;
 
     // Iterate all names in a category (for bare identifier / type completions)
-    template<typename Callback> void for_each_struct(Callback&& cb) const {
+    template <typename Callback> void for_each_struct(Callback&& cb) const {
         for (auto it = m_structs.begin(); it != m_structs.end(); ++it) {
             cb(it->first);
         }
     }
-    template<typename Callback> void for_each_enum(Callback&& cb) const {
+    template <typename Callback> void for_each_enum(Callback&& cb) const {
         for (auto it = m_enums.begin(); it != m_enums.end(); ++it) {
             cb(it->first);
         }
     }
-    template<typename Callback> void for_each_function(Callback&& cb) const {
+    template <typename Callback> void for_each_function(Callback&& cb) const {
         for (auto it = m_functions.begin(); it != m_functions.end(); ++it) {
             cb(it->first);
         }
     }
-    template<typename Callback> void for_each_trait(Callback&& cb) const {
+    template <typename Callback> void for_each_trait(Callback&& cb) const {
         for (auto it = m_traits.begin(); it != m_traits.end(); ++it) {
             cb(it->first);
         }
     }
-    template<typename Callback> void for_each_global(Callback&& cb) const {
+    template <typename Callback> void for_each_global(Callback&& cb) const {
         for (auto it = m_globals.begin(); it != m_globals.end(); ++it) {
             cb(it->first);
         }
@@ -97,33 +98,34 @@ private:
     tsl::robin_map<String, SymbolLocation> m_functions;
     tsl::robin_map<String, SymbolLocation> m_traits;
     tsl::robin_map<String, SymbolLocation> m_globals;
-    tsl::robin_map<String, SymbolLocation> m_methods;       // "Struct.method"
-    tsl::robin_map<String, SymbolLocation> m_constructors;  // "Struct.ctor_name"
-    tsl::robin_map<String, SymbolLocation> m_fields;        // "Struct.field"
+    tsl::robin_map<String, SymbolLocation> m_methods;      // "Struct.method"
+    tsl::robin_map<String, SymbolLocation> m_constructors; // "Struct.ctor_name"
+    tsl::robin_map<String, SymbolLocation> m_fields;       // "Struct.field"
 
     // Type information maps
-    tsl::robin_map<String, String> m_struct_parents;          // "Child" → "Base"
-    tsl::robin_map<String, String> m_field_types;             // "Point.x" → "f32"
-    tsl::robin_map<String, String> m_function_return_types;   // "get_point" → "Point"
-    tsl::robin_map<String, String> m_method_return_types;     // "Point.length" → "f32"
+    tsl::robin_map<String, String> m_struct_parents;        // "Child" → "Base"
+    tsl::robin_map<String, String> m_field_types;           // "Point.x" → "f32"
+    tsl::robin_map<String, String> m_function_return_types; // "get_point" → "Point"
+    tsl::robin_map<String, String> m_method_return_types;   // "Point.length" → "f32"
 
     // Global variable types
-    tsl::robin_map<String, String> m_global_types;           // "count" → "i32"
+    tsl::robin_map<String, String> m_global_types; // "count" → "i32"
 
     // Param count maps (for semantic diagnostics)
-    tsl::robin_map<String, i32> m_function_param_counts;     // "add" → 2
-    tsl::robin_map<String, i32> m_method_param_counts;       // "Point.length" → 0
-    tsl::robin_map<String, i32> m_constructor_param_counts;  // "Point.new" → 2
+    tsl::robin_map<String, i32> m_function_param_counts;    // "add" → 2
+    tsl::robin_map<String, i32> m_method_param_counts;      // "Point.length" → 0
+    tsl::robin_map<String, i32> m_constructor_param_counts; // "Point.new" → 2
 
     // Field default tracking (for missing required field diagnostics)
-    tsl::robin_map<String, bool> m_field_has_defaults;       // "Point.x" → false
+    tsl::robin_map<String, bool> m_field_has_defaults; // "Point.x" → false
 
     // Completion secondary indexes
-    tsl::robin_map<String, Vector<String>> m_struct_field_names;   // "Point" → ["x", "y"]
-    tsl::robin_map<String, Vector<String>> m_struct_method_names;  // "Point" → ["length", "sum"]
-    tsl::robin_map<String, Vector<String>> m_enum_variant_names;   // "Color" → ["Red", "Green", "Blue"]
-    tsl::robin_map<String, String> m_function_signatures;          // "add" → "(a: i32, b: i32): i32"
-    tsl::robin_map<String, String> m_method_signatures;            // "Point.length" → "(): f32"
+    tsl::robin_map<String, Vector<String>> m_struct_field_names;  // "Point" → ["x", "y"]
+    tsl::robin_map<String, Vector<String>> m_struct_method_names; // "Point" → ["length", "sum"]
+    tsl::robin_map<String, Vector<String>>
+        m_enum_variant_names;                             // "Color" → ["Red", "Green", "Blue"]
+    tsl::robin_map<String, String> m_function_signatures; // "add" → "(a: i32, b: i32): i32"
+    tsl::robin_map<String, String> m_method_signatures;   // "Point.length" → "(): f32"
 
     // Track which names each file contributed (for remove_file)
     struct FileNameSet {
@@ -139,12 +141,12 @@ private:
         Vector<String> field_type_keys;
         Vector<String> function_return_type_keys;
         Vector<String> method_return_type_keys;
-        Vector<String> global_type_keys;             // global names with types
-        Vector<String> struct_field_name_keys;     // struct names with field lists
-        Vector<String> struct_method_name_keys;    // struct names with method lists
-        Vector<String> enum_variant_name_keys;     // enum names with variant lists
-        Vector<String> function_signature_keys;    // function names with signatures
-        Vector<String> method_signature_keys;      // "Struct.method" keys with signatures
+        Vector<String> global_type_keys;        // global names with types
+        Vector<String> struct_field_name_keys;  // struct names with field lists
+        Vector<String> struct_method_name_keys; // struct names with method lists
+        Vector<String> enum_variant_name_keys;  // enum names with variant lists
+        Vector<String> function_signature_keys; // function names with signatures
+        Vector<String> method_signature_keys;   // "Struct.method" keys with signatures
         Vector<String> function_param_count_keys;
         Vector<String> method_param_count_keys;
         Vector<String> constructor_param_count_keys;

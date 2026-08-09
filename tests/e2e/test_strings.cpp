@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -560,7 +560,8 @@ TEST_SUITE("E2E Strings") {
         CHECK(result.stdout_output == "[]\n");
     }
 
-    TEST_CASE_TEMPLATE("str_substr out-of-bounds with overflow-prone lengths is rejected", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("str_substr out-of-bounds with overflow-prone lengths is rejected", Backend,
+                       RX_E2E_BACKENDS) {
         // start + sub_len overflows i32 if added naively; the bounds check must
         // reject this cleanly rather than relying on signed-overflow UB.
         const char* source = R"(
@@ -653,7 +654,8 @@ TEST_SUITE("E2E Strings") {
     // F-string interpolation of user-defined Printable struct rvalues
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("F-string interp: Printable struct from function call", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("F-string interp: Printable struct from function call", Backend,
+                       RX_E2E_BACKENDS) {
         // Pre-fix: f"{make_pt()}" failed at IR gen with
         // "Internal error: expression is not a valid lvalue".
         const char* source = R"ROXY(
@@ -681,7 +683,8 @@ TEST_SUITE("E2E Strings") {
         CHECK(result.stdout_output == "(3,4)\n");
     }
 
-    TEST_CASE_TEMPLATE("F-string interp: Printable struct from list index", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("F-string interp: Printable struct from list index", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         struct Pt {
             x: i32;
@@ -707,7 +710,8 @@ TEST_SUITE("E2E Strings") {
         CHECK(result.stdout_output == "(1,2)\n(5,6)\n");
     }
 
-    TEST_CASE_TEMPLATE("F-string interp: Printable struct from method call", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("F-string interp: Printable struct from method call", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         struct Pt {
             x: i32;
@@ -738,7 +742,8 @@ TEST_SUITE("E2E Strings") {
         CHECK(result.stdout_output == "(10,11)\n");
     }
 
-    TEST_CASE_TEMPLATE("F-string interp: Printable struct from local var still works", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("F-string interp: Printable struct from local var still works", Backend,
+                       RX_E2E_BACKENDS) {
         // Regression check for the workaround path (lvalue identifier).
         const char* source = R"ROXY(
         struct Pt {
@@ -767,7 +772,8 @@ TEST_SUITE("E2E Strings") {
     // release frees. These pin that copies, reassignment, returns, and container
     // elements stay valid (no premature free / double-free) on both backends.
 
-    TEST_CASE_TEMPLATE("copied string stays valid after the source is reassigned", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("copied string stays valid after the source is reassigned", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var a: string = "x" + "y";   // dynamic (owned) string
@@ -782,7 +788,8 @@ TEST_SUITE("E2E Strings") {
         CHECK(r.stdout_output == "xy\n");
     }
 
-    TEST_CASE_TEMPLATE("string returned from a function is valid and reclaimable", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("string returned from a function is valid and reclaimable", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun make(n: i32): string { return f"n={n}"; }
         fun main(): i32 {
@@ -796,7 +803,8 @@ TEST_SUITE("E2E Strings") {
         CHECK(r.stdout_output == "n=0\nn=1\nn=2\n");
     }
 
-    TEST_CASE_TEMPLATE("List<string> keeps its elements alive, then reads them back", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("List<string> keeps its elements alive, then reads them back", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         fun main(): i32 {
             var l: List<string> = List<string>();
@@ -811,4 +819,4 @@ TEST_SUITE("E2E Strings") {
         CHECK(r.stdout_output == "e0\ne1\ne2\n");
     }
 
-}  // TEST_SUITE("E2E Strings")
+} // TEST_SUITE("E2E Strings")

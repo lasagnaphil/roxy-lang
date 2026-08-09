@@ -7,188 +7,332 @@ namespace rx {
 const char* opcode_to_string(Opcode op) {
     switch (op) {
         // Constants and Moves
-        case Opcode::LOAD_NULL:     return "LOAD_NULL";
-        case Opcode::LOAD_TRUE:     return "LOAD_TRUE";
-        case Opcode::LOAD_FALSE:    return "LOAD_FALSE";
-        case Opcode::LOAD_INT:      return "LOAD_INT";
-        case Opcode::LOAD_CONST:    return "LOAD_CONST";
-        case Opcode::MOV:           return "MOV";
+        case Opcode::LOAD_NULL:
+            return "LOAD_NULL";
+        case Opcode::LOAD_TRUE:
+            return "LOAD_TRUE";
+        case Opcode::LOAD_FALSE:
+            return "LOAD_FALSE";
+        case Opcode::LOAD_INT:
+            return "LOAD_INT";
+        case Opcode::LOAD_CONST:
+            return "LOAD_CONST";
+        case Opcode::MOV:
+            return "MOV";
 
         // Integer Arithmetic
-        case Opcode::ADD_I:         return "ADD_I";
-        case Opcode::SUB_I:         return "SUB_I";
-        case Opcode::MUL_I:         return "MUL_I";
-        case Opcode::DIV_I:         return "DIV_I";
-        case Opcode::MOD_I:         return "MOD_I";
-        case Opcode::NEG_I:         return "NEG_I";
-        case Opcode::DIV_U:         return "DIV_U";
-        case Opcode::MOD_U:         return "MOD_U";
+        case Opcode::ADD_I:
+            return "ADD_I";
+        case Opcode::SUB_I:
+            return "SUB_I";
+        case Opcode::MUL_I:
+            return "MUL_I";
+        case Opcode::DIV_I:
+            return "DIV_I";
+        case Opcode::MOD_I:
+            return "MOD_I";
+        case Opcode::NEG_I:
+            return "NEG_I";
+        case Opcode::DIV_U:
+            return "DIV_U";
+        case Opcode::MOD_U:
+            return "MOD_U";
 
         // f32 Arithmetic
-        case Opcode::ADD_F:         return "ADD_F";
-        case Opcode::SUB_F:         return "SUB_F";
-        case Opcode::MUL_F:         return "MUL_F";
-        case Opcode::DIV_F:         return "DIV_F";
-        case Opcode::NEG_F:         return "NEG_F";
+        case Opcode::ADD_F:
+            return "ADD_F";
+        case Opcode::SUB_F:
+            return "SUB_F";
+        case Opcode::MUL_F:
+            return "MUL_F";
+        case Opcode::DIV_F:
+            return "DIV_F";
+        case Opcode::NEG_F:
+            return "NEG_F";
 
         // f64 Arithmetic
-        case Opcode::ADD_D:         return "ADD_D";
-        case Opcode::SUB_D:         return "SUB_D";
-        case Opcode::MUL_D:         return "MUL_D";
-        case Opcode::DIV_D:         return "DIV_D";
-        case Opcode::NEG_D:         return "NEG_D";
+        case Opcode::ADD_D:
+            return "ADD_D";
+        case Opcode::SUB_D:
+            return "SUB_D";
+        case Opcode::MUL_D:
+            return "MUL_D";
+        case Opcode::DIV_D:
+            return "DIV_D";
+        case Opcode::NEG_D:
+            return "NEG_D";
 
         // Bitwise Operations
-        case Opcode::BIT_AND:       return "BIT_AND";
-        case Opcode::BIT_OR:        return "BIT_OR";
-        case Opcode::BIT_XOR:       return "BIT_XOR";
-        case Opcode::BIT_NOT:       return "BIT_NOT";
-        case Opcode::SHL:           return "SHL";
-        case Opcode::SHR:           return "SHR";
-        case Opcode::USHR:          return "USHR";
+        case Opcode::BIT_AND:
+            return "BIT_AND";
+        case Opcode::BIT_OR:
+            return "BIT_OR";
+        case Opcode::BIT_XOR:
+            return "BIT_XOR";
+        case Opcode::BIT_NOT:
+            return "BIT_NOT";
+        case Opcode::SHL:
+            return "SHL";
+        case Opcode::SHR:
+            return "SHR";
+        case Opcode::USHR:
+            return "USHR";
 
         // Integer Comparisons
-        case Opcode::EQ_I:          return "EQ_I";
-        case Opcode::NE_I:          return "NE_I";
-        case Opcode::LT_I:          return "LT_I";
-        case Opcode::LE_I:          return "LE_I";
-        case Opcode::GT_I:          return "GT_I";
-        case Opcode::GE_I:          return "GE_I";
-        case Opcode::LT_U:          return "LT_U";
-        case Opcode::LE_U:          return "LE_U";
-        case Opcode::GT_U:          return "GT_U";
-        case Opcode::GE_U:          return "GE_U";
+        case Opcode::EQ_I:
+            return "EQ_I";
+        case Opcode::NE_I:
+            return "NE_I";
+        case Opcode::LT_I:
+            return "LT_I";
+        case Opcode::LE_I:
+            return "LE_I";
+        case Opcode::GT_I:
+            return "GT_I";
+        case Opcode::GE_I:
+            return "GE_I";
+        case Opcode::LT_U:
+            return "LT_U";
+        case Opcode::LE_U:
+            return "LE_U";
+        case Opcode::GT_U:
+            return "GT_U";
+        case Opcode::GE_U:
+            return "GE_U";
 
         // f32 Comparisons
-        case Opcode::EQ_F:          return "EQ_F";
-        case Opcode::NE_F:          return "NE_F";
-        case Opcode::LT_F:          return "LT_F";
-        case Opcode::LE_F:          return "LE_F";
-        case Opcode::GT_F:          return "GT_F";
-        case Opcode::GE_F:          return "GE_F";
+        case Opcode::EQ_F:
+            return "EQ_F";
+        case Opcode::NE_F:
+            return "NE_F";
+        case Opcode::LT_F:
+            return "LT_F";
+        case Opcode::LE_F:
+            return "LE_F";
+        case Opcode::GT_F:
+            return "GT_F";
+        case Opcode::GE_F:
+            return "GE_F";
 
         // f64 Comparisons
-        case Opcode::EQ_D:          return "EQ_D";
-        case Opcode::NE_D:          return "NE_D";
-        case Opcode::LT_D:          return "LT_D";
-        case Opcode::LE_D:          return "LE_D";
-        case Opcode::GT_D:          return "GT_D";
-        case Opcode::GE_D:          return "GE_D";
+        case Opcode::EQ_D:
+            return "EQ_D";
+        case Opcode::NE_D:
+            return "NE_D";
+        case Opcode::LT_D:
+            return "LT_D";
+        case Opcode::LE_D:
+            return "LE_D";
+        case Opcode::GT_D:
+            return "GT_D";
+        case Opcode::GE_D:
+            return "GE_D";
 
         // Logical Operations (AND/OR removed — see bytecode.hpp)
-        case Opcode::NOT:           return "NOT";
+        case Opcode::NOT:
+            return "NOT";
 
         // Type Conversions
-        case Opcode::I_TO_F64:      return "I_TO_F64";
-        case Opcode::F64_TO_I:      return "F64_TO_I";
-        case Opcode::I_TO_B:        return "I_TO_B";
-        case Opcode::B_TO_I:        return "B_TO_I";
-        case Opcode::TRUNC_S:       return "TRUNC_S";
-        case Opcode::TRUNC_U:       return "TRUNC_U";
-        case Opcode::F32_TO_F64:    return "F32_TO_F64";
-        case Opcode::F64_TO_F32:    return "F64_TO_F32";
-        case Opcode::I_TO_F32:      return "I_TO_F32";
-        case Opcode::F32_TO_I:      return "F32_TO_I";
+        case Opcode::I_TO_F64:
+            return "I_TO_F64";
+        case Opcode::F64_TO_I:
+            return "F64_TO_I";
+        case Opcode::I_TO_B:
+            return "I_TO_B";
+        case Opcode::B_TO_I:
+            return "B_TO_I";
+        case Opcode::TRUNC_S:
+            return "TRUNC_S";
+        case Opcode::TRUNC_U:
+            return "TRUNC_U";
+        case Opcode::F32_TO_F64:
+            return "F32_TO_F64";
+        case Opcode::F64_TO_F32:
+            return "F64_TO_F32";
+        case Opcode::I_TO_F32:
+            return "I_TO_F32";
+        case Opcode::F32_TO_I:
+            return "F32_TO_I";
 
         // Control Flow
-        case Opcode::JMP:           return "JMP";
-        case Opcode::JMP_IF:        return "JMP_IF";
-        case Opcode::JMP_IF_NOT:    return "JMP_IF_NOT";
-        case Opcode::RET:           return "RET";
-        case Opcode::RET_VOID:      return "RET_VOID";
-        case Opcode::JMP_IF_LT_I:   return "JMP_IF_LT_I";
-        case Opcode::JMP_IF_LE_I:   return "JMP_IF_LE_I";
-        case Opcode::JMP_IF_GT_I:   return "JMP_IF_GT_I";
-        case Opcode::JMP_IF_GE_I:   return "JMP_IF_GE_I";
-        case Opcode::JMP_IF_EQ_I:   return "JMP_IF_EQ_I";
-        case Opcode::JMP_IF_NE_I:   return "JMP_IF_NE_I";
+        case Opcode::JMP:
+            return "JMP";
+        case Opcode::JMP_IF:
+            return "JMP_IF";
+        case Opcode::JMP_IF_NOT:
+            return "JMP_IF_NOT";
+        case Opcode::RET:
+            return "RET";
+        case Opcode::RET_VOID:
+            return "RET_VOID";
+        case Opcode::JMP_IF_LT_I:
+            return "JMP_IF_LT_I";
+        case Opcode::JMP_IF_LE_I:
+            return "JMP_IF_LE_I";
+        case Opcode::JMP_IF_GT_I:
+            return "JMP_IF_GT_I";
+        case Opcode::JMP_IF_GE_I:
+            return "JMP_IF_GE_I";
+        case Opcode::JMP_IF_EQ_I:
+            return "JMP_IF_EQ_I";
+        case Opcode::JMP_IF_NE_I:
+            return "JMP_IF_NE_I";
 
         // Function Calls and Container Indexing
-        case Opcode::CALL:              return "CALL";
-        case Opcode::CALL_NATIVE:       return "CALL_NATIVE";
-        case Opcode::INDEX_GET_LIST:    return "INDEX_GET_LIST";
-        case Opcode::INDEX_SET_LIST:    return "INDEX_SET_LIST";
-        case Opcode::INDEX_GET_MAP:     return "INDEX_GET_MAP";
-        case Opcode::INDEX_SET_MAP:     return "INDEX_SET_MAP";
+        case Opcode::CALL:
+            return "CALL";
+        case Opcode::CALL_NATIVE:
+            return "CALL_NATIVE";
+        case Opcode::INDEX_GET_LIST:
+            return "INDEX_GET_LIST";
+        case Opcode::INDEX_SET_LIST:
+            return "INDEX_SET_LIST";
+        case Opcode::INDEX_GET_MAP:
+            return "INDEX_GET_MAP";
+        case Opcode::INDEX_SET_MAP:
+            return "INDEX_SET_MAP";
 
         // Field Access
-        case Opcode::GET_FIELD:     return "GET_FIELD";
-        case Opcode::SET_FIELD:     return "SET_FIELD";
-        case Opcode::STACK_ADDR:    return "STACK_ADDR";
-        case Opcode::GET_FIELD_ADDR: return "GET_FIELD_ADDR";
-        case Opcode::STRUCT_LOAD_REGS:  return "STRUCT_LOAD_REGS";
-        case Opcode::STRUCT_STORE_REGS: return "STRUCT_STORE_REGS";
-        case Opcode::STRUCT_COPY:       return "STRUCT_COPY";
-        case Opcode::RET_STRUCT_SMALL:  return "RET_STRUCT_SMALL";
-        case Opcode::RET_WEAK:          return "RET_WEAK";
-        case Opcode::SPILL_REG:         return "SPILL_REG";
-        case Opcode::RELOAD_REG:        return "RELOAD_REG";
-        case Opcode::STRUCT_COPY_1:     return "STRUCT_COPY_1";
-        case Opcode::STRUCT_COPY_2:     return "STRUCT_COPY_2";
-        case Opcode::STRUCT_COPY_3:     return "STRUCT_COPY_3";
-        case Opcode::STRUCT_COPY_4:     return "STRUCT_COPY_4";
+        case Opcode::GET_FIELD:
+            return "GET_FIELD";
+        case Opcode::SET_FIELD:
+            return "SET_FIELD";
+        case Opcode::STACK_ADDR:
+            return "STACK_ADDR";
+        case Opcode::GET_FIELD_ADDR:
+            return "GET_FIELD_ADDR";
+        case Opcode::STRUCT_LOAD_REGS:
+            return "STRUCT_LOAD_REGS";
+        case Opcode::STRUCT_STORE_REGS:
+            return "STRUCT_STORE_REGS";
+        case Opcode::STRUCT_COPY:
+            return "STRUCT_COPY";
+        case Opcode::RET_STRUCT_SMALL:
+            return "RET_STRUCT_SMALL";
+        case Opcode::RET_WEAK:
+            return "RET_WEAK";
+        case Opcode::SPILL_REG:
+            return "SPILL_REG";
+        case Opcode::RELOAD_REG:
+            return "RELOAD_REG";
+        case Opcode::STRUCT_COPY_1:
+            return "STRUCT_COPY_1";
+        case Opcode::STRUCT_COPY_2:
+            return "STRUCT_COPY_2";
+        case Opcode::STRUCT_COPY_3:
+            return "STRUCT_COPY_3";
+        case Opcode::STRUCT_COPY_4:
+            return "STRUCT_COPY_4";
 
         // Object Lifecycle
-        case Opcode::NEW_OBJ:       return "NEW_OBJ";
-        case Opcode::DEL_OBJ:       return "DEL_OBJ";
+        case Opcode::NEW_OBJ:
+            return "NEW_OBJ";
+        case Opcode::DEL_OBJ:
+            return "DEL_OBJ";
 
         // Exception Handling
-        case Opcode::THROW:         return "THROW";
-        case Opcode::CALL_EXC_MSG:  return "CALL_EXC_MSG";
+        case Opcode::THROW:
+            return "THROW";
+        case Opcode::CALL_EXC_MSG:
+            return "CALL_EXC_MSG";
 
         // Reference Counting
-        case Opcode::REF_INC:       return "REF_INC";
-        case Opcode::REF_DEC:       return "REF_DEC";
-        case Opcode::WEAK_CHECK:    return "WEAK_CHECK";
-        case Opcode::WEAK_CREATE:   return "WEAK_CREATE";
+        case Opcode::REF_INC:
+            return "REF_INC";
+        case Opcode::REF_DEC:
+            return "REF_DEC";
+        case Opcode::WEAK_CHECK:
+            return "WEAK_CHECK";
+        case Opcode::WEAK_CREATE:
+            return "WEAK_CREATE";
 
         // RK (register-or-constant) variants
-        case Opcode::ADD_I_RK:      return "ADD_I_RK";
-        case Opcode::SUB_I_RK:      return "SUB_I_RK";
-        case Opcode::MUL_I_RK:      return "MUL_I_RK";
-        case Opcode::ADD_F_RK:      return "ADD_F_RK";
-        case Opcode::SUB_F_RK:      return "SUB_F_RK";
-        case Opcode::MUL_F_RK:      return "MUL_F_RK";
-        case Opcode::ADD_D_RK:      return "ADD_D_RK";
-        case Opcode::SUB_D_RK:      return "SUB_D_RK";
-        case Opcode::MUL_D_RK:      return "MUL_D_RK";
-        case Opcode::DIV_D_RK:      return "DIV_D_RK";
-        case Opcode::EQ_I_RK:       return "EQ_I_RK";
-        case Opcode::NE_I_RK:       return "NE_I_RK";
-        case Opcode::LT_I_RK:       return "LT_I_RK";
-        case Opcode::LE_I_RK:       return "LE_I_RK";
-        case Opcode::GT_I_RK:       return "GT_I_RK";
-        case Opcode::GE_I_RK:       return "GE_I_RK";
-        case Opcode::EQ_D_RK:       return "EQ_D_RK";
-        case Opcode::NE_D_RK:       return "NE_D_RK";
-        case Opcode::LT_D_RK:       return "LT_D_RK";
-        case Opcode::LE_D_RK:       return "LE_D_RK";
-        case Opcode::GT_D_RK:       return "GT_D_RK";
-        case Opcode::GE_D_RK:       return "GE_D_RK";
+        case Opcode::ADD_I_RK:
+            return "ADD_I_RK";
+        case Opcode::SUB_I_RK:
+            return "SUB_I_RK";
+        case Opcode::MUL_I_RK:
+            return "MUL_I_RK";
+        case Opcode::ADD_F_RK:
+            return "ADD_F_RK";
+        case Opcode::SUB_F_RK:
+            return "SUB_F_RK";
+        case Opcode::MUL_F_RK:
+            return "MUL_F_RK";
+        case Opcode::ADD_D_RK:
+            return "ADD_D_RK";
+        case Opcode::SUB_D_RK:
+            return "SUB_D_RK";
+        case Opcode::MUL_D_RK:
+            return "MUL_D_RK";
+        case Opcode::DIV_D_RK:
+            return "DIV_D_RK";
+        case Opcode::EQ_I_RK:
+            return "EQ_I_RK";
+        case Opcode::NE_I_RK:
+            return "NE_I_RK";
+        case Opcode::LT_I_RK:
+            return "LT_I_RK";
+        case Opcode::LE_I_RK:
+            return "LE_I_RK";
+        case Opcode::GT_I_RK:
+            return "GT_I_RK";
+        case Opcode::GE_I_RK:
+            return "GE_I_RK";
+        case Opcode::EQ_D_RK:
+            return "EQ_D_RK";
+        case Opcode::NE_D_RK:
+            return "NE_D_RK";
+        case Opcode::LT_D_RK:
+            return "LT_D_RK";
+        case Opcode::LE_D_RK:
+            return "LE_D_RK";
+        case Opcode::GT_D_RK:
+            return "GT_D_RK";
+        case Opcode::GE_D_RK:
+            return "GE_D_RK";
 
         // Fused f64 compare-and-branch
-        case Opcode::JMP_IF_LT_D:    return "JMP_IF_LT_D";
-        case Opcode::JMP_IF_LE_D:    return "JMP_IF_LE_D";
-        case Opcode::JMP_IF_GT_D:    return "JMP_IF_GT_D";
-        case Opcode::JMP_IF_GE_D:    return "JMP_IF_GE_D";
-        case Opcode::JMP_IF_EQ_D:    return "JMP_IF_EQ_D";
-        case Opcode::JMP_IF_NE_D:    return "JMP_IF_NE_D";
-        case Opcode::JMP_IF_LT_D_RK: return "JMP_IF_LT_D_RK";
-        case Opcode::JMP_IF_LE_D_RK: return "JMP_IF_LE_D_RK";
-        case Opcode::JMP_IF_GT_D_RK: return "JMP_IF_GT_D_RK";
-        case Opcode::JMP_IF_GE_D_RK: return "JMP_IF_GE_D_RK";
-        case Opcode::JMP_IF_EQ_D_RK: return "JMP_IF_EQ_D_RK";
-        case Opcode::JMP_IF_NE_D_RK: return "JMP_IF_NE_D_RK";
+        case Opcode::JMP_IF_LT_D:
+            return "JMP_IF_LT_D";
+        case Opcode::JMP_IF_LE_D:
+            return "JMP_IF_LE_D";
+        case Opcode::JMP_IF_GT_D:
+            return "JMP_IF_GT_D";
+        case Opcode::JMP_IF_GE_D:
+            return "JMP_IF_GE_D";
+        case Opcode::JMP_IF_EQ_D:
+            return "JMP_IF_EQ_D";
+        case Opcode::JMP_IF_NE_D:
+            return "JMP_IF_NE_D";
+        case Opcode::JMP_IF_LT_D_RK:
+            return "JMP_IF_LT_D_RK";
+        case Opcode::JMP_IF_LE_D_RK:
+            return "JMP_IF_LE_D_RK";
+        case Opcode::JMP_IF_GT_D_RK:
+            return "JMP_IF_GT_D_RK";
+        case Opcode::JMP_IF_GE_D_RK:
+            return "JMP_IF_GE_D_RK";
+        case Opcode::JMP_IF_EQ_D_RK:
+            return "JMP_IF_EQ_D_RK";
+        case Opcode::JMP_IF_NE_D_RK:
+            return "JMP_IF_NE_D_RK";
 
-        case Opcode::CALL_INDIRECT: return "CALL_INDIRECT";
-        case Opcode::ASSERT_HEAP:   return "ASSERT_HEAP";
+        case Opcode::CALL_INDIRECT:
+            return "CALL_INDIRECT";
+        case Opcode::ASSERT_HEAP:
+            return "ASSERT_HEAP";
 
         // Debug/Error
-        case Opcode::TRAP:          return "TRAP";
-        case Opcode::NOP:           return "NOP";
-        case Opcode::HALT:          return "HALT";
+        case Opcode::TRAP:
+            return "TRAP";
+        case Opcode::NOP:
+            return "NOP";
+        case Opcode::HALT:
+            return "HALT";
 
-        default:                    return "UNKNOWN";
+        default:
+            return "UNKNOWN";
     }
 }
 
@@ -202,7 +346,8 @@ u32 disassemble_instruction(u32 instr, u32 next_word, u32 offset, String& out) {
     u32 words_consumed = 1;
 
     auto append = [&out](const char* str) {
-        while (*str) out.push_back(*str++);
+        while (*str)
+            out.push_back(*str++);
     };
 
     // Print offset and opcode
@@ -495,12 +640,13 @@ u32 disassemble_instruction(u32 instr, u32 next_word, u32 offset, String& out) {
 
 void disassemble_function(const BCFunction* func, String& out) {
     auto append = [&out](const char* str) {
-        while (*str) out.push_back(*str++);
+        while (*str)
+            out.push_back(*str++);
     };
 
     StaticString<128> buf;
-    buf.format("function {} (params: {}, regs: {})\n",
-               func->name, func->param_count, func->register_count);
+    buf.format("function {} (params: {}, regs: {})\n", func->name, func->param_count,
+               func->register_count);
     append(buf.c_str());
 
     // Constants
@@ -522,7 +668,8 @@ void disassemble_function(const BCFunction* func, String& out) {
                     buf.format("    [{}] {}\n", i, c.as_float);
                     break;
                 case BCConstant::String:
-                    buf.format("    [{}] \"{}\"\n", i, StringView(c.as_string.data, c.as_string.length));
+                    buf.format("    [{}] \"{}\"\n", i,
+                               StringView(c.as_string.data, c.as_string.length));
                     break;
             }
             append(buf.c_str());
@@ -531,7 +678,7 @@ void disassemble_function(const BCFunction* func, String& out) {
 
     // Code
     append("  code:\n");
-    for (u32 i = 0; i < func->code.size(); ) {
+    for (u32 i = 0; i < func->code.size();) {
         u32 next_word = (i + 1 < func->code.size()) ? func->code[i + 1] : 0;
         append("    ");
         u32 consumed = disassemble_instruction(func->code[i], next_word, i, out);
@@ -543,8 +690,8 @@ void disassemble_function(const BCFunction* func, String& out) {
         append("  handlers:\n");
         for (u32 i = 0; i < func->exception_handlers.size(); i++) {
             const auto& h = func->exception_handlers[i];
-            buf.format("    [{}] try [{}, {}) -> handler {} (type_id {}, exc_reg R{})\n",
-                       i, h.try_start_pc, h.try_end_pc, h.handler_pc, h.type_id, h.exception_reg);
+            buf.format("    [{}] try [{}, {}) -> handler {} (type_id {}, exc_reg R{})\n", i,
+                       h.try_start_pc, h.try_end_pc, h.handler_pc, h.type_id, h.exception_reg);
             append(buf.c_str());
         }
     }
@@ -554,15 +701,14 @@ void disassemble_function(const BCFunction* func, String& out) {
         append("  cleanup records:\n");
         for (u32 i = 0; i < func->cleanup_records.size(); i++) {
             const auto& r = func->cleanup_records[i];
-            const char* kind = r.kind == static_cast<u8>(BCCleanupKind::Delete)     ? "Delete"
-                             : r.kind == static_cast<u8>(BCCleanupKind::RefDec)     ? "RefDec"
-                             : r.kind == static_cast<u8>(BCCleanupKind::Unpin)      ? "Unpin"
-                             : r.kind == static_cast<u8>(BCCleanupKind::StrRelease) ? "StrRelease"
-                             : "?";
-            buf.format("    [{}] {} R{} scope [{}, {}) live_start {} desc {}{}\n",
-                       i, kind, r.register_idx, r.scope_start_pc, r.scope_end_pc,
-                       r.live_start_pc, r.delete_desc_idx,
-                       r.is_extension ? " (ext)" : "");
+            const char* kind = r.kind == static_cast<u8>(BCCleanupKind::Delete)       ? "Delete"
+                               : r.kind == static_cast<u8>(BCCleanupKind::RefDec)     ? "RefDec"
+                               : r.kind == static_cast<u8>(BCCleanupKind::Unpin)      ? "Unpin"
+                               : r.kind == static_cast<u8>(BCCleanupKind::StrRelease) ? "StrRelease"
+                                                                                      : "?";
+            buf.format("    [{}] {} R{} scope [{}, {}) live_start {} desc {}{}\n", i, kind,
+                       r.register_idx, r.scope_start_pc, r.scope_end_pc, r.live_start_pc,
+                       r.delete_desc_idx, r.is_extension ? " (ext)" : "");
             append(buf.c_str());
         }
     }
@@ -570,7 +716,8 @@ void disassemble_function(const BCFunction* func, String& out) {
 
 void disassemble_module(const BCModule* module, String& out) {
     auto append = [&out](const char* str) {
-        while (*str) out.push_back(*str++);
+        while (*str)
+            out.push_back(*str++);
     };
 
     StaticString<128> buf;
@@ -599,4 +746,4 @@ void disassemble_module(const BCModule* module, String& out) {
     out.push_back('\0');
 }
 
-}
+} // namespace rx

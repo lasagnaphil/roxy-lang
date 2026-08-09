@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 using namespace rx;
 
@@ -116,7 +116,8 @@ TEST_SUITE("E2E Index Exceptions") {
         CHECK(result.stdout_output == "one\ncaught string-value miss\n");
     }
 
-    TEST_CASE_TEMPLATE("struct-valued map: hit reads, miss throws KeyError", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("struct-valued map: hit reads, miss throws KeyError", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"(
         struct Pt { pub x: i32; pub y: i32; }
         fun main(): i32 {
@@ -184,7 +185,7 @@ TEST_SUITE("E2E Index Exceptions") {
     // VM-only: an uncaught exception surfaces as a graceful "Unhandled exception"
     // (return false / nonzero exit) rather than a hard abort. The C backend's
     // uncaught-exception exit path differs, so this asserts VM behavior only.
-    TEST_CASE("uncaught index exception fails gracefully") {  // VM-only
+    TEST_CASE("uncaught index exception fails gracefully") { // VM-only
         const char* source = R"(
         fun main(): i32 {
             var xs: List<i32> = List<i32>();
@@ -197,4 +198,4 @@ TEST_SUITE("E2E Index Exceptions") {
         CHECK_FALSE(result.success);
     }
 
-}  // TEST_SUITE("E2E Index Exceptions")
+} // TEST_SUITE("E2E Index Exceptions")

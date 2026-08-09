@@ -1,6 +1,6 @@
 #include "roxy/core/doctest/doctest.h"
-#include "test_helpers.hpp"
 #include "test_e2e_backend.hpp"
+#include "test_helpers.hpp"
 
 #include <string>
 
@@ -92,7 +92,7 @@ TEST_SUITE("E2E Parameters") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "20\n10\n");  // swapped
+        CHECK(result.stdout_output == "20\n10\n"); // swapped
     }
 
     TEST_CASE_TEMPLATE("Inout with computation", Backend, RX_E2E_BACKENDS) {
@@ -111,7 +111,7 @@ TEST_SUITE("E2E Parameters") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "42\n");  // 21 * 2
+        CHECK(result.stdout_output == "42\n"); // 21 * 2
     }
 
     TEST_CASE_TEMPLATE("Multiple inout calls", Backend, RX_E2E_BACKENDS) {
@@ -153,7 +153,7 @@ TEST_SUITE("E2E Parameters") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "42\n");  // 10 + 32
+        CHECK(result.stdout_output == "42\n"); // 10 + 32
     }
 
     TEST_CASE_TEMPLATE("Inout with struct parameter", Backend, RX_E2E_BACKENDS) {
@@ -179,7 +179,7 @@ TEST_SUITE("E2E Parameters") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "20\n40\n");  // 10*2, 20*2
+        CHECK(result.stdout_output == "20\n40\n"); // 10*2, 20*2
     }
 
     TEST_CASE_TEMPLATE("Out with struct parameter", Backend, RX_E2E_BACKENDS) {
@@ -232,7 +232,7 @@ TEST_SUITE("E2E Parameters") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "20\n10\n");  // swapped
+        CHECK(result.stdout_output == "20\n10\n"); // swapped
     }
 
     TEST_CASE_TEMPLATE("Inout with nested struct", Backend, RX_E2E_BACKENDS) {
@@ -270,7 +270,7 @@ TEST_SUITE("E2E Parameters") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "3\n6\n30\n60\n");  // 1*3, 2*3, 10*3, 20*3
+        CHECK(result.stdout_output == "3\n6\n30\n60\n"); // 1*3, 2*3, 10*3, 20*3
     }
 
     // ============================================================================
@@ -303,7 +303,7 @@ TEST_SUITE("E2E Parameters") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "110\n");  // 1+2+3+4+100 = 110
+        CHECK(result.stdout_output == "110\n"); // 1+2+3+4+100 = 110
     }
 
     TEST_CASE_TEMPLATE("Three-slot struct followed by int parameter", Backend, RX_E2E_BACKENDS) {
@@ -329,10 +329,11 @@ TEST_SUITE("E2E Parameters") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "560\n");  // 10+20+30+500 = 560
+        CHECK(result.stdout_output == "560\n"); // 10+20+30+500 = 560
     }
 
-    TEST_CASE_TEMPLATE("Four-slot struct followed by two int parameters", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Four-slot struct followed by two int parameters", Backend,
+                       RX_E2E_BACKENDS) {
         // FourSlot uses regs 0-1, ints should be in regs 2-3
         const char* source = R"(
         struct FourSlot {
@@ -355,7 +356,7 @@ TEST_SUITE("E2E Parameters") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "190\n");  // 5*10 + 7*20 = 50 + 140 = 190
+        CHECK(result.stdout_output == "190\n"); // 5*10 + 7*20 = 50 + 140 = 190
     }
 
     TEST_CASE_TEMPLATE("Two four-slot struct parameters", Backend, RX_E2E_BACKENDS) {
@@ -382,10 +383,11 @@ TEST_SUITE("E2E Parameters") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "110\n");  // (1+2+3+4) + (10+20+30+40) = 10 + 100 = 110
+        CHECK(result.stdout_output == "110\n"); // (1+2+3+4) + (10+20+30+40) = 10 + 100 = 110
     }
 
-    TEST_CASE_TEMPLATE("Mix of two-slot and four-slot struct parameters", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("Mix of two-slot and four-slot struct parameters", Backend,
+                       RX_E2E_BACKENDS) {
         // TwoSlot (2 slots = 1 reg), FourSlot (4 slots = 2 regs), int
         // TwoSlot in reg 0, FourSlot in regs 1-2, int in reg 3
         const char* source = R"(
@@ -415,7 +417,7 @@ TEST_SUITE("E2E Parameters") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "1103\n");  // 1+2+10+20+30+40+1000 = 1103
+        CHECK(result.stdout_output == "1103\n"); // 1+2+10+20+30+40+1000 = 1103
     }
 
     TEST_CASE_TEMPLATE("Four-slot struct parameter with struct return", Backend, RX_E2E_BACKENDS) {
@@ -481,7 +483,7 @@ TEST_SUITE("E2E Parameters") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "100\n");  // 10 * (1+2+3+4) = 10 * 10 = 100
+        CHECK(result.stdout_output == "100\n"); // 10 * (1+2+3+4) = 10 * 10 = 100
     }
 
     TEST_CASE_TEMPLATE("Multiple four-slot structs with int in middle", Backend, RX_E2E_BACKENDS) {
@@ -510,7 +512,7 @@ TEST_SUITE("E2E Parameters") {
 
         auto result = Backend::run(source);
         CHECK(result.success);
-        CHECK(result.stdout_output == "60\n");  // (1+1+1+1)*10 + (5+5+5+5) = 40 + 20 = 60
+        CHECK(result.stdout_output == "60\n"); // (1+1+1+1)*10 + (5+5+5+5) = 40 + 20 = 60
     }
 
     // ============================================================================
@@ -521,7 +523,8 @@ TEST_SUITE("E2E Parameters") {
     // failed to phi-merge the caller's local at the loop header).
     // ============================================================================
 
-    TEST_CASE_TEMPLATE("inout List<uniq T> in loop body compiles and runs", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("inout List<uniq T> in loop body compiles and runs", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         struct Item { pub v: i32; }
 
@@ -546,7 +549,8 @@ TEST_SUITE("E2E Parameters") {
         CHECK(result.value == 3);
     }
 
-    TEST_CASE_TEMPLATE("inout List<i32> in for loop body with post-loop read", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("inout List<i32> in for loop body with post-loop read", Backend,
+                       RX_E2E_BACKENDS) {
         const char* source = R"ROXY(
         fun push_val(xs: inout List<i32>, v: i32) {
             xs.push(v);
@@ -573,7 +577,8 @@ TEST_SUITE("E2E Parameters") {
         CHECK(result.value == 0 + 10 + 20 + 30 + 40);
     }
 
-    TEST_CASE_TEMPLATE("inout noncopyable cleanup across multiple calls is not double-freed", Backend, RX_E2E_BACKENDS) {
+    TEST_CASE_TEMPLATE("inout noncopyable cleanup across multiple calls is not double-freed",
+                       Backend, RX_E2E_BACKENDS) {
         // The caller still owns `xs` after an inout call — the callee must not
         // mark xs as moved, or else post-call nullify would suppress cleanup.
         // Conversely the inout param inside the callee must NOT be tracked as an
@@ -599,21 +604,32 @@ TEST_SUITE("E2E Parameters") {
         CHECK(result.value == 4);
     }
 
-    TEST_CASE("call exceeding the 255-register window fails to compile (no hang)") {  // VM-only: runtime-trap/abort behavior differs on C backend (VM-only by nature)
+    TEST_CASE(
+        "call exceeding the 255-register window fails to compile (no hang)") { // VM-only:
+                                                                               // runtime-trap/abort
+                                                                               // behavior differs
+                                                                               // on C backend
+                                                                               // (VM-only by
+                                                                               // nature)
         // A call whose argument window exceeds 255 registers must produce a
         // clean register-overflow error during lowering, not spin forever in
         // the register-window pre-allocation loop.
         std::string params, args;
         for (int i = 0; i < 300; i++) {
-            if (i) { params += ", "; args += ", "; }
+            if (i) {
+                params += ", ";
+                args += ", ";
+            }
             params += "a" + std::to_string(i) + ": i32";
             args += std::to_string(i);
         }
-        std::string source = "fun big(" + params + "): i32 { return a0; }\n"
-                             "fun main(): i32 { return big(" + args + "); }\n";
+        std::string source = "fun big(" + params +
+                             "): i32 { return a0; }\n"
+                             "fun main(): i32 { return big(" +
+                             args + "); }\n";
 
         auto result = VMBackend::run(source.c_str());
         CHECK_FALSE(result.success);
     }
 
-}  // TEST_SUITE("E2E Parameters")
+} // TEST_SUITE("E2E Parameters")

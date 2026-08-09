@@ -1,14 +1,12 @@
 #include "roxy/core/doctest/doctest.h"
-#include "roxy/core/string.hpp"
 #include "roxy/core/format.hpp"
+#include "roxy/core/string.hpp"
 
 using namespace rx;
 
 TEST_SUITE("String") {
 
-    TEST_CASE("sizeof") {
-        CHECK(sizeof(String) == 24);
-    }
+    TEST_CASE("sizeof") { CHECK(sizeof(String) == 24); }
 
     TEST_CASE("SSO basics") {
         SUBCASE("empty string") {
@@ -87,7 +85,7 @@ TEST_SUITE("String") {
             const char* ptr = a.data();
             String b(static_cast<String&&>(a));
             CHECK(b == "this is a long string that exceeds SSO capacity");
-            CHECK(b.data() == ptr);  // no reallocation
+            CHECK(b.data() == ptr); // no reallocation
             CHECK(a.empty());
         }
     }
@@ -167,7 +165,7 @@ TEST_SUITE("String") {
         }
 
         SUBCASE("append causing SSO to heap") {
-            String s("12345678901234567890");  // 20 chars
+            String s("12345678901234567890"); // 20 chars
             s.append("abcde", 5);
             CHECK(s.size() == 25);
             CHECK(s == "12345678901234567890abcde");
@@ -332,4 +330,4 @@ TEST_SUITE("String") {
         }
     }
 
-}  // TEST_SUITE("String")
+} // TEST_SUITE("String")
