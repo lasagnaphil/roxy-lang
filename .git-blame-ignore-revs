@@ -1,0 +1,15 @@
+# Commits that are pure formatting churn — no behavioural change. `git blame`
+# skips them so line history points at the commit that last changed the code,
+# not the one that reindented it.
+#
+# Enable locally (once):
+#
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# GitHub applies this file automatically; no setup needed there.
+#
+# Only add commits that are *entirely* mechanical — a commit mixing formatting
+# with real edits would hide those edits from blame.
+
+# style: apply clang-format to the whole tree (2026-08-09)
+b488faaa112fb89b14c8404ddbae46902569b584
