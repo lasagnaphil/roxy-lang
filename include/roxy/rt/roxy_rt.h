@@ -441,11 +441,18 @@ void  roxy_list_mark_ref_elements(void* self);
 
 // ===== Map Key Kind =====
 
-#define ROXY_MAP_KEY_INTEGER  0
-#define ROXY_MAP_KEY_FLOAT32  1
-#define ROXY_MAP_KEY_FLOAT64  2
-#define ROXY_MAP_KEY_STRING   3
-#define ROXY_MAP_KEY_STRUCT   4
+// A real enum rather than #defines so the dispatch switches in roxy_rt.cpp get
+// -Wswitch coverage: adding a key kind here makes the compiler point at every
+// switch that doesn't handle it. The `key_kind` header field below stays a
+// uint8_t (the runtime layout is shared with AOT-generated code, and a C enum's
+// size is implementation-defined), so the dispatch sites cast to this type.
+typedef enum {
+    ROXY_MAP_KEY_INTEGER = 0,
+    ROXY_MAP_KEY_FLOAT32 = 1,
+    ROXY_MAP_KEY_FLOAT64 = 2,
+    ROXY_MAP_KEY_STRING  = 3,
+    ROXY_MAP_KEY_STRUCT  = 4
+} roxy_map_key_kind;
 
 // ===== Map Header =====
 

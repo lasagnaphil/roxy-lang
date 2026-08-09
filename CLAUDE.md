@@ -283,11 +283,15 @@ Vendored code (`doctest/`, `tsl/`, `xxhash.h`, `third_party/`) is excluded via
 point — the wrapped trailing comments in the `IROp` enum oscillate between two
 alignments on successive runs, so a `--dry-run` check always flags that one file.
 
-`.clang-tidy` is a narrow, high-signal check set (~30 findings, all currently
+`.clang-tidy` is a narrow, high-signal check set (~29 findings, all currently
 triaged; the broad `misc-*` style checks are off — they produce ~3.4k mechanical
-findings that bury the useful ones). Notably `bugprone-switch-missing-default-case`
-is disabled because it fights `-Wswitch`: a `default`-less switch over an enum is
-what makes the compiler report newly-added enumerators.
+findings that bury the useful ones). Each exclusion carries its measured finding
+count and rationale in the config itself — read those before re-enabling one.
+
+The remaining 29 are almost all `clang-analyzer` null-path warnings in
+`semantic.cpp`, plausibly infeasible given the never-null `error_type` sentinel
+design (see `docs/internals/error-handling.md`) but not individually verified.
+They are a triage backlog, not a clean baseline.
 
 ```bash
 run-clang-tidy -p build 'src/roxy/.*\.cpp'    # needs Homebrew/upstream LLVM on PATH

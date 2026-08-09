@@ -79,7 +79,10 @@ template <typename T> Span<T> Parser::alloc_span(const Vector<T>& vec) {
     }
     T* data = reinterpret_cast<T*>(m_allocator.alloc_bytes(sizeof(T) * vec.size(), alignof(T)));
     for (u32 i = 0; i < vec.size(); i++) {
-        new (data + i) T(vec[i]);
+        // static_cast<void*> is explicit on purpose: when T is itself a pointer
+        // (Decl*, Expr*, ...) `data + i` is a T** and the implicit conversion to
+        // placement-new's void* is the multi-level kind that hides real mistakes.
+        new (static_cast<void*>(data + i)) T(vec[i]);
     }
     return Span<T>(data, vec.size());
 }

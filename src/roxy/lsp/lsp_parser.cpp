@@ -229,7 +229,8 @@ template <typename T> Span<T> LspParser::alloc_span(const Vector<T>& vec) {
         return Span<T>(nullptr, 0);
     T* data = reinterpret_cast<T*>(m_allocator.alloc_bytes(sizeof(T) * vec.size(), alignof(T)));
     for (u32 i = 0; i < vec.size(); i++) {
-        new (data + i) T(vec[i]);
+        // Explicit void* cast — see the matching comment in Parser::alloc_span.
+        new (static_cast<void*>(data + i)) T(vec[i]);
     }
     return Span<T>(data, vec.size());
 }

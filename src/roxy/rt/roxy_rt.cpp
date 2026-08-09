@@ -869,7 +869,9 @@ static inline uint64_t read_packed_u64(const uint32_t* key_src) {
 // Internal: hash a key based on key_kind. For Struct keys, dispatches through
 // the user-provided hash_fn if set; otherwise falls back to bytewise FNV-1a.
 static uint64_t map_hash_key(const uint32_t* key_src, const roxy_map_header* hdr) {
-    switch (hdr->key_kind) {
+    // Cast to the enum so -Wswitch flags a newly-added key kind here. The
+    // trailing return still handles an out-of-range tag from bad data.
+    switch (static_cast<roxy_map_key_kind>(hdr->key_kind)) {
         case ROXY_MAP_KEY_INTEGER:
             return hash_splitmix64(read_packed_u64(key_src));
         case ROXY_MAP_KEY_FLOAT32: {
@@ -917,7 +919,8 @@ static uint64_t map_hash_key(const uint32_t* key_src, const roxy_map_header* hdr
 // convention dance needed here, unlike the VM where `other: K` arrives as
 // packed-by-value bytes.
 static bool map_keys_equal(const uint32_t* a, const uint32_t* b, const roxy_map_header* hdr) {
-    switch (hdr->key_kind) {
+    // See map_hash_key: cast for -Wswitch coverage over the key-kind tag.
+    switch (static_cast<roxy_map_key_kind>(hdr->key_kind)) {
         case ROXY_MAP_KEY_INTEGER:
             return read_packed_u64(a) == read_packed_u64(b);
         case ROXY_MAP_KEY_FLOAT32: {

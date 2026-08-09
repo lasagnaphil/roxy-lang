@@ -6,19 +6,28 @@
 #
 # Run:  run-clang-tidy -p build 'src/roxy/.*\.cpp'
 #
-# Notable exclusions and why:
-#   bugprone-switch-missing-default-case
-#       Actively fights the -Wswitch we enable in CMakeLists. A switch over an
-#       enum with no `default` is what makes the compiler report newly-added
-#       enumerators; adding `default:` to silence this check would hide them.
-#   bugprone-branch-clone
-#       Almost every hit is grouped case labels sharing a body (opcode tables,
-#       token classification) — the house pattern, not duplication.
-#   performance-no-int-to-ptr
+# Notable exclusions and why (finding counts measured against the tree):
+#   bugprone-switch-missing-default-case  (17)
+#       NOT because it conflicts with -Wswitch — it can't: it fires only on
+#       *non-enum* switches, which is exactly what -Wswitch doesn't cover.
+#       Excluded on signal instead: all 17 hits (15 in lexer.cpp over `char`,
+#       2 in roxy_rt.cpp) already have an explicit fallback after the switch,
+#       so there is nothing latent behind them.
+#   bugprone-branch-clone  (19)
+#       The remaining hits are deliberate parallel structure — two distinct
+#       reasons to emit the same token, table-shaped if/else chains. Note this
+#       check did earn its keep once (it found a genuinely dead if/else in
+#       json.cpp), so revisit if the count ever moves.
+#   bugprone-throwing-static-initialization  (2)
+#       False positives: `Vector(Index size = 0)` only allocates when size > 0,
+#       so the default-constructed globals it flags cannot throw.
+#   performance-no-int-to-ptr  (77)
 #       The slab allocator round-trips integers and pointers by design
-#       (generational refs, tombstoning). 77 hits, all intentional.
-#   bugprone-easily-swappable-parameters / misc-no-recursion
+#       (generational refs, tombstoning). All intentional.
+#   bugprone-easily-swappable-parameters  (128)
 #       Structural complaints about a recursive-descent compiler; not actionable.
+#   performance-enum-size  (1)
+#       Changing an enum's underlying type is a layout change for negligible gain.
 Checks: >
   bugprone-*,
   performance-*,
@@ -30,11 +39,9 @@ Checks: >
   -bugprone-branch-clone,
   -bugprone-easily-swappable-parameters,
   -bugprone-switch-missing-default-case,
-  -bugprone-multi-level-implicit-pointer-conversion,
   -bugprone-throwing-static-initialization,
   -performance-no-int-to-ptr,
-  -performance-enum-size,
-  -misc-no-recursion
+  -performance-enum-size
 
 # Own headers only — vendored doctest/tsl/xxhash are excluded.
 HeaderFilterRegex: 'roxy/(compiler|vm|rt|lsp|shared|core)/(?!doctest/|tsl/|xxhash)'
