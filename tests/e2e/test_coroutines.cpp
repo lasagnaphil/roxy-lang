@@ -1947,4 +1947,81 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(VMBackend::run(mid_iteration).success == false);
     }
 
+    // ---- Coro<T> as a container element ------------------------------------
+
+    TEST_CASE_TEMPLATE("Coro<T> can be stored in a List and a Map", Backend, RX_E2E_BACKENDS) {
+        // `mangle_type_name` had no `TypeKind::Coroutine` arm, so naming the
+        // per-instantiation container members (`List$Coro$i32$$…`) tripped
+        // `assert(false && "Unhandled type kind")` — a compiler abort in a debug
+        // build, and a walk off the end of the switch in a release one. Nothing
+        // rejected the type: `Coro<T>` is noncopyable like `uniq T`, which
+        // containers hold fine.
+        const char* source = R"(
+        fun count(n: i32): Coro<i32> {
+            var i: i32 = 1;
+            while (i <= n) { yield i; i = i + 1; }
+        }
+        fun main(): i32 {
+            var l: List<Coro<i32>> = List<Coro<i32>>();
+            l.push(count(3));
+            l.push(count(3));
+            var s: i32 = 0;
+            s = s + l[0].resume();      // 1
+            s = s + l[0].resume();      // 2  (same coroutine, advanced)
+            s = s + l[1].resume();      // 1  (independent state)
+
+            var m: Map<i32, Coro<i32>> = Map<i32, Coro<i32>>();
+            m.insert(7, count(5));
+            s = s + m[7].resume();      // 1
+            s = s + m.get(7).resume();  // 2
+            return s;                    // 7
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 7);
+        // The containers own their coroutines: each state struct is destroyed by
+        // container cleanup at scope exit. run_and_capture asserts zero leaks.
+    }
+
+    TEST_CASE_TEMPLATE("a Coro<T> element is borrowed, not moved, by indexing", Backend, RX_E2E_BACKENDS) {
+        // `Coro<T>` is one of the kinds where the `borrowed` modifier is the
+        // identity, so the move-out is caught by the move checker rather than by
+        // the type system. `pop()` is the sanctioned way to take ownership.
+        const char* source = R"(
+        fun count(n: i32): Coro<i32> {
+            var i: i32 = 1;
+            while (i <= n) { yield i; i = i + 1; }
+        }
+        fun main(): i32 {
+            var l: List<Coro<i32>> = List<Coro<i32>>();
+            l.push(count(3));
+            var taken: Coro<i32> = l.pop();   // transfer out of the list
+            return taken.resume() + l.len();  // 1 + 0
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 1);
+    }
+
+    TEST_CASE("moving a Coro<T> out of a container element is rejected") {
+        const char* source = R"(
+        fun count(n: i32): Coro<i32> {
+            var i: i32 = 1;
+            while (i <= n) { yield i; i = i + 1; }
+        }
+        fun main(): i32 {
+            var l: List<Coro<i32>> = List<Coro<i32>>();
+            l.push(count(3));
+            var stolen: Coro<i32> = l[0];   // would double-free
+            return stolen.resume();
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
+
 }  // TEST_SUITE("E2E Coroutines")

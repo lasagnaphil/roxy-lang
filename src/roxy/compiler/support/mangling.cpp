@@ -147,6 +147,24 @@ StringView mangle_type_name(BumpAllocator& alloc, Type* type) {
             buf[pos] = '\0';
             return StringView(buf, total_len);
         }
+        case TypeKind::Coroutine: {
+            // Coro$<yield>. Keyed on the yield type, NOT on coro_info.func_name:
+            // the name identifies which coroutine produced the value, while the
+            // mangle has to identify the *type*, and two `Coro<i32>`s from
+            // different functions are the same type (that is what makes an erased
+            // `Coro<T>` assignable and storable). Using func_name would mint two
+            // container instantiations for one element type.
+            StringView prefix = "Coro";
+            StringView yield = mangle_type_name(alloc, type->coro_info.yield_type);
+            u32 total_len = prefix.size() + 1 + yield.size();
+            char* buf = reinterpret_cast<char*>(alloc.alloc_bytes(total_len + 1, 1));
+            u32 pos = 0;
+            memcpy(buf + pos, prefix.data(), prefix.size()); pos += prefix.size();
+            buf[pos++] = '$';
+            memcpy(buf + pos, yield.data(), yield.size()); pos += yield.size();
+            buf[pos] = '\0';
+            return StringView(buf, total_len);
+        }
         case TypeKind::Uniq:
         case TypeKind::Ref:
         case TypeKind::Weak: {

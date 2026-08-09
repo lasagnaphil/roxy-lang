@@ -65,15 +65,6 @@ now compiles and runs verbatim. Per-bug records are in this file's git history.*
   would be released once. Owned and string temporaries have the same
   loop-condition shape; theirs is invisible because a delayed free only costs
   memory, whereas a delayed borrow blocks a `delete`.
-- [ ] **A `Coro<T>` inside a container crashes the compiler**: `List<Coro<i32>>`
-  trips `assert(false && "Unhandled type kind in mangle_type_name")`
-  (`support/mangling.cpp:195`) — `mangle_type_name` has no arm for
-  `TypeKind::Coroutine`, so the per-instantiation container mangling (the
-  synthesized `to_string`, `List$<T>$$…`) has no name to build. Nothing about the
-  language rejects the type: `Coro<T>` is noncopyable like `uniq T`, which
-  containers hold fine. Either add the missing arm or reject the type with a real
-  diagnostic — an `assert(false)` means a release build walks off into UB instead.
-  Found 2026-08-09 while probing container element views; unrelated to that work.
 - [ ] **Rebinding a `ref` binding to a fresh owner compiles and then traps at
   runtime**: `fun f(r: ref List<i32>) { r = List<i32>(); }` (and the identical
   `fun f(p: ref P) { p = uniq P(); }`) type-checks — the source converts to the

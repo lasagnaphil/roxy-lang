@@ -130,6 +130,23 @@ This works because resume/done dispatch **dynamically**, mirroring the closure d
 - **`done()` is inlined.** `__state` sits at a fixed slot in every coroutine struct, so `done()` is a load + compare against `CORO_STATE_DONE` — no dispatch, no `$$done` function.
 - **Erased deletion.** An owned erased `Coro<T>` drops via `DropKind::Closure`: the VM dispatches the state-struct destructor by runtime `type_id` (`closure_env_dtors`), the C backend by `__resume_idx` (`__closure_delete`, with the resume function registered in `g_closure_fns[]`). Both run `__coro_<func>$$delete`, then free.
 
+### In containers
+
+"Stored" includes container elements: `List<Coro<T>>` and `Map<K, Coro<T>>` work
+on both backends, and the container owns its coroutines — each state struct is
+destroyed by ordinary element cleanup at scope exit. `Coro<T>` is noncopyable, so
+it behaves like any other move-only element: indexing **borrows** it (`l[0].resume()`
+advances the stored coroutine in place), moving it out is rejected, and `pop()` is
+how you take ownership. `.copy()` of such a container is rejected, as is printing
+one — `Coro<T>` implements neither Copy nor `Printable`.
+
+`mangle_type_name` names the instantiation `Coro$<yield>`, keyed on the **yield
+type** rather than `coro_info.func_name`: the name says which function produced the
+value, but the mangle has to identify the *type*, and two `Coro<i32>`s from
+different functions are the same type — that is exactly what makes an erased
+`Coro<T>` assignable. Keying on `func_name` would mint a separate container
+instantiation per producing function.
+
 ## Coroutine Methods
 
 A struct method can be a coroutine — `fun S.count(): Coro<i32> { ... yield ...; }`. It works because a method's `self` is a real first parameter (`ref S`), and coroutine lowering captures every parameter into the state struct, so `self` is captured and ref-counted for the coroutine's lifetime exactly like any `ref` parameter. No coroutine-lowering changes were needed:
