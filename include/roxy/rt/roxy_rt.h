@@ -1,9 +1,9 @@
 #pragma once
 
-#include <stdint.h>
+#include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <assert.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,45 +21,55 @@ extern "C" {
 // hard release-mode trap is the deferred AOT trap-reporting work.
 static inline int32_t roxy_idiv_i32(int32_t a, int32_t b) {
     assert(b != 0 && "Division by zero");
-    if (b == 0) return 0;
-    if (b == -1) return (int32_t)(0u - (uint32_t)a);
+    if (b == 0)
+        return 0;
+    if (b == -1)
+        return (int32_t)(0u - (uint32_t)a);
     return a / b;
 }
 static inline int32_t roxy_imod_i32(int32_t a, int32_t b) {
     assert(b != 0 && "Division by zero");
-    if (b == 0 || b == -1) return 0;
+    if (b == 0 || b == -1)
+        return 0;
     return a % b;
 }
 static inline int64_t roxy_idiv_i64(int64_t a, int64_t b) {
     assert(b != 0 && "Division by zero");
-    if (b == 0) return 0;
-    if (b == -1) return (int64_t)(0ull - (uint64_t)a);
+    if (b == 0)
+        return 0;
+    if (b == -1)
+        return (int64_t)(0ull - (uint64_t)a);
     return a / b;
 }
 static inline int64_t roxy_imod_i64(int64_t a, int64_t b) {
     assert(b != 0 && "Division by zero");
-    if (b == 0 || b == -1) return 0;
+    if (b == 0 || b == -1)
+        return 0;
     return a % b;
 }
 // Unsigned division/modulo: only divide-by-zero is undefined (no INT_MIN/-1 trap).
 static inline uint32_t roxy_udiv_u32(uint32_t a, uint32_t b) {
     assert(b != 0 && "Division by zero");
-    if (b == 0) return 0;
+    if (b == 0)
+        return 0;
     return a / b;
 }
 static inline uint32_t roxy_umod_u32(uint32_t a, uint32_t b) {
     assert(b != 0 && "Division by zero");
-    if (b == 0) return 0;
+    if (b == 0)
+        return 0;
     return a % b;
 }
 static inline uint64_t roxy_udiv_u64(uint64_t a, uint64_t b) {
     assert(b != 0 && "Division by zero");
-    if (b == 0) return 0;
+    if (b == 0)
+        return 0;
     return a / b;
 }
 static inline uint64_t roxy_umod_u64(uint64_t a, uint64_t b) {
     assert(b != 0 && "Division by zero");
-    if (b == 0) return 0;
+    if (b == 0)
+        return 0;
     return a % b;
 }
 
@@ -68,9 +78,9 @@ static inline uint64_t roxy_umod_u64(uint64_t a, uint64_t b) {
 // Precedes all heap-allocated objects in memory
 // Layout: [roxy_object_header][object data...]
 typedef struct {
-    uint64_t weak_generation;   // Random generation for weak refs; 0 = dead/tombstoned
-    uint32_t ref_count;         // Reference count for ref borrows
-    uint32_t type_id;           // Type identifier for runtime type info
+    uint64_t weak_generation; // Random generation for weak refs; 0 = dead/tombstoned
+    uint32_t ref_count;       // Reference count for ref borrows
+    uint32_t type_id;         // Type identifier for runtime type info
 } roxy_object_header;
 
 // ===== Runtime Context =====
@@ -190,9 +200,9 @@ void roxy_set_ctx(roxy_ctx* ctx);
 roxy_ctx* roxy_get_ctx(void);
 
 // ===== Builtin type IDs =====
-#define ROXY_TYPEID_STRING  1
-#define ROXY_TYPEID_LIST    2
-#define ROXY_TYPEID_MAP     3
+#define ROXY_TYPEID_STRING 1
+#define ROXY_TYPEID_LIST 2
+#define ROXY_TYPEID_MAP 3
 // User-defined struct type IDs start at 100
 
 // ===== Allocation =====
@@ -260,10 +270,10 @@ int roxy_heap_owns(void* ptr);
 // backend surfaces it: the VM turns a pending error into a recoverable
 // `vm->error`; AOT code checks it after a potentially-mutating call and aborts.
 // `_set` keeps the first message (idempotent) so the earliest violation wins.
-void        roxy_runtime_error_set(const char* msg);
-int         roxy_runtime_error_pending(void);
+void roxy_runtime_error_set(const char* msg);
+int roxy_runtime_error_pending(void);
 const char* roxy_runtime_error_message(void);
-void        roxy_runtime_error_clear(void);
+void roxy_runtime_error_clear(void);
 
 // ===== Container element-borrow pin =====
 //
@@ -378,7 +388,7 @@ void* roxy_string_from_code(int32_t code);
 // (same type as `roxy_ctx.string_intern`). Callers should not hold the
 // looked-up pointer across mutations of the same table.
 void* roxy_string_intern_lookup(void* table, const char* chars, uint32_t length);
-void  roxy_string_intern_insert(void* table, const char* chars, uint32_t length, void* string_obj);
+void roxy_string_intern_insert(void* table, const char* chars, uint32_t length, void* string_obj);
 
 // ===== to_string conversions =====
 
@@ -409,13 +419,15 @@ void* roxy_read_file(void* path);
 typedef struct {
     uint32_t length;
     uint32_t capacity;
-    uint32_t element_slot_count;  // u32 slots per element (1, 2, or N for structs)
-    uint8_t  element_is_inline;   // 1 = primitive packed in slots; 0 = struct (caller provides ptr)
-    uint8_t  element_is_ref;      // 1 = elements are counted `ref` borrows (List<ref T>): copy RefIncs each.
-    uint16_t borrow_count;        // outstanding element borrows (inout/out list[i]); 0 = unpinned.
-                                  // While > 0, structural mutators (push) refuse + raise a runtime
-                                  // error so the borrowed element pointer can't dangle. See
-                                  // roxy_list_pin / docs/internals/lifetimes.md "Container element lvalues".
+    uint32_t element_slot_count; // u32 slots per element (1, 2, or N for structs)
+    uint8_t element_is_inline;   // 1 = primitive packed in slots; 0 = struct (caller provides ptr)
+    uint8_t
+        element_is_ref; // 1 = elements are counted `ref` borrows (List<ref T>): copy RefIncs each.
+    uint16_t
+        borrow_count; // outstanding element borrows (inout/out list[i]); 0 = unpinned.
+                      // While > 0, structural mutators (push) refuse + raise a runtime
+                      // error so the borrowed element pointer can't dangle. See
+                      // roxy_list_pin / docs/internals/lifetimes.md "Container element lvalues".
     uint32_t* elements;
 } roxy_list_header;
 
@@ -426,18 +438,18 @@ typedef struct {
 // list's backing storage (valid until the next mutation).
 
 void* roxy_list_alloc(int32_t element_slot_count, int32_t element_is_inline);
-void  roxy_list_init(void* self, int32_t capacity);
-void  roxy_list_delete(void* self);
+void roxy_list_init(void* self, int32_t capacity);
+void roxy_list_delete(void* self);
 int32_t roxy_list_len(void* self);
 int32_t roxy_list_cap(void* self);
-void  roxy_list_push(void* self, const void* value_src);
+void roxy_list_push(void* self, const void* value_src);
 void* roxy_list_pop(void* self);
 void* roxy_list_get(void* self, int32_t index);
-void  roxy_list_set(void* self, int32_t index, const void* value_src);
+void roxy_list_set(void* self, int32_t index, const void* value_src);
 void* roxy_list_copy(void* src);
 // Tag a List<ref T> so roxy_list_copy RefIncs each borrowed element (mirrors
 // roxy_map_mark_ref_values). Emitted right after a List<ref T> is constructed.
-void  roxy_list_mark_ref_elements(void* self);
+void roxy_list_mark_ref_elements(void* self);
 
 // ===== Map Key Kind =====
 
@@ -450,8 +462,8 @@ typedef enum {
     ROXY_MAP_KEY_INTEGER = 0,
     ROXY_MAP_KEY_FLOAT32 = 1,
     ROXY_MAP_KEY_FLOAT64 = 2,
-    ROXY_MAP_KEY_STRING  = 3,
-    ROXY_MAP_KEY_STRUCT  = 4
+    ROXY_MAP_KEY_STRING = 3,
+    ROXY_MAP_KEY_STRUCT = 4
 } roxy_map_key_kind;
 
 // ===== Map Header =====
@@ -461,7 +473,7 @@ typedef enum {
 // returns a u64 hash. eq_fn takes two such pointers and returns bool.
 // nullptr = no custom dispatch; runtime falls back to bytewise.
 typedef uint64_t (*roxy_map_hash_fn)(const void* key_src);
-typedef bool     (*roxy_map_eq_fn)(const void* a, const void* b);
+typedef bool (*roxy_map_eq_fn)(const void* a, const void* b);
 
 // Stored in object data after roxy_object_header.
 // Layout: [roxy_object_header][roxy_map_header]
@@ -479,24 +491,26 @@ typedef bool     (*roxy_map_eq_fn)(const void* a, const void* b);
 // live in a per-VM side-table on `RoxyVM` rather than in this header,
 // so the runtime layout is identical between VM and AOT modes.
 typedef struct {
-    uint32_t length;            // Number of live entries
-    uint32_t capacity;          // Number of buckets (power of 2, or 0)
-    uint8_t  key_kind;          // ROXY_MAP_KEY_* dispatch tag
-    uint8_t  key_slot_count;    // u32 slots per key (2 for primitives, N for structs)
-    uint8_t  key_is_inline;     // 1 = primitive (value packed into slots); 0 = struct (caller passes ptr)
-    uint8_t  value_slot_count;  // u32 slots per value
-    uint8_t  value_is_inline;   // 1 = primitive value; 0 = struct (caller provides ptr)
-    uint8_t  value_is_ref;      // 1 = value is a counted borrow (`ref V`): insert RefIncs,
-                                // remove/clear/destroy RefDec. Set by roxy_map_mark_ref_values
-                                // after construction. See lifetimes.md "Applying the model".
-    uint16_t borrow_count;      // outstanding value borrows (inout/out map[k]); 0 = unpinned.
-                                // While > 0, structural mutators (insert/remove/clear) refuse +
-                                // raise a runtime error. See roxy_map_pin / lifetimes.md "Container element lvalues".
-    roxy_map_hash_fn hash_fn;   // nullptr = bytewise hash (Struct key kind only)
-    roxy_map_eq_fn   eq_fn;     // nullptr = bytewise eq (Struct key kind only)
-    uint8_t*  distances;        // Per-bucket Robin Hood distance+1 (0 = empty)
-    uint32_t* keys;             // capacity * key_slot_count u32 slots
-    uint32_t* values;           // capacity * value_slot_count u32 slots
+    uint32_t length;        // Number of live entries
+    uint32_t capacity;      // Number of buckets (power of 2, or 0)
+    uint8_t key_kind;       // ROXY_MAP_KEY_* dispatch tag
+    uint8_t key_slot_count; // u32 slots per key (2 for primitives, N for structs)
+    uint8_t
+        key_is_inline; // 1 = primitive (value packed into slots); 0 = struct (caller passes ptr)
+    uint8_t value_slot_count; // u32 slots per value
+    uint8_t value_is_inline;  // 1 = primitive value; 0 = struct (caller provides ptr)
+    uint8_t value_is_ref;     // 1 = value is a counted borrow (`ref V`): insert RefIncs,
+                              // remove/clear/destroy RefDec. Set by roxy_map_mark_ref_values
+                              // after construction. See lifetimes.md "Applying the model".
+    uint16_t borrow_count;    // outstanding value borrows (inout/out map[k]); 0 = unpinned.
+                              // While > 0, structural mutators (insert/remove/clear) refuse +
+                              // raise a runtime error. See roxy_map_pin / lifetimes.md "Container
+                              // element lvalues".
+    roxy_map_hash_fn hash_fn; // nullptr = bytewise hash (Struct key kind only)
+    roxy_map_eq_fn eq_fn;     // nullptr = bytewise eq (Struct key kind only)
+    uint8_t* distances;       // Per-bucket Robin Hood distance+1 (0 = empty)
+    uint32_t* keys;           // capacity * key_slot_count u32 slots
+    uint32_t* values;         // capacity * value_slot_count u32 slots
 } roxy_map_header;
 
 // ===== Map Operations =====
@@ -506,22 +520,21 @@ typedef struct {
 // `*_index` return pointers into the map's backing storage (valid until the
 // next insert/remove).
 
-void* roxy_map_alloc(int32_t key_slot_count, int32_t key_is_inline,
-                     int32_t value_slot_count, int32_t value_is_inline,
-                     roxy_map_hash_fn hash_fn, roxy_map_eq_fn eq_fn);
-void  roxy_map_init(void* self, int32_t key_kind, int32_t capacity);
-void  roxy_map_delete(void* self);
+void* roxy_map_alloc(int32_t key_slot_count, int32_t key_is_inline, int32_t value_slot_count,
+                     int32_t value_is_inline, roxy_map_hash_fn hash_fn, roxy_map_eq_fn eq_fn);
+void roxy_map_init(void* self, int32_t key_kind, int32_t capacity);
+void roxy_map_delete(void* self);
 int32_t roxy_map_len(void* self);
-bool  roxy_map_contains(void* self, const void* key_src);
+bool roxy_map_contains(void* self, const void* key_src);
 void* roxy_map_get(void* self, const void* key_src);
 // Single-probe lookup with a fallback: returns a pointer to the stored value
 // bytes if `key` is present, otherwise the passed-in `default_src` pointer
 // (never asserts, even on an empty map). The caller copies out `value_slot_count`
 // slots from the returned pointer, so on a miss it reads the default's bytes.
 void* roxy_map_get_or(void* self, const void* key_src, const void* default_src);
-void  roxy_map_insert(void* self, const void* key_src, const void* value_src);
-bool  roxy_map_remove(void* self, const void* key_src);
-void  roxy_map_clear(void* self);
+void roxy_map_insert(void* self, const void* key_src, const void* value_src);
+bool roxy_map_remove(void* self, const void* key_src);
+void roxy_map_clear(void* self);
 void* roxy_map_keys(void* self);
 void* roxy_map_values(void* self);
 void* roxy_map_copy(void* src);
@@ -529,11 +542,11 @@ void* roxy_map_copy(void* src);
 // Mark a map's values as counted borrows (`ref V`). Emitted by the compiler
 // right after a `Map<_, ref V>` is constructed, so insert RefIncs the borrow and
 // remove/clear/destroy RefDec it (lifetimes.md "Applying the model").
-void  roxy_map_mark_ref_values(void* self);
+void roxy_map_mark_ref_values(void* self);
 
 // Map index operators — same as get/insert under a different native name.
 void* roxy_map_index(void* self, const void* key_src);
-void  roxy_map_index_mut(void* self, const void* key_src, const void* value_src);
+void roxy_map_index_mut(void* self, const void* key_src, const void* value_src);
 
 // Internal map iteration (used by generated code for noncopyable element cleanup)
 int32_t roxy_map_iter_capacity(void* self);
@@ -595,9 +608,7 @@ namespace roxy {
 //     roxy_ctx_destroy(&ctx);
 class ScopedContext {
 public:
-    explicit ScopedContext(roxy_ctx* ctx) : m_prev(roxy_get_ctx()) {
-        roxy_set_ctx(ctx);
-    }
+    explicit ScopedContext(roxy_ctx* ctx) : m_prev(roxy_get_ctx()) { roxy_set_ctx(ctx); }
     ~ScopedContext() { roxy_set_ctx(m_prev); }
 
     ScopedContext(const ScopedContext&) = delete;
@@ -611,8 +622,7 @@ using destructor_fn = void (*)(void*);
 
 // Unique ownership: owns one allocation, calls user destructor + roxy_free
 // on scope exit. Move-only, no copy.
-template <typename T>
-class uniq {
+template <typename T> class uniq {
 public:
     uniq() : m_ptr(nullptr), m_destructor(nullptr) {}
 
@@ -621,8 +631,7 @@ public:
 
     ~uniq() { reset(); }
 
-    uniq(uniq&& other) noexcept
-        : m_ptr(other.m_ptr), m_destructor(other.m_destructor) {
+    uniq(uniq&& other) noexcept : m_ptr(other.m_ptr), m_destructor(other.m_destructor) {
         other.m_ptr = nullptr;
     }
 
@@ -653,7 +662,8 @@ public:
 
     void reset() {
         if (m_ptr) {
-            if (m_destructor) m_destructor(m_ptr);
+            if (m_destructor)
+                m_destructor(m_ptr);
             roxy_free(m_ptr);
             m_ptr = nullptr;
         }
@@ -667,39 +677,42 @@ private:
 // Shared reference: increments ref count on copy, decrements on destruction.
 // Last reference triggers `roxy_ref_dec` which frees if there is no outstanding
 // `uniq` owner.
-template <typename T>
-class ref {
+template <typename T> class ref {
 public:
     ref() : m_ptr(nullptr) {}
 
     explicit ref(T* ptr) : m_ptr(ptr) {
-        if (m_ptr) roxy_ref_inc(m_ptr);
+        if (m_ptr)
+            roxy_ref_inc(m_ptr);
     }
 
     ~ref() {
-        if (m_ptr) roxy_ref_dec(m_ptr);
+        if (m_ptr)
+            roxy_ref_dec(m_ptr);
     }
 
     ref(const ref& other) : m_ptr(other.m_ptr) {
-        if (m_ptr) roxy_ref_inc(m_ptr);
+        if (m_ptr)
+            roxy_ref_inc(m_ptr);
     }
 
     ref& operator=(const ref& other) {
         if (this != &other) {
-            if (m_ptr) roxy_ref_dec(m_ptr);
+            if (m_ptr)
+                roxy_ref_dec(m_ptr);
             m_ptr = other.m_ptr;
-            if (m_ptr) roxy_ref_inc(m_ptr);
+            if (m_ptr)
+                roxy_ref_inc(m_ptr);
         }
         return *this;
     }
 
-    ref(ref&& other) noexcept : m_ptr(other.m_ptr) {
-        other.m_ptr = nullptr;
-    }
+    ref(ref&& other) noexcept : m_ptr(other.m_ptr) { other.m_ptr = nullptr; }
 
     ref& operator=(ref&& other) noexcept {
         if (this != &other) {
-            if (m_ptr) roxy_ref_dec(m_ptr);
+            if (m_ptr)
+                roxy_ref_dec(m_ptr);
             m_ptr = other.m_ptr;
             other.m_ptr = nullptr;
         }
@@ -717,27 +730,20 @@ private:
 
 // Weak reference: non-owning, generation-checked. `valid()` returns false once
 // the referenced object has been freed.
-template <typename T>
-class weak {
+template <typename T> class weak {
 public:
     weak() : m_ptr(nullptr), m_generation(0) {}
 
-    explicit weak(T* ptr)
-        : m_ptr(ptr)
-        , m_generation(ptr ? roxy_weak_generation(ptr) : 0) {}
+    explicit weak(T* ptr) : m_ptr(ptr), m_generation(ptr ? roxy_weak_generation(ptr) : 0) {}
 
-    bool valid() const {
-        return m_ptr != nullptr && roxy_weak_valid(m_ptr, m_generation);
-    }
+    bool valid() const { return m_ptr != nullptr && roxy_weak_valid(m_ptr, m_generation); }
 
     T* lock() const {
         assert(valid() && "weak reference is dangling");
         return m_ptr;
     }
 
-    T* lock_or_null() const {
-        return valid() ? m_ptr : nullptr;
-    }
+    T* lock_or_null() const { return valid() ? m_ptr : nullptr; }
 
     weak(const weak&) = default;
     weak& operator=(const weak&) = default;
@@ -771,12 +777,8 @@ public:
     int32_t length() const { return roxy_string_len(m_data); }
     const char* c_str() const { return roxy_string_chars(m_data); }
 
-    bool equals(String other) const {
-        return roxy_string_eq(m_data, other.m_data);
-    }
-    String concat(String other) const {
-        return String(roxy_string_concat(m_data, other.m_data));
-    }
+    bool equals(String other) const { return roxy_string_eq(m_data, other.m_data); }
+    String concat(String other) const { return String(roxy_string_concat(m_data, other.m_data)); }
 
     bool is_valid() const { return m_data != nullptr; }
     void* data() const { return m_data; }
@@ -785,24 +787,22 @@ private:
     void* m_data;
 };
 
-template <typename T>
-class List {
+template <typename T> class List {
 public:
     static constexpr int32_t slot_count =
         static_cast<int32_t>((sizeof(T) + sizeof(uint32_t) - 1) / sizeof(uint32_t));
 
     static List<T> alloc(int32_t capacity = 0) {
         void* data = roxy_list_alloc(slot_count, /*element_is_inline=*/1);
-        if (data) roxy_list_init(data, capacity);
+        if (data)
+            roxy_list_init(data, capacity);
         return List<T>(data);
     }
 
     List() : m_data(nullptr) {}
     explicit List(void* data) : m_data(data) {}
 
-    void push(const T& value) {
-        roxy_list_push(m_data, &value);
-    }
+    void push(const T& value) { roxy_list_push(m_data, &value); }
     T pop() {
         T value;
         std::memcpy(&value, roxy_list_pop(m_data), sizeof(T));
@@ -813,9 +813,7 @@ public:
         std::memcpy(&value, roxy_list_get(m_data, index), sizeof(T));
         return value;
     }
-    void set(int32_t index, const T& value) {
-        roxy_list_set(m_data, index, &value);
-    }
+    void set(int32_t index, const T& value) { roxy_list_set(m_data, index, &value); }
 
     int32_t len() const { return roxy_list_len(m_data); }
     int32_t cap() const { return roxy_list_cap(m_data); }
@@ -827,31 +825,26 @@ private:
     void* m_data;
 };
 
-template <typename K, typename V>
-class Map {
+template <typename K, typename V> class Map {
 public:
     static constexpr int32_t key_slot_count =
         static_cast<int32_t>((sizeof(K) + sizeof(uint32_t) - 1) / sizeof(uint32_t));
     static constexpr int32_t value_slot_count =
         static_cast<int32_t>((sizeof(V) + sizeof(uint32_t) - 1) / sizeof(uint32_t));
 
-    static Map<K, V> alloc(int32_t key_kind,
-                           int32_t capacity = 0,
-                           roxy_map_hash_fn hash_fn = nullptr,
-                           roxy_map_eq_fn eq_fn = nullptr) {
-        void* data = roxy_map_alloc(key_slot_count, /*key_is_inline=*/1,
-                                    value_slot_count, /*value_is_inline=*/1,
-                                    hash_fn, eq_fn);
-        if (data) roxy_map_init(data, key_kind, capacity);
+    static Map<K, V> alloc(int32_t key_kind, int32_t capacity = 0,
+                           roxy_map_hash_fn hash_fn = nullptr, roxy_map_eq_fn eq_fn = nullptr) {
+        void* data = roxy_map_alloc(key_slot_count, /*key_is_inline=*/1, value_slot_count,
+                                    /*value_is_inline=*/1, hash_fn, eq_fn);
+        if (data)
+            roxy_map_init(data, key_kind, capacity);
         return Map<K, V>(data);
     }
 
     Map() : m_data(nullptr) {}
     explicit Map(void* data) : m_data(data) {}
 
-    void insert(const K& key, const V& value) {
-        roxy_map_insert(m_data, &key, &value);
-    }
+    void insert(const K& key, const V& value) { roxy_map_insert(m_data, &key, &value); }
     V get(const K& key) const {
         V value;
         std::memcpy(&value, roxy_map_get(m_data, &key), sizeof(V));
@@ -862,12 +855,8 @@ public:
         std::memcpy(&value, roxy_map_get_or(m_data, &key, &fallback), sizeof(V));
         return value;
     }
-    bool contains(const K& key) const {
-        return roxy_map_contains(m_data, &key);
-    }
-    bool remove(const K& key) {
-        return roxy_map_remove(m_data, &key);
-    }
+    bool contains(const K& key) const { return roxy_map_contains(m_data, &key); }
+    bool remove(const K& key) { return roxy_map_remove(m_data, &key); }
     void clear() { roxy_map_clear(m_data); }
 
     List<K> keys() const { return List<K>(roxy_map_keys(m_data)); }
