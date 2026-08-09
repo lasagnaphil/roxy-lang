@@ -279,9 +279,15 @@ git-clang-format             # or just what you staged
 ```
 
 Vendored code (`doctest/`, `tsl/`, `xxhash.h`, `third_party/`) is excluded via
-`.clang-format-ignore`. One known wart: `ir/ssa_ir.hpp` never reaches a fixed
-point — the wrapped trailing comments in the `IROp` enum oscillate between two
-alignments on successive runs, so a `--dry-run` check always flags that one file.
+`.clang-format-ignore`. Every file is at its formatting fixed point, so a
+`--dry-run` check over the tree passes clean and is safe to wire into CI.
+
+If you re-sweep the tree, note that **clang-format is not always idempotent in
+a single pass** — wrapped trailing comments inside an aligned block can settle
+only on the second pass, and `clang-format -i` runs exactly one. Re-run until
+nothing changes. (Also: `--assume-filename` is ignored when clang-format is
+given a file argument instead of stdin, which will silently fall back to LLVM
+defaults and make an idempotency check lie to you.)
 
 `.clang-tidy` is a narrow, high-signal check set (the broad `misc-*` style
 checks are off — they produce ~3.4k mechanical findings that bury the useful

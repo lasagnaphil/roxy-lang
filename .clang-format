@@ -4,14 +4,15 @@
 # Everything else — include sorting, trailing-comment alignment, and the
 # one-liner rules — is left at LLVM's defaults on purpose.
 #
-# The whole tree was formatted with this config in one sweep, so it should stay
-# clean; `clang-format -i` on files you touch is enough to keep it that way.
-# Vendored code is excluded via .clang-format-ignore.
+# The whole tree is formatted with this config and every file is at its
+# formatting fixed point, so a `--dry-run` check over the tree passes clean.
+# `clang-format -i` on files you touch keeps it that way. Vendored code is
+# excluded via .clang-format-ignore.
 #
-# Known wart: include/roxy/compiler/ir/ssa_ir.hpp does not reach a fixed point.
-# Its wrapped trailing comments in the IROp enum oscillate between two
-# alignments on successive runs (a clang-format bug in AlignTrailingComments
-# over wrapped comments), so a `--dry-run` check will always flag that file.
+# One gotcha if you ever re-sweep: clang-format is not always idempotent in a
+# single pass (wrapped trailing comments in an aligned block can settle on the
+# second pass), and `-i` runs exactly one. Re-run until the tree stops
+# changing rather than assuming one pass is enough.
 Language: Cpp
 BasedOnStyle: LLVM
 
