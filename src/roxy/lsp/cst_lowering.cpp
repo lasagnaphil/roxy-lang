@@ -710,7 +710,6 @@ Stmt* CstLowering::lower_for_stmt(SyntaxNode* node) {
     // The init can be a VarDecl, ExprStmt, or just ';'
     // We need to parse based on the child structure
     u32 semi_count = 0;
-    u32 part_index = 0;
     bool past_lparen = false;
     bool past_rparen = false;
     for (u32 i = 0; i < node->children.size(); i++) {

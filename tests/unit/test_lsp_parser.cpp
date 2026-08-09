@@ -15,14 +15,6 @@ static SyntaxTree parse_source(const char* source, BumpAllocator& allocator) {
     return parser.parse();
 }
 
-// Helper to find first child of a given kind
-static SyntaxNode* find_child(SyntaxNode* node, SyntaxKind kind) {
-    for (u32 i = 0; i < node->children.size(); i++) {
-        if (node->children[i]->kind == kind) return node->children[i];
-    }
-    return nullptr;
-}
-
 // Helper to count children of a given kind
 static u32 count_children(SyntaxNode* node, SyntaxKind kind) {
     u32 count = 0;
@@ -30,15 +22,6 @@ static u32 count_children(SyntaxNode* node, SyntaxKind kind) {
         if (node->children[i]->kind == kind) count++;
     }
     return count;
-}
-
-// Helper to check if any node in the tree is an Error node
-static bool has_error_node(SyntaxNode* node) {
-    if (node->kind == SyntaxKind::Error) return true;
-    for (u32 i = 0; i < node->children.size(); i++) {
-        if (has_error_node(node->children[i])) return true;
-    }
-    return false;
 }
 
 TEST_SUITE("LSP Parser") {

@@ -448,6 +448,15 @@ TypeExpr* GenericInstantiator::type_to_type_expr(Type* type, SourceLocation loc)
             break;
         }
 
+        case TypeKind::Coroutine: {
+            result->name = "Coro";
+            TypeExpr** args = reinterpret_cast<TypeExpr**>(
+                m_allocator.alloc_bytes(sizeof(TypeExpr*), alignof(TypeExpr*)));
+            args[0] = type_to_type_expr(type->coro_info.yield_type, loc);
+            result->type_args = Span<TypeExpr*>(args, 1);
+            break;
+        }
+
         case TypeKind::Uniq:
         case TypeKind::Ref:
         case TypeKind::Weak: {

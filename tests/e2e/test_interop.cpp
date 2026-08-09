@@ -821,7 +821,7 @@ TEST_SUITE("E2E Interop") {
     // C++ function that reads a list created by Roxy
     i32 list_sum(RoxyList<i32> list) {
         i32 total = 0;
-        for (u32 i = 0; i < list.len(); i++) {
+        for (i32 i = 0; i < list.len(); i++) {
             total += list.get(static_cast<i64>(i));
         }
         return total;

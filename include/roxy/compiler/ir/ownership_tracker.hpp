@@ -9,7 +9,7 @@
 
 namespace rx {
 
-class Type;
+struct Type;
 
 // Whether a tracked local owns its value (destroy on cleanup), is a `ref`
 // borrow (decrement its count on cleanup), or an owned string (release on

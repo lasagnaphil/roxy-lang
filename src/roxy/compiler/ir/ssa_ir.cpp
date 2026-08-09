@@ -105,6 +105,7 @@ const char* ir_op_to_string(IROp op) {
         case IROp::IndexGet:     return "index_get";
         case IROp::IndexSet:     return "index_set";
         case IROp::IndexAddr:    return "index_addr";
+        case IROp::IndexTryAddr: return "index_try_addr";
         case IROp::ContainerPin:   return "container_pin";
         case IROp::ContainerUnpin: return "container_unpin";
 
@@ -273,6 +274,7 @@ void ir_inst_to_string(const IRInst* inst, String& out) {
         case IROp::Nullify:
         case IROp::Throw:
         case IROp::Yield:
+        case IROp::AssertHeap:
         case IROp::ContainerPin:
         case IROp::ContainerUnpin:
             append_str(out, " ");

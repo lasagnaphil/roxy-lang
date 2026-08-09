@@ -116,7 +116,16 @@ TEST_SUITE("String") {
 
         SUBCASE("self-assignment") {
             String a("hello");
+            // Assigning to itself is exactly what this case tests, so the
+            // self-assign diagnostic is expected here.
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wself-assign-overloaded"
+#endif
             a = a;
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
             CHECK(a == "hello");
         }
 

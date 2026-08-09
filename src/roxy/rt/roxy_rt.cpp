@@ -1120,7 +1120,6 @@ bool roxy_map_contains(void* self, const void* key_src) {
     auto* hdr = map_hdr(self);
     if (hdr->capacity == 0 || hdr->length == 0) return false;
 
-    uint8_t ksc = hdr->key_slot_count;
     uint32_t mask = hdr->capacity - 1;
     auto* k = static_cast<const uint32_t*>(key_src);
     uint64_t hash = map_hash_key(k, hdr);
@@ -1225,7 +1224,6 @@ void* roxy_map_get_or(void* self, const void* key_src, const void* default_src) 
 void roxy_map_insert(void* self, const void* key_src, const void* value_src) {
     auto* hdr = map_hdr(self);
     if (map_mutation_blocked(hdr)) return;  // covers map[k]=v (roxy_map_index_mut)
-    uint8_t ksc = hdr->key_slot_count;
     uint8_t vsc = hdr->value_slot_count;
     auto* k = static_cast<const uint32_t*>(key_src);
     auto* v = static_cast<const uint32_t*>(value_src);

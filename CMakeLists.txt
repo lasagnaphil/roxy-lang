@@ -4,6 +4,30 @@ project(roxy)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Warnings. On by default; turn OFF to silence a noisy third-party toolchain.
+# Two -Wextra categories are disabled project-wide because in this codebase they
+# are almost entirely noise rather than signal:
+#   -Wunused-parameter          — the binding/native-wrapper layer
+#                                 (vm/binding/binder.hpp, vm/natives.cpp) has a
+#                                 fixed callback signature, so most wrappers
+#                                 legitimately ignore some parameters.
+#   -Wmissing-field-initializers — aggregate init of SourceLocation and friends
+#                                 deliberately leans on zero-init for trailing
+#                                 fields.
+# Everything else is expected to stay clean; -Wmismatched-tags in particular
+# matters here because the Windows build uses clang-cl (MS C++ ABI), where a
+# struct/class forward-declaration mismatch can produce linker errors.
+option(ENABLE_WARNINGS "Build with -Wall/-Wextra (or /W4 on MSVC)" ON)
+if(ENABLE_WARNINGS)
+    if(MSVC AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        add_compile_options(/W4)
+    else()
+        add_compile_options(-Wall -Wextra
+                            -Wno-unused-parameter
+                            -Wno-missing-field-initializers)
+    endif()
+endif()
+
 # Bytecode profiler option — adds per-opcode count + TSC cycle accounting in
 # the interpreter dispatch loop. Off by default (zero cost). When ON, the VM
 # prints a sorted opcode summary on destroy. Build under build-profile/ and

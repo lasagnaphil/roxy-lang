@@ -2005,6 +2005,31 @@ TEST_SUITE("E2E Coroutines") {
         CHECK(result.value == 1);
     }
 
+    TEST_CASE_TEMPLATE("Coro<T> as a generic type argument", Backend, RX_E2E_BACKENDS) {
+        // Instantiating a generic at `Coro<T>` goes through
+        // GenericInstantiator::type_to_type_expr, which used to have no case for
+        // TypeKind::Coroutine — the substituted TypeExpr came out with an empty
+        // name and the instantiation failed with "unknown type ''".
+        const char* source = R"(
+        fun count(n: i32): Coro<i32> {
+            var i: i32 = 1;
+            while (i <= n) { yield i; i = i + 1; }
+        }
+        fun drain<T>(c: T): i32 {
+            var total: i32 = 0;
+            while (!c.done()) { total = total + c.resume(); }
+            return total;
+        }
+        fun main(): i32 {
+            var c = count(3);
+            return drain(c);   // 1 + 2 + 3
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 6);
+    }
+
     TEST_CASE("moving a Coro<T> out of a container element is rejected") {
         const char* source = R"(
         fun count(n: i32): Coro<i32> {

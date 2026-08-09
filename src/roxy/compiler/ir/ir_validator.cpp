@@ -228,6 +228,7 @@ bool IRValidator::validate_instruction(IRFunction* func, IRBlock* block, IRInst*
         case IROp::StrRetain: case IROp::StrRelease:
         case IROp::I_TO_F64: case IROp::F64_TO_I: case IROp::I_TO_B: case IROp::B_TO_I:
         case IROp::Throw:
+        case IROp::Nullify:
         case IROp::AssertHeap:
         case IROp::ContainerPin:
         case IROp::ContainerUnpin:
@@ -415,6 +416,30 @@ bool IRValidator::validate_instruction(IRFunction* func, IRBlock* block, IRInst*
                 report_error_fmt("function '{}' block {}: block_arg_index {} >= block params size {}",
                                  func->name, block->id.id, inst->block_arg_index,
                                  static_cast<u32>(block->params.size()));
+                return false;
+            }
+            break;
+        }
+
+        // Container indexing - container/index always, value only for IndexSet
+        case IROp::IndexGet:
+        case IROp::IndexAddr:
+        case IROp::IndexTryAddr:
+        case IROp::IndexSet:
+        {
+            if (!value_in_range(inst->index_data.container, next_id)) {
+                report_error_fmt("function '{}' block {}: index op container v{} invalid",
+                                 func->name, block->id.id, inst->index_data.container.id);
+                return false;
+            }
+            if (!value_in_range(inst->index_data.index, next_id)) {
+                report_error_fmt("function '{}' block {}: index op index v{} invalid",
+                                 func->name, block->id.id, inst->index_data.index.id);
+                return false;
+            }
+            if (inst->op == IROp::IndexSet && !value_in_range(inst->index_data.value, next_id)) {
+                report_error_fmt("function '{}' block {}: index_set value v{} invalid",
+                                 func->name, block->id.id, inst->index_data.value.id);
                 return false;
             }
             break;

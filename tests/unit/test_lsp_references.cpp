@@ -958,9 +958,7 @@ TEST_SUITE("LSP References") {
 
         // From definition
         auto result_from_def = find_references(source, 4);  // "greet" in fun greet
-        // From usage
-        u32 usage_offset = static_cast<u32>(strstr(source, "greet()") + 6 - source);  // after first greet
-        // Actually find second "greet" occurrence
+        // From usage — the second "greet" occurrence (the call site)
         const char* second = strstr(source + 15, "greet");
         u32 call_offset = static_cast<u32>(second - source);
         auto result_from_usage = find_references(source, call_offset);
