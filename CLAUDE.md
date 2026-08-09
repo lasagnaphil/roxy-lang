@@ -283,15 +283,26 @@ Vendored code (`doctest/`, `tsl/`, `xxhash.h`, `third_party/`) is excluded via
 point — the wrapped trailing comments in the `IROp` enum oscillate between two
 alignments on successive runs, so a `--dry-run` check always flags that one file.
 
-`.clang-tidy` is a narrow, high-signal check set (~29 findings, all currently
-triaged; the broad `misc-*` style checks are off — they produce ~3.4k mechanical
-findings that bury the useful ones). Each exclusion carries its measured finding
-count and rationale in the config itself — read those before re-enabling one.
+`.clang-tidy` is a narrow, high-signal check set (the broad `misc-*` style
+checks are off — they produce ~3.4k mechanical findings that bury the useful
+ones). Each exclusion carries its measured finding count and rationale in the
+config itself — read those before re-enabling one.
 
-The remaining 29 are almost all `clang-analyzer` null-path warnings in
-`semantic.cpp`, plausibly infeasible given the never-null `error_type` sentinel
-design (see `docs/internals/error-handling.md`) but not individually verified.
-They are a triage backlog, not a clean baseline.
+**The tree is down to one finding** (`interpreter.cpp`'s C99 array designators,
+a portability question for a real-MSVC build, not a defect). Keep it there.
+
+Two things worth knowing when a new finding shows up:
+
+- **Prefer `assert()` over `NOLINT` for null-path warnings.** clang-analyzer
+  treats an assert as a path constraint, so asserting an invariant makes the
+  path genuinely infeasible rather than merely silenced — and documents the
+  contract. Most of the original backlog was a *vestigial null-guard*
+  (`if (p && ...)` earlier in a function, an unguarded `p->` later); the guard
+  is what created the null path, since `check_expr` never returns null (it
+  yields the `error_type` sentinel — `docs/internals/error-handling.md`).
+- **`clang-analyzer-security.ArrayBound` is taint-based** and flags any
+  externally-derived index even when the bounds are provably correct. The two
+  `NOLINT`s for it (`file.cpp`, `roxy_rt.cpp`) are that, not real gaps.
 
 ```bash
 run-clang-tidy -p build 'src/roxy/.*\.cpp'    # needs Homebrew/upstream LLVM on PATH
