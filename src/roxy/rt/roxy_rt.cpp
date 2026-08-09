@@ -383,7 +383,15 @@ static void* roxy_string_alloc_impl(const char* data, uint32_t length, bool immo
         }
     }
 
-    uint32_t data_size = static_cast<uint32_t>(sizeof(roxy_string_header)) + length + 1;
+    // header + length + NUL is computed in uint32_t, so a length within a few
+    // bytes of UINT32_MAX would wrap and under-allocate — after which the
+    // memcpy and the `chars[length]` terminator below run off the end. Such a
+    // string can't be constructed today, but the guard is a single compare.
+    const uint32_t header_size = static_cast<uint32_t>(sizeof(roxy_string_header));
+    if (length > UINT32_MAX - header_size - 1)
+        return nullptr;
+
+    uint32_t data_size = header_size + length + 1;
     void* s = roxy_alloc(data_size, ROXY_TYPEID_STRING);
     if (!s)
         return nullptr;
