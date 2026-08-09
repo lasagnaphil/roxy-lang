@@ -496,10 +496,21 @@ Span<MethodInfo> NativeRegistry::instantiate_generic_methods(StringView name, Sp
         }
         method_info.param_types = Span<Type*>(param_types, param_count);
 
+        // NOTE: `methods` is raw allocator memory — no MethodInfo constructor
+        // runs, so every field must be assigned here, default member
+        // initializers included.
+        method_info.returns_borrowed = false;
+
         switch (entry.type_info_mode) {
             case NativeTypeInfoMode::Parsed:
                 method_info.return_type = resolve_type_expr(
                     entry.return_type_expr, type_param_names, type_args, types);
+                // Record that the signature said `borrowed` (see MethodInfo).
+                // resolve_type_expr already applied the transform to
+                // `return_type`; for the kinds where it is the identity, this
+                // flag is what tells the move checker the result is a view.
+                method_info.returns_borrowed =
+                    entry.return_type_expr && entry.return_type_expr->is_borrowed;
                 break;
             case NativeTypeInfoMode::Resolver:
                 method_info.return_type = entry.return_resolver(types);

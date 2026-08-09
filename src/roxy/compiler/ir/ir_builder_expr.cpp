@@ -760,7 +760,12 @@ ValueId IRBuilder::gen_expr(Expr* expr) {
             // when used inline and not bound/consumed (e.g. `f()()`,
             // `make_list().len()`). Constructor/struct-literal paths already
             // self-track, so skip if already a tracked temp.
-            track_noncopyable_call_temp(result, expr->resolved_type);
+            // A `borrowed`-returning native accessor is the exception: it hands
+            // back a view of the receiver's interior, which this frame does not
+            // own and must not destroy.
+            if (!is_borrowed_view_call(expr)) {
+                track_noncopyable_call_temp(result, expr->resolved_type);
+            }
             // A string-returning call (native producer or a user function, which
             // hands off an owned count-1 via gen_return) yields an owned string
             // temp — track it for release (finding 9b).

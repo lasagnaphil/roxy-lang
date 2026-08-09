@@ -264,6 +264,35 @@ bool LifetimeChecker::is_out_inout_param(Expr* expr) {
     return sym && sym->kind == SymbolKind::Parameter && sym->is_out_inout;
 }
 
+bool LifetimeChecker::is_borrowed_native_accessor(Expr* expr) const {
+    if (!expr) return false;
+
+    // The two spellings that reach a container accessor: `c[k]` dispatches to
+    // the `index` method, and `c.get(k)` names its method directly. Both resolve
+    // to a MethodInfo on the receiver's type.
+    Expr* receiver = nullptr;
+    StringView method_name;
+    if (expr->kind == AstKind::ExprIndex) {
+        receiver = expr->index.object;
+        method_name = "index"_sv;
+    } else if (expr->kind == AstKind::ExprCall &&
+               expr->call.callee &&
+               expr->call.callee->kind == AstKind::ExprGet) {
+        receiver = expr->call.callee->get.object;
+        method_name = expr->call.callee->get.name;
+    } else {
+        return false;
+    }
+
+    // A null receiver type means `object` names an imported module, not a value
+    // (see the annotation contract in ast.hpp) — no receiver, no accessor.
+    if (!receiver || !receiver->resolved_type) return false;
+
+    const MethodInfo* method =
+        m_types.lookup_method(receiver->resolved_type->base_type(), method_name);
+    return method && !method->native_name.empty() && method->returns_borrowed;
+}
+
 void LifetimeChecker::consume_noncopyable(Expr* expr, SourceLocation loc) {
     if (!expr) return;
     Type* type = expr->resolved_type;
@@ -295,27 +324,27 @@ void LifetimeChecker::consume_noncopyable(Expr* expr, SourceLocation loc) {
         return;
     }
 
-    // Moving a noncopyable value out of an index expression can be unsound. `[]`
-    // dispatches to the `index` method, and the distinguishing signal is whether
-    // that method is native: a user-defined `index` (the Index trait) has a
-    // move-checked body, so its noncopyable return is a genuine ownership
-    // transfer and is sound to consume. A *native* `index` (built-in List/Map) is
-    // outside the move checker and returns the element by alias without nullifying
-    // the slot, so the new owner and the container's own scope-exit cleanup both
-    // free it (double-free). Reject the move only for a native index method.
-    // (This is the interim rule until `borrowed`-typed returns make the result a
-    // `ref`, at which point the move-out becomes a plain ref→uniq type error.)
-    if (expr->kind == AstKind::ExprIndex && expr->index.object) {
-        Type* obj_type = expr->index.object->resolved_type;
-        if (obj_type) {
-            const MethodInfo* index_method =
-                m_types.lookup_method(obj_type->base_type(), "index"_sv);
-            if (index_method && !index_method->native_name.empty()) {
-                m_reporter.error(loc, "cannot move a noncopyable value out of a container element; "
-                           "borrow it with 'ref' or remove it from the container instead");
-                return;
-            }
-        }
+    // Moving a noncopyable value out of a `borrowed`-returning native accessor
+    // is unsound: it hands out a view of the container's interior without
+    // nullifying the slot, so the new owner and the container's own cleanup both
+    // free it (double-free). This covers `l[i]` / `m[k]` (which dispatch to the
+    // `index` method) and the named `m.get(k)` alike.
+    //
+    // The `borrowed` modifier on the signature is the signal, not the method
+    // being native. That distinction matters in both directions:
+    //  - Not every native method aliases. `pop`, `copy`, `keys`, and `values`
+    //    return a genuinely fresh value and must stay consumable.
+    //  - A user-defined `index` (the Index trait) has a move-checked body, so its
+    //    noncopyable return is a real ownership transfer and is sound to consume.
+    // Where `borrowed` could demote the type (`uniq T` -> `ref T`, `fun` ->
+    // `ref fun`) the move-out is already a plain ref→uniq type error and never
+    // reaches here; this check is what covers the kinds where the transform is
+    // the identity (`List`/`Map`/`Coro`/value struct). See lifetimes.md →
+    // "The `borrowed` type modifier".
+    if (is_borrowed_native_accessor(expr)) {
+        m_reporter.error(loc, "cannot move a noncopyable value out of a container element; "
+                   "borrow it with 'ref' or remove it from the container instead");
+        return;
     }
 
     if (!check_not_field_move(expr, loc)) return;

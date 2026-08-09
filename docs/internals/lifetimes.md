@@ -917,12 +917,28 @@ paths unwrap the borrow via `base_type()` before reading the call index. So
 converts to `ref fun` / `weak fun` (`fun → weak fun` via `WeakCreate`).
 
 For the remaining noncopyable kinds (inline value structs, coroutines, `List`/`Map`),
-`borrowed` is the identity, and the lifetime checker's native-index guard
-(`LifetimeChecker::consume_noncopyable`) is the backstop that rejects only the unsound *move-out* of
-those while leaving every safe use (storage, per-element cleanup, in-place field
-reads / method calls) intact. An inline value struct *can't* be borrowed out (no
-header) but doesn't need to be; coroutines and noncopyable containers could later
-demote to `ref` once their `ref`-receiver dispatch lands.
+`borrowed` is the **identity** — there is nothing to demote to — so the result keeps
+an owning type and the type system alone cannot reject a move-out. Two mechanisms
+cover that gap, both keyed on the same `MethodInfo::returns_borrowed` flag that
+records the modifier through resolution:
+
+- **The move checker** (`LifetimeChecker::is_borrowed_native_accessor`) rejects
+  *binding* the result — `var stolen: List<i32> = m.get(0);` — while leaving every
+  safe use (storage, per-element cleanup, in-place field reads / method calls)
+  intact.
+- **The IR builder** (`IRBuilder::is_borrowed_view_call`) declines to track the
+  result as an owned temporary. Without this a *discarded* view — `m.get(0).len()`,
+  which never binds anything — was destroyed at scope exit and freed the
+  container's own element.
+
+Keying both on the modifier rather than on "the method is native" is what keeps
+`pop` / `copy` / `keys` / `values` consumable: those natives return a genuinely
+fresh value, and only `index` / `get` are declared `borrowed`.
+
+An inline value struct *can't* be borrowed out (no header) but doesn't need to be;
+coroutines and noncopyable containers could later demote to `ref` once their
+`ref`-receiver dispatch lands, at which point both mechanisms above become dead
+weight and the type error takes over.
 
 ## Lifecycle implementation and status
 

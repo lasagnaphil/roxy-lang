@@ -3189,6 +3189,120 @@ TEST_SUITE("E2E RAII") {
         CHECK(module == nullptr);  // Should fail to compile
     }
 
+    // ---- `borrowed` views of a *container* element -------------------------
+    // For `uniq T` and `fun` the `borrowed` modifier demotes the accessor's
+    // return to a `ref`, and the cases above show the move-out becoming a type
+    // error. For `List`/`Map`/`Coro`/value-struct elements it is the IDENTITY —
+    // there is nothing to demote to — so the result stays an owning type and two
+    // other mechanisms have to cover it: the move checker rejects binding it
+    // (`MethodInfo::returns_borrowed`, LifetimeChecker::is_borrowed_native_accessor),
+    // and the IR builder declines to track it as an owned temporary
+    // (IRBuilder::is_borrowed_view_call). Both were holes; both double-freed.
+
+    TEST_CASE("move a container value out of Map.get() is rejected") {
+        // `.get(k)` is a call, not an ExprIndex, so the move-checker guard used
+        // to miss it entirely — and `borrowed` is the identity for `List`, so the
+        // type system had nothing to reject either. This compiled and then
+        // double-freed at runtime ("double-delete: heap object already freed").
+        const char* source = R"(
+        fun main(): i32 {
+            var m: Map<i32, List<i32>> = Map<i32, List<i32>>();
+            var inner: List<i32> = List<i32>();
+            inner.push(7);
+            m.insert(0, inner);
+            var stolen: List<i32> = m.get(0);
+            return stolen[0];
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
+
+    TEST_CASE("move a container element out of an index is rejected") {
+        // The `List<List<i32>>` case. Disabling the move-checker guard entirely
+        // left the whole suite green while this program double-freed, so it is
+        // pinned here explicitly rather than relied on incidentally.
+        const char* source = R"(
+        fun main(): i32 {
+            var outer: List<List<i32>> = List<List<i32>>();
+            var inner: List<i32> = List<i32>();
+            inner.push(7);
+            outer.push(inner);
+            var stolen: List<i32> = outer[0];
+            return stolen[0];
+        }
+    )";
+
+        BumpAllocator allocator(65536);
+        BCModule* module = compile(allocator, source);
+        CHECK(module == nullptr);  // Should fail to compile
+    }
+
+    TEST_CASE_TEMPLATE("a borrowed container view is usable in place", Backend, RX_E2E_BACKENDS) {
+        // The other half of the rule: rejecting the *move* must not reject the
+        // uses. A view supports method calls, indexing, and being passed on as a
+        // `ref` borrow. `m.get(0)` used to be tracked as an owned temporary and
+        // destroyed at scope exit, double-freeing the map's own element — so
+        // every line here crashed, not just the ones that bind it.
+        const char* source = R"(
+        fun total(xs: ref List<i32>): i32 {
+            var s: i32 = 0;
+            for (var i: i32 = 0; i < xs.len(); i = i + 1) { s = s + xs[i]; }
+            return s;
+        }
+        fun main(): i32 {
+            var inner: List<i32> = List<i32>();
+            inner.push(4); inner.push(6);
+            var m: Map<i32, List<i32>> = Map<i32, List<i32>>();
+            m.insert(0, inner);
+            var a: i32 = m.get(0).len();    // method call on the view
+            var b: i32 = m[0].len();        // same via the index spelling
+            var c: i32 = total(m.get(0));   // pass the view on as a ref borrow
+            var d: i32 = m.get(0)[1];       // index into the view
+            return a + b + c + d;           // 2 + 2 + 10 + 6
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 20);
+    }
+
+    TEST_CASE_TEMPLATE("natives that do transfer stay consumable", Backend, RX_E2E_BACKENDS) {
+        // Over-rejection guard. The rule keys on the `borrowed` modifier, NOT on
+        // the method being native: `pop`, `copy`, `keys`, and `values` all hand
+        // back a genuinely fresh value and must still bind to an owner.
+        const char* source = R"(
+        struct P { x: i32; }
+        fun main(): i32 {
+            var l: List<uniq P> = List<uniq P>();
+            l.push(uniq P { x = 1 });
+            var popped: uniq P = l.pop();
+
+            var nums: List<i32> = List<i32>();
+            nums.push(5);
+            var dup: List<i32> = nums.copy();
+
+            var m: Map<i32, i32> = Map<i32, i32>();
+            m.insert(1, 2);
+            var ks: List<i32> = m.keys();
+            var vs: List<i32> = m.values();
+
+            var inner: List<i32> = List<i32>();
+            inner.push(9);
+            var outer: List<List<i32>> = List<List<i32>>();
+            outer.push(inner);
+            var back: List<i32> = outer.pop();   // pop of a container element
+
+            return popped.x + dup[0] + ks[0] + vs[0] + back[0] + nums.len();
+        }
+    )";
+        auto result = Backend::run(source);
+        CHECK(result.success);
+        CHECK(result.value == 19);   // 1 + 5 + 1 + 2 + 9 + 1
+    }
+
     TEST_CASE_TEMPLATE("borrowing and reading a noncopyable list element is allowed", Backend, RX_E2E_BACKENDS) {
         // Soundness guard against over-rejection: the index rejection fires only
         // when the noncopyable element is *moved* out. Borrowing it as `ref` and

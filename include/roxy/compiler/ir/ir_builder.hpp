@@ -808,6 +808,17 @@ private:
     // already tracked as a temp (constructor paths self-track).
     void track_noncopyable_call_temp(ValueId val, Type* type);
 
+    // True if `expr` is a call to a native accessor whose signature declared its
+    // return `borrowed` — today `m.get(k)`. The result is a VIEW of the
+    // receiver's interior, so it must NOT be tracked as an owned temporary:
+    // destroying it at scope exit would free the container's own element.
+    // Reads the same MethodInfo::returns_borrowed that the move checker keys on
+    // (LifetimeChecker::is_borrowed_native_accessor), so the two agree by
+    // construction. Only matters for the kinds where the `borrowed` transform is
+    // the identity (`List`/`Map`); where it demoted to `ref`, the result is
+    // copyable and was never tracked.
+    bool is_borrowed_view_call(Expr* expr) const;
+
     // String reference-counting (finding 9b). A string PRODUCER (concat, f-string,
     // substr, to_string, a user function return) yields an owned count-1 temp;
     // track it so it's released at scope exit unless consumed. At a copy site

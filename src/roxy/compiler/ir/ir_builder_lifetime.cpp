@@ -132,6 +132,18 @@ void IRBuilder::track_noncopyable_call_temp(ValueId val, Type* type) {
                        m_current_block->id, val});
 }
 
+bool IRBuilder::is_borrowed_view_call(Expr* expr) const {
+    if (!expr || expr->kind != AstKind::ExprCall) return false;
+    Expr* callee = expr->call.callee;
+    if (!callee || callee->kind != AstKind::ExprGet) return false;
+    Expr* receiver = callee->get.object;
+    // A null receiver type means `object` names an imported module, not a value.
+    if (!receiver || !receiver->resolved_type) return false;
+    const MethodInfo* method =
+        m_types.lookup_method(receiver->resolved_type->base_type(), callee->get.name);
+    return method && !method->native_name.empty() && method->returns_borrowed;
+}
+
 void IRBuilder::track_string_temp(ValueId val, Type* type) {
     if (!type || type->kind != TypeKind::String || !m_current_block || !val.is_valid()) return;
     // Skip if already tracked as a temporary (avoid double-tracking).

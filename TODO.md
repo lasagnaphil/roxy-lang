@@ -10,35 +10,7 @@ Last updated: 2026-08-09
 
 ## High Priority
 
-- [ ] **`Map.get()` of a noncopyable *container* value double-frees**: binding
-  `m.get(k)` to a local moves the value out from under the map, and both the new
-  owner and the map's own cleanup free it — `delete_value` aborts with
-  "double-delete: heap object already freed". Repro (2026-08-09, on an unmodified
-  tree):
-  ```roxy
-  var m: Map<i32, List<i32>> = Map<i32, List<i32>>();
-  m.insert(0, inner);
-  var stolen: List<i32> = m.get(0);   // double-delete
-  ```
-  It falls through *both* guards, in the seam between them. `Map.get` is typed
-  `borrowed V`, but `borrowed` is the **identity** for `List`/`Map`/`Coro`/value
-  structs (only `uniq T` and `fun` demote to a borrow), so the result stays an
-  owning `List<i32>`; and `LifetimeChecker::consume_noncopyable`'s move-out guard
-  fires only for `AstKind::ExprIndex`, while `.get(k)` is a call. Each mechanism
-  covers what the other misses *except here*. The `m[0]` form of the same program
-  is correctly rejected, and `Map<i32, uniq Point>.get(0)` is correctly rejected
-  (that one `borrowed` does demote). Fix: generalize the guard from `ExprIndex` to
-  native-method call results. That is safe against over-rejection — the guard is
-  only reached when the *declared target* type is noncopyable (`semantic.cpp:1539`),
-  so `var b: ref P = m.get(0)` is unaffected.
-  Note the guard is itself **untested**: disabling it entirely leaves the whole
-  suite green, yet `var stolen: List<i32> = outer[0]` on a `List<List<i32>>` then
-  double-frees. Both holes want regression tests. The comment at
-  `lifetime_checker.cpp:306` calling the guard "the interim rule until
-  `borrowed`-typed returns make the result a `ref`" is stale and should go — for
-  the identity kinds the guard is the *only* cover, not an interim one.
-
-*(empty otherwise — the teardown leak check added 2026-08-02 (`roxy --check-leaks`; the
+*(empty — the teardown leak check added 2026-08-02 (`roxy --check-leaks`; the
 E2E harness asserts it on every program it runs) surfaced a family of
 exception-unwind leaks that is now fully fixed: `examples/lox/test.roxy` runs
 at **0 live objects** at teardown, from 293 on 2026-08-02. The last one — a
@@ -93,6 +65,15 @@ now compiles and runs verbatim. Per-bug records are in this file's git history.*
   would be released once. Owned and string temporaries have the same
   loop-condition shape; theirs is invisible because a delayed free only costs
   memory, whereas a delayed borrow blocks a `delete`.
+- [ ] **A `Coro<T>` inside a container crashes the compiler**: `List<Coro<i32>>`
+  trips `assert(false && "Unhandled type kind in mangle_type_name")`
+  (`support/mangling.cpp:195`) — `mangle_type_name` has no arm for
+  `TypeKind::Coroutine`, so the per-instantiation container mangling (the
+  synthesized `to_string`, `List$<T>$$…`) has no name to build. Nothing about the
+  language rejects the type: `Coro<T>` is noncopyable like `uniq T`, which
+  containers hold fine. Either add the missing arm or reject the type with a real
+  diagnostic — an `assert(false)` means a release build walks off into UB instead.
+  Found 2026-08-09 while probing container element views; unrelated to that work.
 - [ ] **Rebinding a `ref` binding to a fresh owner compiles and then traps at
   runtime**: `fun f(r: ref List<i32>) { r = List<i32>(); }` (and the identical
   `fun f(p: ref P) { p = uniq P(); }`) type-checks — the source converts to the

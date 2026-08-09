@@ -88,6 +88,16 @@ struct MethodInfo {
     Type* return_type;
     Decl* decl;                    // Points to the MethodDecl AST node
     StringView native_name;        // Non-empty for native/builtin methods
+    // The declared return type carried the `borrowed` modifier: this method
+    // hands out a *view* of the receiver's interior, not ownership of it
+    // (`fun List<T>.index(idx: i32): borrowed T`). Native signatures only —
+    // `borrowed` is not user-facing syntax. Where the transform could demote
+    // (`uniq T` -> `ref T`, `fun` -> `ref fun`) `return_type` already says so and
+    // the type system rejects a move-out on its own; where it is the identity
+    // (`List`/`Map`/`Coro`/value struct) this flag is the only remaining signal,
+    // and LifetimeChecker::consume_noncopyable is what acts on it.
+    // See lifetimes.md → "The `borrowed` type modifier".
+    bool returns_borrowed = false;
 };
 
 // Field information for struct types

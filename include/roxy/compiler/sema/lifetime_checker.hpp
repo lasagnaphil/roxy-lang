@@ -178,6 +178,14 @@ private:
     // runtime promotion gate, not a compile error.
     bool is_out_inout_param(Expr* expr);
 
+    // True if `expr` reads a container element through a native accessor whose
+    // signature declared its return `borrowed` — `c[k]` (via the `index` method)
+    // or `c.get(k)`. Such a result is a view of the container's interior, so
+    // moving a noncopyable out of it would double-free. Keyed on the `borrowed`
+    // modifier rather than on the method being native, so `pop`/`copy`/`keys`/
+    // `values` — natives that do return a fresh value — stay consumable.
+    bool is_borrowed_native_accessor(Expr* expr) const;
+
     // True if the loop `body`'s first executable statement is a plain `=`
     // assignment to `var_name` whose RHS does not reference it. Such a variable
     // is refreshed at the top of every iteration before any use, so it cannot be
