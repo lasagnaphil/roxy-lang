@@ -169,14 +169,14 @@ enum class IROp : u8 {
                   // first arg
 
     // Container indexing (List/Map)
-    IndexGet,     // container[index] — for List/Map
-    IndexSet,     // container[index] = value — for List/Map
-    IndexAddr,    // &container[index] — element lvalue address (out/inout args; lifetimes.md
-                  // "Container element lvalues")
-    IndexTryAddr, // &map[key] value slot, or null if absent (no trap) — powers the single-lookup
-                  // `m[k]` KeyError throw
-    ContainerPin, // pin a container for a call (borrow_count++) — blocks realloc/free while an
-                  // element is borrowed
+    IndexGet,       // container[index] — for List/Map
+    IndexSet,       // container[index] = value — for List/Map
+    IndexAddr,      // &container[index] — element lvalue address (out/inout args; lifetimes.md
+                    // "Container element lvalues")
+    IndexTryAddr,   // &map[key] value slot, or null if absent (no trap) — powers the single-lookup
+                    // `m[k]` KeyError throw
+    ContainerPin,   // pin a container for a call (borrow_count++) — blocks realloc/free while an
+                    // element is borrowed
     ContainerUnpin, // unpin a container after a call (borrow_count--)
 
     // Block argument (phi-like)

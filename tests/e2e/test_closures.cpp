@@ -914,9 +914,10 @@ TEST_SUITE("E2E Closures") {
     // a var-decl, an assignment, or a struct-literal field is equally a promotion
     // of a possibly-stack receiver (maybe_wrap_weak's is_bare_self gate). Without
     // it a stack receiver snapshots a bogus generation from stack bytes. VM-only.
-    TEST_CASE("self to weak binding-site heap gate on noncopyable stack receivers") { // VM-only:
-                                                                                      // runtime-trap
-                                                                                      // behavior
+    TEST_CASE(
+        "self to weak binding-site heap gate on noncopyable stack receivers") { // VM-only:
+                                                                                // runtime-trap
+                                                                                // behavior
         BumpAllocator allocator(65536);
 
         SUBCASE("var-decl (weak w = self): stack traps") {
