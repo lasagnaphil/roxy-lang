@@ -262,6 +262,39 @@ The project is organized into 6 libraries:
 - **Headers:** Use `#pragma once`
 - **Assertions:** Use `assert()` for invariants
 
+### Warnings, clang-format, clang-tidy
+
+`-Wall -Wextra` is on by default (`ENABLE_WARNINGS`, `/W4` on real MSVC), with
+`-Wunused-parameter` and `-Wmissing-field-initializers` disabled project-wide —
+see the comment in `CMakeLists.txt` for why. **The build is warning-clean; keep
+it that way.**
+
+`.clang-format` describes the style already in use rather than imposing a new
+one. **Existing code is deliberately not mass-reformatted** (even this tuned
+config rewrites ~17.5k lines of intentional hand-alignment), so format
+*incrementally*:
+
+```bash
+git-clang-format             # format only what you staged
+clang-format -i <file>       # when you're already rewriting a file
+```
+
+Vendored code (`doctest/`, `tsl/`, `xxhash.h`, `third_party/`) is excluded via
+`.clang-format-ignore`.
+
+`.clang-tidy` is a narrow, high-signal check set (~30 findings, all currently
+triaged; the broad `misc-*` style checks are off — they produce ~3.4k mechanical
+findings that bury the useful ones). Notably `bugprone-switch-missing-default-case`
+is disabled because it fights `-Wswitch`: a `default`-less switch over an enum is
+what makes the compiler report newly-added enumerators.
+
+```bash
+run-clang-tidy -p build 'src/roxy/.*\.cpp'    # needs Homebrew/upstream LLVM on PATH
+```
+
+Both tools need a full LLVM install (Apple clang ships neither); on macOS that's
+`/opt/homebrew/opt/llvm/bin`.
+
 ## Project Structure
 
 ```

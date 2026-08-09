@@ -431,6 +431,10 @@ void IRBuilder::gen_if_stmt(Stmt* stmt) {
     //     vars are rebound from merge-block params below.
     if (!else_block) {
         if (then_terminated) {
+            // Not a use-after-move: the other `std::move(pre_if)` above is
+            // guarded by `if (else_block)`, so exactly one of the two runs.
+            // clang-tidy can't correlate the two conditions.
+            // NOLINTNEXTLINE(bugprone-use-after-move)
             restore_scopes_move(std::move(pre_if));
         }
     } else if (then_terminated && !else_terminated) {

@@ -1,0 +1,5 @@
+# Vendored third-party code — never reformat (see docs/libraries.md).
+include/roxy/core/doctest/*
+include/roxy/core/tsl/*
+include/roxy/core/xxhash.h
+third_party/*

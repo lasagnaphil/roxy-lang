@@ -1729,7 +1729,7 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             return false;
         }
         if (header->element_is_inline) {
-            u32* elem = header->elements + static_cast<u32>(idx) * header->element_slot_count;
+            u32* elem = header->elements + idx * header->element_slot_count;
             if (header->element_slot_count == 1) {
                 // Sign-extend 1-slot (≤ 32-bit) integer element to fill the
                 // 64-bit register — see the matching comment in GET_FIELD for
@@ -1775,7 +1775,7 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         }
         if (header->element_is_inline) {
             u8 c = decode_c(instr);
-            u32* elem = header->elements + static_cast<u32>(idx) * header->element_slot_count;
+            u32* elem = header->elements + idx * header->element_slot_count;
             if (header->element_slot_count == 1) {
                 elem[0] = static_cast<u32>(regs[c]);
             } else if (header->element_slot_count == 2) {

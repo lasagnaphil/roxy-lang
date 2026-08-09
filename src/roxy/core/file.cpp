@@ -31,7 +31,7 @@ bool read_file_to_buf(const char* path, u8*& buf, BumpAllocator& bump_allocator)
 
     fseek(file, 0L, SEEK_END);
     size_t file_size = ftell(file);
-    rewind(file);
+    fseek(file, 0L, SEEK_SET);
 
     buf = bump_allocator.alloc_bytes(file_size + 1, 8);
     size_t bytes_read = fread(buf, sizeof(char), file_size, file);
@@ -66,7 +66,7 @@ bool read_file_to_buf(const char* path, Vector<u8>& buf) {
 
     fseek(file, 0L, SEEK_END);
     size_t file_size = ftell(file);
-    rewind(file);
+    fseek(file, 0L, SEEK_SET);
 
     buf.resize(file_size + 1);
     size_t bytes_read = fread(buf.data(), sizeof(char), file_size, file);

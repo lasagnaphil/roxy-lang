@@ -58,7 +58,7 @@ Vector<ParamStub> FileIndexer::extract_params(SyntaxNode* param_list) {
             param.type = extract_type_ref(type_node);
         }
 
-        params.push_back(std::move(param));
+        params.push_back(param);
     }
 
     return params;
@@ -147,7 +147,7 @@ void FileIndexer::index_var_decl(SyntaxNode* node, FileStubs& stubs) {
     // Check for initializer (has '=' token)
     stub.has_initializer = has_child(node, SyntaxKind::TokenEqual);
 
-    stubs.globals.push_back(std::move(stub));
+    stubs.globals.push_back(stub);
 }
 
 void FileIndexer::index_fun_decl(SyntaxNode* node, FileStubs& stubs) {
@@ -360,7 +360,7 @@ void FileIndexer::index_struct_decl(SyntaxNode* node, FileStubs& stubs) {
                 field.type = extract_type_ref(field_type);
             }
 
-            stub.fields.push_back(std::move(field));
+            stub.fields.push_back(field);
         } else if (child->kind == SyntaxKind::NodeFunDecl) {
             // Method defined inside struct body — add to top-level functions
             index_fun_decl(child, stubs);
@@ -396,7 +396,7 @@ void FileIndexer::index_enum_decl(SyntaxNode* node, FileStubs& stubs) {
                 variant.name_range = variant_name->range;
             }
 
-            stub.variants.push_back(std::move(variant));
+            stub.variants.push_back(variant);
         }
     }
 
@@ -425,7 +425,7 @@ void FileIndexer::index_trait_decl(SyntaxNode* node, FileStubs& stubs) {
         }
     }
 
-    stubs.traits.push_back(std::move(stub));
+    stubs.traits.push_back(stub);
 }
 
 void FileIndexer::index_import_decl(SyntaxNode* node, FileStubs& stubs) {

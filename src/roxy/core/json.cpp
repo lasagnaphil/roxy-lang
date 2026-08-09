@@ -77,23 +77,19 @@ bool JsonParser::parse_string(StringView& out) {
 
     char* write_pos = m_source + m_current;
     char* start = write_pos;
-    bool has_escape = false;
 
     while (m_current < m_length) {
         char c = m_source[m_current];
 
         if (c == '"') {
             m_current++; // skip closing quote
-            if (has_escape) {
-                out = StringView(start, (u32)(write_pos - start));
-            } else {
-                out = StringView(start, (u32)(write_pos - start));
-            }
+            // write_pos advances on every emitted byte, escaped or not, so the
+            // compacted length is correct whether or not an escape was seen.
+            out = StringView(start, (u32)(write_pos - start));
             return true;
         }
 
         if (c == '\\') {
-            has_escape = true;
             m_current++;
             if (m_current >= m_length) {
                 set_error("unterminated string escape");

@@ -97,6 +97,13 @@ String::String(const char* s, u32 len) {
 
 String::String(StringView sv) : String(sv.data(), sv.size()) {}
 
+// The memcpy-over-String below is deliberate: the representation is trivially
+// *relocatable* even though it is not trivially copyable. The SSO buffer is an
+// inline array with no self-pointer, and the heap case transfers ownership of
+// m_heap.ptr wholesale, so a raw byte copy is well-defined in practice on every
+// target we build for. clang-tidy flags it as UB by the letter of the standard;
+// suppress rather than "fix", since the alternative is a slower char loop.
+// NOLINTBEGIN(bugprone-undefined-memory-manipulation,clang-diagnostic-nontrivial-memcall)
 String::String(const String& other) {
     if (other.is_sso()) {
         memcpy(this, &other, sizeof(String));
@@ -136,6 +143,7 @@ String& String::operator=(String&& other) noexcept {
     other.m_sso.tag = SSO_BIT | SSO_CAP;
     return *this;
 }
+// NOLINTEND(bugprone-undefined-memory-manipulation,clang-diagnostic-nontrivial-memcall)
 
 String& String::operator=(const char* s) {
     u32 len = s ? static_cast<u32>(strlen(s)) : 0;

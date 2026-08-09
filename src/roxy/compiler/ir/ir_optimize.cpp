@@ -694,7 +694,7 @@ CSEKey make_cse_key(IRInst* inst) {
             // share identity.
             k.a = static_cast<u32>(reinterpret_cast<uintptr_t>(
                 inst->const_data.string_val.data()));
-            k.b = static_cast<u32>(inst->const_data.string_val.size());
+            k.b = inst->const_data.string_val.size();
             break;
         case IROp::ConstNull:
             // (op, result_type) alone is sufficient — null of a given type

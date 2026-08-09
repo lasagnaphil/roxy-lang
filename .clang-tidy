@@ -1,0 +1,42 @@
+---
+# Narrow, high-signal check set. The broad `misc-*` style checks are
+# deliberately off: enabling them produces ~3.4k findings that are mechanical
+# rather than diagnostic (const-correctness alone is 2.2k), which would bury
+# the handful of checks that actually catch defects here.
+#
+# Run:  run-clang-tidy -p build 'src/roxy/.*\.cpp'
+#
+# Notable exclusions and why:
+#   bugprone-switch-missing-default-case
+#       Actively fights the -Wswitch we enable in CMakeLists. A switch over an
+#       enum with no `default` is what makes the compiler report newly-added
+#       enumerators; adding `default:` to silence this check would hide them.
+#   bugprone-branch-clone
+#       Almost every hit is grouped case labels sharing a body (opcode tables,
+#       token classification) — the house pattern, not duplication.
+#   performance-no-int-to-ptr
+#       The slab allocator round-trips integers and pointers by design
+#       (generational refs, tombstoning). 77 hits, all intentional.
+#   bugprone-easily-swappable-parameters / misc-no-recursion
+#       Structural complaints about a recursive-descent compiler; not actionable.
+Checks: >
+  bugprone-*,
+  performance-*,
+  clang-analyzer-*,
+  readability-redundant-casting,
+  readability-redundant-string-init,
+  modernize-use-nullptr,
+  modernize-use-override,
+  -bugprone-branch-clone,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-switch-missing-default-case,
+  -bugprone-multi-level-implicit-pointer-conversion,
+  -bugprone-throwing-static-initialization,
+  -performance-no-int-to-ptr,
+  -performance-enum-size,
+  -misc-no-recursion
+
+# Own headers only — vendored doctest/tsl/xxhash are excluded.
+HeaderFilterRegex: 'roxy/(compiler|vm|rt|lsp|shared|core)/(?!doctest/|tsl/|xxhash)'
+FormatStyle: none
+WarningsAsErrors: ''

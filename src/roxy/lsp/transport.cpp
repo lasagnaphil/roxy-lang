@@ -30,11 +30,18 @@ bool LspTransport::read_message(String& out_message) {
         // Empty line signals end of headers
         if (line.empty()) break;
 
-        // Parse Content-Length
+        // Parse Content-Length. strtol rather than atoi so a malformed header
+        // is rejected instead of silently parsing as 0 — atoi has no error
+        // channel, so "Content-Length: abc" would have yielded a 0-byte read
+        // and an empty message rather than a framing error.
         const char* prefix = "Content-Length: ";
         u32 prefix_len = 16;
         if (line.size() > prefix_len && memcmp(line.data(), prefix, prefix_len) == 0) {
-            content_length = atoi(line.data() + prefix_len);
+            const char* digits = line.data() + prefix_len;
+            char* parse_end = nullptr;
+            long parsed = strtol(digits, &parse_end, 10);
+            if (parse_end == digits || parsed < 0 || parsed > INT32_MAX) return false;
+            content_length = static_cast<i32>(parsed);
         }
         // Other headers (Content-Type, etc.) are ignored
     }

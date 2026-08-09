@@ -1,0 +1,49 @@
+---
+# Reverse-engineered from the existing codebase rather than adopted wholesale,
+# so it describes the style already in use (4-space indent, attached braces,
+# `Type* ptr`, short if/case/function bodies kept on one line).
+#
+# NOTE: existing code is deliberately NOT mass-reformatted — even this tuned
+# config rewrites ~17.5k lines, mostly hand-aligned trailing comments and
+# hand-broken boolean expressions that are intentional. Format incrementally:
+#
+#   git-clang-format            # format only what you staged
+#   clang-format -i <file>      # when you're already rewriting a file
+#
+# Vendored code is excluded via .clang-format-ignore.
+Language: Cpp
+BasedOnStyle: LLVM
+
+IndentWidth: 4
+ColumnLimit: 100
+AccessModifierOffset: -4
+NamespaceIndentation: None
+IndentCaseLabels: true
+
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# The codebase leans on one-liners heavily (~1600 short ifs, ~280 short case
+# labels, ~260 inline accessors); collapsing them is the house style.
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: All
+AllowShortLoopsOnASingleLine: true
+AllowShortBlocksOnASingleLine: Always
+
+# Trailing comments are hand-aligned in places (opcode tables, struct fields);
+# leave existing columns alone instead of re-flowing them.
+AlignTrailingComments: Leave
+AlignOperands: DontAlign
+
+BreakBeforeBraces: Attach
+AlwaysBreakTemplateDeclarations: Yes
+SpaceAfterTemplateKeyword: false
+
+KeepEmptyLinesAtTheStartOfBlocks: true
+SeparateDefinitionBlocks: Leave
+
+# Include order is meaningful in places (roxy_rt.h before platform headers);
+# don't let the formatter reorder it.
+SortIncludes: false
+FixNamespaceComments: false
