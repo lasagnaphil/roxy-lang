@@ -414,11 +414,13 @@ decimal:
 suffixes:
     // Check for suffixes: u, l, ul, f
     if (peek() == 'f' || peek() == 'F') {
-        is_float = true;
-        advance();
+        // An integer literal with an `f` suffix (`5f`) has no fractional part
+        // to have produced float_value, so convert before marking it a float.
         if (!is_float) {
             float_value = (f64)int_value;
         }
+        is_float = true;
+        advance();
     } else if (peek() == 'u' || peek() == 'U') {
         advance();
         if (peek() == 'l' || peek() == 'L') {

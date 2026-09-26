@@ -173,6 +173,16 @@ TEST_SUITE("Lexer") {
         check_float_literal(tokens, 4, 2.5);
     }
 
+    TEST_CASE("Float suffix on an integer literal") {
+        // `5f` has no fractional part, so the suffix must convert the integer
+        // value itself (it used to lex as 0.0).
+        auto tokens = lex_all("5f 0f 42F 007f");
+        check_float_literal(tokens, 0, 5.0);
+        check_float_literal(tokens, 1, 0.0);
+        check_float_literal(tokens, 2, 42.0);
+        check_float_literal(tokens, 3, 7.0);
+    }
+
     TEST_CASE("String Literals") {
         auto tokens = lex_all("\"hello\" \"world\" \"with\\nescapes\"");
 
