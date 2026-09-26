@@ -3556,9 +3556,8 @@ u16 BytecodeBuilder::build_delete_desc(Type* type) {
     // Cross-check (lifetimes.md "Value lifecycle"): the structural
     // `needs_drop()` predicate must be at least as inclusive as this descriptor —
     // anything the current machinery actually cleans, the predicate must also flag.
-    // (The reverse may differ: `needs_drop()` additionally reports `ref` struct
-    // fields, a gap this descriptor doesn't yet handle — so we only assert one
-    // direction.)
+    // (Only this direction is asserted: `needs_drop()` is transitive, while the
+    // descriptor is a single-level decision.)
     bool desc_does_something = desc.cleanup != BCDeleteDesc::None || desc.free_obj;
     assert((!desc_does_something || type->needs_drop()) &&
            "needs_drop() predicate weaker than delete descriptor");

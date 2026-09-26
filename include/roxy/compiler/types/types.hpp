@@ -417,10 +417,11 @@ struct Type {
     }
 
     // === Value-lifecycle predicates (docs/internals/lifetimes.md "Value lifecycle") ===
-    // The canonical, structural definition of a type's lifecycle needs — the
-    // source of truth the future drop/copy/clone glue lowering will consume.
-    // Introduced ahead of the migration (doc step 1); no consumers yet beyond a
-    // cross-check assertion in build_delete_desc.
+    // Transitive, structural definitions of a type's lifecycle needs. Codegen
+    // does not consult these — it lowers compute_drop_plan / compute_retain_plan
+    // (below) through the member_needs_drop / member_needs_retain gates. These
+    // back a cross-check assertion in build_delete_desc and are pinned by the
+    // `Lifecycle Predicates` suite.
 
     // Implicit copy is permitted (vs move-only) — the `Copy` marker, exactly the
     // inverse of move-only. Note: a `Copy` type may still carry retain/drop glue
@@ -430,9 +431,7 @@ struct Type {
 
     // The value owns or borrows a resource that must be released when its storage
     // dies (drop glue is non-empty). Reports `true` for a `ref` (a counted
-    // borrow → ref_dec) wherever it appears, including as a struct field — which
-    // the current descriptor machinery does not yet clean. That divergence is a
-    // gap this design closes, not an error here.
+    // borrow → ref_dec) wherever it appears, including as a struct field.
     bool needs_drop() const;
 
     // Implicit copy (copy_init) has a side effect — i.e. the value (transitively)

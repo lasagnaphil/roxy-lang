@@ -132,18 +132,6 @@ now compiles and runs verbatim. Per-bug records are in this file's git history.*
 
 ## Documentation Needed
 
-- [ ] **`lifetimes.md`'s status table contradicts the sections below it**:
-  "What is actually implemented" (§ *Lifecycle implementation and status*) still
-  reports all three rows as they stood *before* the Drop/Copy separation landed
-  on 2026-08-02 — Drop "complete except `StrRelease` on a struct field, gated
-  off", Retain "derived but unwired", Move-only "mis-derived". All three are
-  superseded ~40 lines later by *Separating Drop from Copy* ✅, and the code
-  agrees with the later text: `member_needs_drop` (`types.hpp`) has no
-  `StrRelease` carve-out, `member_needs_retain` consumes `compute_retain_plan`,
-  and `noncopyable()` reads the structural `is_move_only` flag. That table is the
-  first thing a reader touching lifecycle code will find, so it is the worst
-  place in the tree for stale status. `CLAUDE.md`'s one-line `lifetimes.md`
-  blurb repeats the same three stale claims and needs the same fix.
 - [ ] Document thread-safety limitations (single VM per thread assumed)
 
 ---

@@ -81,8 +81,8 @@ private:
     // loop isn't duplicated at every Delete site. request_container_drop_glue()
     // lazily emits a forward decl + definition (recursing for nested containers)
     // the first time a container type is dropped, and returns the function name;
-    // emit_typed_delete routes container Deletes through the call. Gated by
-    // Type::needs_drop()/is_trivial(). The decls/defs buffers are spliced into the
+    // emit_typed_delete routes container Deletes through the call. Element drops
+    // are gated by member_needs_drop(). The decls/defs buffers are spliced into the
     // output before the function bodies.
     String request_container_drop_glue(Type* container);
     void emit_container_drop_body(Type* container, StringView self_var, String& out);

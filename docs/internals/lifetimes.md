@@ -970,59 +970,58 @@ synthesized destructor, propagated by the synthetic-destructor fixpoint.
 
 | Property | Derivation | Consumed by | Status |
 |---|---|---|---|
-| **Drop** | `compute_drop_plan` | both backends, `member_needs_drop` | ✅ complete — **except** `StrRelease` on a struct field, gated off (below) |
-| **Retain** | `compute_retain_plan` | *nobody yet* | ⚠️ **derived but unwired.** The plan landed 2026-08-02 and is pinned by tests; no codegen consumes it, so retains are still emitted ad hoc per store site and struct copies emit none |
-| **Move-only** | "struct has a default destructor" | move checker, call/return lowering | ⚠️ **mis-derived** — see below |
+| **Drop** | `compute_drop_plan` | both backends, `member_needs_drop` | ✅ complete, including `StrRelease` on a struct field |
+| **Retain** | `compute_retain_plan` | `emit_value_retain` / `emit_struct_clone_glue`, `member_needs_retain` | ✅ wired — every duplication site acquires (struct copies, `List.push`, the map value store, `values()`/`copy()`) |
+| **Move-only** | structural `is_move_only` flag (`derive_struct_move_only`) | `noncopyable()`, move checker, call/return lowering | ✅ structural — a `string`/`ref` field no longer forces move-only |
 
-The ad-hoc retain sites that *do* exist and are correct: binding a `string`
-local, storing one into a struct field (retains the new value and releases the
-overwritten one), and pushing one into a container. What has no retain at all is
-**duplicating a whole struct** — `IROp::StructCopy` copies the bytes and nothing
-else.
+All three landed on 2026-08-02; the section below records the design and why the
+order mattered.
 
-`Type::needs_retain()` and `Type::is_trivial()` are **dead predicates**: they
-compute the right answer and nobody asks. `compute_retain_plan` supersedes them
-as the derivation codegen will consume; the predicates remain only as the
-`is_trivial` convenience the emitter may want later.
+`Type::needs_drop()`, `Type::needs_retain()` and `Type::is_trivial()` are
+transitive structural predicates that no codegen consults — they are pinned by
+the `Lifecycle Predicates` suite, and `needs_drop()` backs one cross-check
+assertion in `build_delete_desc`. The derivations codegen actually lowers are
+`compute_drop_plan` / `compute_retain_plan` and the `member_needs_drop` /
+`member_needs_retain` gates built on them.
 
-### The gap: Drop and Copy are one bit
+### Before the separation: Drop and Copy were one bit
 
-`noncopyable()` on a struct means literally *"has a default destructor"*. So the
-moment a struct earns drop glue it also becomes move-only. That has held up only
-because the two sets coincide: the members that earn a synthetic destructor
-(`uniq`, `List`, `Map`, `Coro`, closures, `ref`) are exactly the move-only ones.
+Until 2026-08-02, `noncopyable()` on a struct meant literally *"has a default
+destructor"*, so the moment a struct earned drop glue it also became move-only.
+That held up only while the two sets coincided: the members that earn a
+synthetic destructor (`uniq`, `List`, `Map`, `Coro`, closures, `ref`) were exactly
+the move-only ones.
 
 `string` and `ref` are the rows in
 [the lifecycle table](#every-type-kind) that break the coincidence, and the one
-bit gives the **wrong answer in both directions** — both reproducible today:
+bit gave the **wrong answer in both directions**:
 
-| Field | Today | Should be | Symptom |
+| Field | Then | Now | Symptom (fixed) |
 |---|---|---|---|
-| `s: string` | struct earns no drop, stays copyable | drop **and** retain-on-copy | **leaks the string** |
-| `r: ref T` | struct earns drop → forced move-only | copyable, `ref_inc` on copy | `var b = a;` rejected as *"use of moved value"* |
+| `s: string` | struct earned no drop, stayed copyable | drop **and** retain-on-copy | **leaked the string** |
+| `r: ref T` | struct earned drop → forced move-only | copyable, `ref_inc` on copy | `var b = a;` rejected as *"use of moved value"* |
 
 ```roxy
 struct Box { s: string; }
 var d: string = a + "y";
-var b: Box = Box { s = d };   // leaks: retained on store, never released
+var b: Box = Box { s = d };   // used to leak: retained on store, never released
 
 struct Holder { r: ref Point; }
-var h2: Holder = h;           // rejected — but a copy is just another borrow
+var h2: Holder = h;           // used to be rejected; now a copy is another borrow
 ```
 
-`string`'s drop is therefore **knowingly skipped**: `member_needs_drop` excludes
-`DropKind::StrRelease`, because enabling it alone makes string-bearing structs
-move-only (measured: four `Structured Gen` cases start failing), and making them
-copyable *without* retain glue is worse than the leak — two owners, two releases,
-use-after-free.
+`string`'s drop was therefore **knowingly skipped** back then: `member_needs_drop`
+excluded `DropKind::StrRelease`, because enabling it alone made string-bearing
+structs move-only (measured: four `Structured Gen` cases started failing), and
+making them copyable *without* retain glue would have been worse than the leak —
+two owners, two releases, use-after-free.
 
 ### Separating Drop from Copy ✅ *(landed 2026-08-02)*
 
 
 Three changes, in this order. The order matters: making `ref`-bearing structs
 copyable before the glue that keeps their counts balanced exists would trade an
-over-restriction for a use-after-free. Steps 1 and 2 have landed; step 3 is
-partly done — see "What remains" below.
+over-restriction for a use-after-free. All three steps have landed.
 
 **1. A retain derivation, mirroring the drop plan.** ✅ **Landed** —
 `compute_retain_plan(Type) -> RetainPlan` in `types.cpp`, beside
@@ -1193,10 +1192,10 @@ covers layout-independent unwinding.
 
 ### Move-only containers
 
-**Move-only** is the `!is_copy()` case: a `List`/`Map` (it owns a heap buffer), a
-struct with a `ref` field (today — see the gap above), and a coroutine with a
-`ref` param are all move-only, and each counts the borrows it holds for its
-lifetime. The per-feature mechanics live under
+**Move-only** is the `!is_copy()` case: a `List`/`Map` (it owns a heap buffer)
+and a coroutine (including one with a `ref` param) are move-only, and each counts
+the borrows it holds for its lifetime. A struct with a `ref` field is *not* — it
+is copyable, and each copy takes its own count. The per-feature mechanics live under
 [Applying the model](#applying-the-model) —
 [containers](#containers-are-move-only),
 [their counted borrows](#containers-of-borrows-hold-counted-borrows), and
