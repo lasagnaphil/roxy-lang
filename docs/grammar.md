@@ -4,6 +4,11 @@
 program         -> declaration* EOF
 ```
 
+A `statement` is only valid inside a block. The same `declaration` rule is used
+for block bodies, so the parser accepts a statement at module scope, but semantic
+analysis rejects it ("statements are not allowed at module scope") — nothing runs
+module-level code except global initializers.
+
 ## Declarations
 
 ```

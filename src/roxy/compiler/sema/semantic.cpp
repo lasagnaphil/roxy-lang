@@ -225,10 +225,18 @@ void SemanticAnalyzer::run_declaration_passes(Program* program) {
     // Pass 0a: Auto-import builtin module as prelude
     import_builtin_prelude();
 
-    // Pass 0b: Process user imports
+    // Pass 0b: Process user imports. Also reject statements at module scope: the
+    // parser accepts them (a block body is a Span<Decl*> of the same shape), but
+    // nothing runs module-level code except global initializers, so a top-level
+    // `print("x");` would otherwise be silently dropped.
     for (auto* decl : program->declarations) {
-        if (decl && decl->kind == AstKind::DeclImport) {
+        if (!decl)
+            continue;
+        if (decl->kind == AstKind::DeclImport) {
             analyze_import_decl(decl);
+        } else if (decl->kind >= AstKind::StmtExpr && decl->kind <= AstKind::StmtYield) {
+            error(decl->loc, "statements are not allowed at module scope; "
+                             "move this into a function such as 'main'");
         }
     }
 

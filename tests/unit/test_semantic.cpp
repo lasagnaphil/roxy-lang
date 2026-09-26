@@ -449,6 +449,25 @@ TEST_SUITE("Semantic") {
         CHECK(t.has_error_containing("undefined"));
     }
 
+    TEST_CASE("Semantic Error: Statement at module scope") {
+        // A top-level statement used to parse and then be silently dropped —
+        // nothing runs module-level code except global initializers.
+        SemanticTestHelper t;
+        CHECK(!t.run(R"(
+            print("never runs");
+            fun main() {}
+        )"));
+        CHECK(t.has_error_containing("not allowed at module scope"));
+    }
+
+    TEST_CASE("Semantic: Globals and declarations at module scope are fine") {
+        SemanticTestHelper t;
+        CHECK(t.run(R"(
+            var g: i32 = 1;
+            fun main() { print(f"{g}"); }
+        )"));
+    }
+
     TEST_CASE("Semantic Error: Type mismatch in assignment") {
         SemanticTestHelper t;
         CHECK(!t.run(R"(
