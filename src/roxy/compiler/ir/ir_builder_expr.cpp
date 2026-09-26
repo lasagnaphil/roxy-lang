@@ -2870,6 +2870,18 @@ ValueId IRBuilder::gen_assign_local(Expr* expr, ValueId value) {
             u32 gslots = m_module->globals[git->second].slot_count;
             u32 goffset = m_module->globals[git->second].slot_offset;
             ValueId addr = emit_global_addr(goffset, gtype);
+            // A `string` global owns one count: adopt a fresh temp or retain an
+            // existing owner BEFORE releasing the overwritten value — the same
+            // retain-before-release order as a string local, so `g = g` never
+            // frees the object it stores. The store comes first: adopting a temp
+            // emits a Nullify, which the C backend lowers to zeroing the value.
+            if (gtype && gtype->kind == TypeKind::String) {
+                ValueId old = emit_load_ptr(addr, gslots, gtype);
+                ValueId result = emit_store_ptr(addr, value, gslots, gtype);
+                consume_or_retain_string(value, gtype, TempAdoption::Elsewhere);
+                emit_str_release(old);
+                return result;
+            }
             // Destroy the overwritten value (mirrors gen_assign_field).
             if (gtype && gtype->is_struct() && member_needs_drop(gtype)) {
                 emit_delete(addr, gtype);

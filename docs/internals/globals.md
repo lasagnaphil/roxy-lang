@@ -64,13 +64,18 @@ The IR builder synthesizes two parameterless functions:
 - **`__module_init`** — for each global with an initializer, in declaration
   order: evaluate the initializer (which runs `New` + the constructor for
   `uniq T(..)`), then store it into the global's slot (struct-copy for value
-  structs, `StorePtr` otherwise), consuming the initializer temp when the type is
-  noncopyable. (A copyable counted value is *not* retained here — a dynamically
-  built `string` global currently dangles; see `TODO.md`.) Because init
-  runs in order, a later global's initializer may read an earlier global.
-- **`__module_shutdown`** — for each noncopyable global, in **reverse** order:
-  destroy it (`Delete` through the slot's address for value structs, or
-  `LoadPtr` + `Delete` for `uniq`/`List`/`Map`).
+  structs, `StorePtr` otherwise). The global then owns what it holds: an
+  initializer temp with drop glue is adopted (so its own cleanup does not release
+  it when `__module_init` returns), and a `string` that is not a fresh temp —
+  another global — is retained. Because init runs in order, a later global's
+  initializer may read an earlier global.
+- **`__module_shutdown`** — for each global with drop glue (`member_needs_drop`),
+  in **reverse** order: destroy it (`Delete` through the slot's address for value
+  structs, including copyable ones holding a `string`; `LoadPtr` + `Delete` for
+  `uniq`/`List`/`Map`; `StrRelease` for a `string`; `RefDec` for a `ref`).
+
+Assigning to a `string` global stores the new value, adopts or retains it, and
+then releases the overwritten one — retain before release, so `g = g` is safe.
 
 Both are skipped (not generated) when no global needs them.
 

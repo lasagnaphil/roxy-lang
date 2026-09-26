@@ -494,8 +494,15 @@ IRFunction* IRBuilder::build_module_init(Program* /*program*/) {
             emit_ref_borrow_inc(val, initializer);
         }
         // The initializer temporary's ownership transfers into the global slot.
-        if (type && type->noncopyable()) {
-            consume_temp_noncopyable(val);
+        // Keyed on drop glue, not move-only-ness: a copyable value that drops (a
+        // `string`, or a struct holding one) must be adopted too, or the temp's
+        // own cleanup releases it at the end of __module_init and the global
+        // keeps a dead pointer. A string that is not a fresh temp (another
+        // global) is retained instead, so the global owns its own count.
+        if (type && type->kind == TypeKind::String) {
+            consume_or_retain_string(val, type, TempAdoption::Elsewhere);
+        } else if (tracked_for_cleanup(type)) {
+            consume_temp_noncopyable(val, TempAdoption::Elsewhere);
         }
     }
 
@@ -503,16 +510,17 @@ IRFunction* IRBuilder::build_module_init(Program* /*program*/) {
     return finish_ir_function();
 }
 
-// Synthesize `__module_shutdown`: destroy noncopyable globals (uniq/List/Map,
-// or value structs with destructors) in reverse declaration order. Returns null
-// if no global needs teardown.
+// Synthesize `__module_shutdown`: drop every global that carries drop glue —
+// uniq/List/Map, value structs with a destructor (user-written, or synthesized
+// for an owning field such as a `string`), `string`s, and `ref` borrows — in
+// reverse declaration order. Returns null if no global needs teardown.
 IRFunction* IRBuilder::build_module_shutdown() {
     bool any = false;
     for (const IRGlobal& g : m_module->globals) {
-        // Noncopyable globals need destruction; a `ref` global needs its
-        // create-inc (build_module_init, finding 8a) released here even though
-        // `ref` is copyable.
-        if (g.type && (g.type->noncopyable() || g.type->kind == TypeKind::Ref)) {
+        // Keyed on drop glue, not move-only-ness: a copyable `string` or
+        // string-bearing struct owns counts too. A `ref` global needs its
+        // create-inc (build_module_init, finding 8a) released here.
+        if (g.type && member_needs_drop(g.type)) {
             any = true;
             break;
         }
@@ -544,12 +552,17 @@ IRFunction* IRBuilder::build_module_shutdown() {
             emit_ref_dec(val);
             continue;
         }
-        if (type->is_copy())
+        if (type->kind == TypeKind::String) {
+            ValueId addr = emit_global_addr(slot_offset, type);
+            emit_str_release(emit_load_ptr(addr, slot_count, type));
+            continue;
+        }
+        if (!member_needs_drop(type))
             continue;
 
         ValueId addr = emit_global_addr(slot_offset, type);
         if (type->is_struct()) {
-            // Value struct with a destructor: destroy in place via its address.
+            // Value struct with drop glue: destroy in place via its address.
             emit_delete(addr, type);
         } else {
             // uniq / List / Map: the slot holds the owning pointer.

@@ -199,6 +199,73 @@ TEST_SUITE("E2E Globals") {
         CHECK(dm.value == 0);
     }
 
+    // A dynamically built string global used to dangle: __module_init only
+    // adopted the initializer temp for noncopyable types, so the string was
+    // released when __module_init returned. __module_shutdown likewise skipped
+    // every copyable global, so nothing released one either. (The VM run also
+    // asserts the teardown leak census.)
+    TEST_CASE_TEMPLATE("dynamically built string global keeps its value", Backend,
+                       RX_E2E_BACKENDS) {
+        auto result = Backend::run(R"(
+            var gi: i32 = 7;
+            var g: string = f"a{gi}";
+            var copied: string = g;
+            var lit: string = "lit";
+            fun main(): i32 {
+                print(g);
+                print(copied);
+                print(lit);
+                return 0;
+            }
+        )");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "a7\na7\nlit\n");
+    }
+
+    TEST_CASE_TEMPLATE("string-bearing struct global keeps its field", Backend, RX_E2E_BACKENDS) {
+        auto result = Backend::run(R"(
+            struct Box { s: string; }
+            var gi: i32 = 7;
+            var b: Box = Box { s = f"b{gi}" };
+            fun main(): i32 {
+                print(b.s);
+                b = Box { s = f"c{gi}" };
+                print(b.s);
+                return 0;
+            }
+        )");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "b7\nc7\n");
+    }
+
+    // Assigning to a string global must retain the new value and release the
+    // old one: `g = local` used to alias the local's string without a count
+    // (dangling once the local died) and leak the overwritten value.
+    TEST_CASE_TEMPLATE("string global reassignment is counted", Backend, RX_E2E_BACKENDS) {
+        auto result = Backend::run(R"(
+            var gi: i32 = 1;
+            var g: string = f"first{gi}";
+            var unset: string;
+            fun set_from_local() {
+                var local: string = f"local{gi}";
+                g = local;
+            }
+            fun main(): i32 {
+                g = f"second{gi}";
+                print(g);
+                set_from_local();
+                print(g);
+                g = g;
+                print(g);
+                unset = g;
+                print(unset);
+                return 0;
+            }
+        )");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "second1\nlocal1\nlocal1\nlocal1\n");
+    }
+
     // Module globals share the local-var declaration rules (resolve_global_var
     // routes through analyze_var_initializer): redefinition, nil-inference, and
     // noncopyable move tracking all apply. These were gaps before the paths
