@@ -83,33 +83,6 @@ now compiles and runs verbatim. Per-bug records are in this file's git history.*
   as a borrow *argument* (`take(List<i32>())`) is fine: the caller frame keeps
   and drops it.
 
-- [ ] **A module global holding a dynamically built `string` dangles**:
-  `var gi: i32 = 7; var g: string = f"a{gi}";` then `print(g)` in `main` prints
-  an empty string (verified 2026-09-26; a literal-initialized string global is
-  fine, and a copyable struct global with an f-string field fails the same way).
-  `build_module_init` (`ir_builder.cpp`) consumes the initializer temp only for
-  noncopyable types, so the string temp is released at the end of
-  `__module_init` and the global keeps a dead pointer. `build_module_shutdown`
-  likewise skips every `is_copy()` global except `ref`, so a string-bearing
-  copyable global would also never be released. The store needs to retain (or
-  adopt the temp), and shutdown needs to drop per `member_needs_drop`.
-- [ ] **An `f` suffix on an integer literal yields 0.0**: `var h: f32 = 5f;`
-  holds `0` (`2.5f` is fine). In `Lexer` number scanning (`lexer.cpp`, the
-  `suffixes:` block) `is_float = true` is set *before* the
-  `if (!is_float) float_value = (f64)int_value;` it guards, so the conversion
-  never runs. `docs/grammar.md` advertises the suffix on any decimal literal.
-- [ ] **Top-level statements are silently dropped**: `print("x");` at module
-  scope compiles with no diagnostic and never runs. `docs/grammar.md` allows a
-  `statement` under `declaration`. Either reject it with an error or run it from
-  `__module_init`.
-
-- [ ] **Two traits' same-named methods on one struct silently collide**:
-  `fun S.go(): i32 for A` and `fun S.go(): i32 for B` both compile and `s.go()`
-  calls the last one (verified 2026-09-26; two non-trait `S.go` definitions are
-  rejected as a duplicate method). `docs/internals/traits.md` states it should
-  be an error — `TraitSystem`'s impl registration needs the same duplicate check
-  the plain method path has.
-
 ---
 
 ## Low Priority

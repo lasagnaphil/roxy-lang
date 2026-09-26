@@ -1218,4 +1218,50 @@ TEST_SUITE("E2E Traits") {
         CHECK(module == nullptr); // Should fail to compile
     }
 
+    // Methods are one-per-name, so a trait impl whose method name is already
+    // taken on the struct is a duplicate — it used to be silently skipped at
+    // registration while codegen still emitted (and called) one of the bodies.
+    TEST_CASE("Duplicate method: two traits implement the same name") {
+        const char* source = R"(
+            trait A;
+            fun A.go(): i32;
+            trait B;
+            fun B.go(): i32;
+            struct S { x: i32; }
+            fun S.go(): i32 for A { return 1; }
+            fun S.go(): i32 for B { return 2; }
+            fun main(): i32 { var s = S { x = 0 }; return s.go(); }
+        )";
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, source) == nullptr);
+    }
+
+    TEST_CASE("Duplicate method: trait impl collides with a plain method") {
+        const char* source = R"(
+            trait A;
+            fun A.go(): i32;
+            struct S { x: i32; }
+            fun S.go(): i32 { return 1; }
+            fun S.go(): i32 for A { return 2; }
+            fun main(): i32 { var s = S { x = 0 }; return s.go(); }
+        )";
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, source) == nullptr);
+    }
+
+    TEST_CASE("Duplicate method: one generic trait at two type arguments") {
+        // Only one `mul` can exist per struct, so the second impl used to be
+        // dropped and `v * v` failed with an unrelated operator error.
+        const char* source = R"(
+            trait Mul<Rhs>;
+            fun Mul.mul(o: Rhs): Self;
+            struct V { x: i32; }
+            fun V.mul(o: i32): V for Mul<i32> { return V { x = self.x * o }; }
+            fun V.mul(o: V): V for Mul<V> { return V { x = self.x * o.x }; }
+            fun main(): i32 { return 0; }
+        )";
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, source) == nullptr);
+    }
+
 } // TEST_SUITE("E2E Traits")

@@ -655,15 +655,22 @@ void TraitSystem::validate_and_register_impl_method(const TraitImplGroup& group,
             }
         }
 
-        // Register as a regular method on the struct, unless one already exists.
+        // Register as a regular method on the struct. Methods are one-per-name
+        // (`Type$$method`), so a name already taken — by a plain method, or by
+        // another trait's impl (including a second instantiation of a generic
+        // trait, `for Mul<i32>` + `for Mul<V>`) — is an error, exactly as two
+        // plain methods are. Skipping it silently let codegen pick one body.
         bool is_duplicate = false;
         for (const auto& method : struct_type_info.methods) {
-            if (method.name == method_decl.name) {
+            if (method.name == method_decl.name && method.decl != decl) {
                 is_duplicate = true;
                 break;
             }
         }
-        if (!is_duplicate) {
+        if (is_duplicate) {
+            m_reporter.error_fmt(decl->loc, "duplicate method '{}' for struct '{}'",
+                                 method_decl.name, struct_type_info.name);
+        } else {
             MethodInfo method_info;
             method_info.name = method_decl.name;
             method_info.param_types = m_allocator.alloc_span(param_types);

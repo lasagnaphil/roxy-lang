@@ -104,7 +104,7 @@ fun Vec2.mul(scalar: i32): Vec2 for Mul<i32> {     // Rhs = i32
 Default methods may use trait type parameters; when injected into a struct, parameters are substituted with the concrete type arguments (e.g. an `add_twice` default calling `self.add(other)` gets `Rhs` substituted per implementation).
 
 **Constraints:**
-- A struct implements a given generic trait at most once per set of type arguments.
+- A struct implements a given generic trait at most once. Methods are one-per-name, so a second instantiation (`for Mul<i32>` plus `for Mul<V>`) would define a second `mul` and is rejected as a duplicate method.
 - A bare `for Mul` on a generic trait means `Rhs = Self` (`fun V.mul(o: V): V for Mul`); write `for Mul<i32>` for any other argument.
 - The compiler rejects type args on a non-generic trait (`for Eq<i32>`).
 - Generic trait inheritance (`trait AddAssign<Rhs> : Add<Rhs>`) is not yet supported.
@@ -155,7 +155,7 @@ When a method is called on a type:
 
 Default methods are injected by cloning the trait method's body, parameters, and return type with a `TypeSubstitution` that maps `Self` → the concrete struct and each trait type parameter → its concrete argument (via `GenericInstantiator::clone_stmt()` / `substitute_type_expr()`). The clones are processed as synthetic declarations alongside regular methods.
 
-Trait methods are stored on the struct and use standard method mangling, `Type$$method` (e.g. `Point$$eq`). Each struct has at most one implementation per method name. Two traits defining the same method name on one struct *should* be an error, but currently compiles and silently keeps the last impl (see `TODO.md`); two non-trait methods with one name are rejected.
+Trait methods are stored on the struct and use standard method mangling, `Type$$method` (e.g. `Point$$eq`). Each struct has at most one implementation per method name: a trait impl whose name is already taken — by a plain method or by another trait's impl — is a `duplicate method` error, the same as two plain methods.
 
 For operators, the compiler rewrites the operator into the corresponding method call (`==` → `eq`, `<` → `lt`, etc.) in both semantic analysis and IR generation. See `operator-overloading.md`.
 
