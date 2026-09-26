@@ -40,34 +40,15 @@ fun helper(): i32 { return 42; }               // private
 
 ## Builtin Prelude
 
-Built-in functions live in a special `"builtin"` module (`BUILTIN_MODULE_NAME`, `vm/natives.hpp`) auto-imported as a prelude, so they are available without any explicit import. The registration list in `src/roxy/vm/natives.cpp` is authoritative; broadly:
-
-- `print` — an **overload set**, one member per Printable primitive (`string`, `bool`, `i32`/`i64`/`u32`/`u64`, `f32`/`f64`). Structs, enums, and containers reach it through the sema-side `Printable` fallback (`print(v)` → `print(v.to_string())`); see [overloading.md](overloading.md).
-- `to_string` / `hash` — one native per primitive under a `$$`-mangled method name (`i32$$to_string`, `i32$$hash`, …), backing the `Printable` and `Hash` traits. Unlike `print`, these are methods, not an overload set.
-- Strings — `str_concat`, `str_eq`, `str_ne`, `str_len`, `str_char_at`, `str_substr`, `str_from_code`, `str_to_f64`.
-- Misc — `sqrt`, `clock`, `read_file`.
-- `List<T>` / `Map<K, V>` are registered as generic types with their method sets (plus `__list_*` / `__map_*` internal helpers the compiler emits, not user-callable).
-
-```roxy
-fun main(): i32 {
-    print("hello");   // no import needed
-    return 0;
-}
-```
+Built-in functions live in a special `"builtin"` module (`BUILTIN_MODULE_NAME`, `vm/natives.hpp`) auto-imported as a prelude, so they are available without any explicit import. `register_builtin_natives` in `src/roxy/vm/natives.cpp` is the authoritative list (`print` overloads, `str_*`, primitive `$$to_string`/`$$hash`, `List`/`Map`, misc). The `__list_*` / `__map_*` helpers registered there are compiler-internal, not user-callable.
 
 ## Architecture
 
-The module layer is built from a few data structures in `compiler/driver/module_registry.hpp`:
-
-- **`ModuleExport`** — a single export entry: name, `ExportKind` (Function / Struct / Enum), `Type*`, plus `is_native` / `is_pub` flags, export index, and the AST `Decl*` (null for natives).
-- **`ModuleInfo`** — module metadata: name, the list of `ModuleExport`s, and (for native modules) the backing `NativeRegistry*`.
-- **`ModuleRegistry`** — central registry of all modules. Registers script modules (`register_script_module`) and native modules (`register_native_module`), and resolves imports (`find_module`, `find_export`).
-
-C++ binding via `NativeRegistry` (`vm/binding/registry.hpp`) is a separate concern; see [interop.md](interop.md).
+`ModuleRegistry` (`compiler/driver/module_registry.hpp`) holds a `ModuleInfo` per script or native module, each listing its `ModuleExport`s, and resolves imports against them. C++ binding itself is [interop.md](interop.md)'s concern.
 
 ## Multi-Module Compilation
 
-The `Compiler` class (`compiler/driver/compiler.hpp`) drives multi-file compilation. Callers register native registries and add named sources, then call `compile()`, which returns a linked `BCModule*` (null on failure, with errors available via `errors()`):
+The `Compiler` class (`compiler/driver/compiler.hpp`) drives multi-file compilation; `compile()` returns a linked `BCModule*` (null on failure, errors via `errors()`):
 
 ```cpp
 Compiler compiler(allocator);
@@ -77,37 +58,15 @@ compiler.add_source("main", main_source, main_len);
 BCModule* module = compiler.compile();
 ```
 
-### Pipeline
-
-1. **Parse** all modules into ASTs.
-2. **Topological sort** modules by import dependency.
-3. **Detect cycles** during the sort — circular imports are a compile error.
-4. **Semantic analysis** in dependency order, registering each module's exports.
-5. **Build IR** (SSA) for all modules.
-6. **Link** — merge all functions into a single `IRModule` / `BCModule`, resolving cross-module calls.
-
-### Circular import detection
-
-The topological sort uses DFS-based cycle detection. Mutually importing modules fail:
-
-```roxy
-// module_a.roxy        // module_b.roxy
-import b;               import a;   // ERROR: circular import
-```
-
-Error message: `Circular import detected: module 'b' imports 'a' which creates a cycle`.
+Modules are parsed, topologically sorted by import dependency (a DFS; **circular imports are a compile error**), analyzed in dependency order, built to IR, then linked into one `IRModule` / `BCModule`.
 
 ## Cross-Module Calls (Static Linking)
 
-A call to an imported function lowers to `IROp::CallExternal`, which records the target module name, function name, and arguments (`CallExternalData`, emitted in `ir_builder_expr.cpp`).
-
-Because all modules are linked statically, these are resolved entirely at compile time. `Compiler::link_modules()` merges every module's IR functions into one `IRModule` and builds a function-name → index map (`m_func_indices`) during lowering. Each `CallExternal` looks up its target in that map and is lowered to a regular `CALL` (or `CALL_NATIVE` for natives) with the resolved index. The result: no runtime resolution overhead, all function indices known at compile time, and a bytecode module containing only `CALL` / `CALL_NATIVE` opcodes.
+A call to an imported function is emitted as `IROp::CallExternal` (target module + function name). `Compiler::link_modules()` merges all modules' IR into one `IRModule`, and lowering resolves each `CallExternal` by name to a plain `CALL` (or `CALL_NATIVE`) — so the bytecode has no external-call opcode and no runtime resolution.
 
 ## Semantic Analysis Integration
 
-Imports are processed in Pass 0 of semantic analysis, before type declarations: first the builtin prelude is auto-imported, then user `import` declarations are resolved against the `ModuleRegistry`.
-
-Resolving a qualified `module.function()` access checks that the left-hand side is a module symbol, looks up the export, verifies it is `pub`, and returns the export's type for type checking.
+Imports are processed in Pass 0 of semantic analysis, before type declarations: the builtin prelude first, then user imports. A qualified `module.function()` access must name a `pub` export.
 
 ## Native Module Integration
 
@@ -122,18 +81,8 @@ ModuleRegistry modules(allocator);
 modules.register_native_module("math", &math_registry, types);
 ```
 
-`register_native_module` creates a `ModuleInfo`, then iterates the registry's entries, creating a `ModuleExport` for each native function with `is_native = true` and `is_pub = true`.
+Every native function in the registry becomes a `pub` export of that module.
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `include/roxy/compiler/driver/module_registry.hpp` | `ModuleInfo`, `ModuleExport`, `ModuleRegistry` |
-| `src/roxy/compiler/driver/module_registry.cpp` | module registration, native-module conversion |
-| `include/roxy/compiler/driver/compiler.hpp` | `Compiler` class declaration |
-| `src/roxy/compiler/driver/compiler.cpp` | multi-module compilation, topological sort, linking |
-| `include/roxy/vm/natives.hpp` | `BUILTIN_MODULE_NAME` constant |
-| `src/roxy/compiler/sema/semantic.cpp` | import analysis, prelude auto-import, qualified access |
-| `src/roxy/compiler/ir/ir_builder_expr.cpp` | `CallExternal` IR emission |
-| `src/roxy/compiler/codegen/lowering.cpp` | static linking (`CallExternal` → `CALL`) |
-| `tests/e2e/test_modules.cpp` | module system E2E tests |
+`compiler/driver/{module_registry,compiler}.{hpp,cpp}`; import analysis in `sema/semantic.cpp`. Tests: `tests/e2e/test_modules.cpp`.

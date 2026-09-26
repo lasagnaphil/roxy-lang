@@ -4,22 +4,7 @@ Roxy binds C++ functions with type-safe, automatically generated wrappers. A sin
 
 ## Calling Convention
 
-Native functions are registered with the bytecode module and invoked via `CALL_NATIVE`:
-
-```
-CALL_NATIVE dst, func_idx, argc
-
-Arguments:  dst+1, dst+2, ...  (consecutive registers)
-Return:     dst
-```
-
-The low-level signature carries the VM and register layout:
-
-```cpp
-typedef void (*NativeFunction)(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg);
-```
-
-A wrapper reads arguments from `vm->call_stack_back().registers[first_arg + i]` and writes the result to `registers[dst]`.
+In VM mode a native is a low-level `NativeFunction` (`vm/bytecode.hpp`) invoked by `CALL_NATIVE`: arguments sit in the caller's registers `dst+1, dst+2, ...` and the result is written to `dst`. Embedders rarely write these by hand — `bind<>` generates them.
 
 ## Bound Functions Take Only Their Logical Args
 
@@ -33,11 +18,7 @@ registry.bind<my_add>("add");
 registry.bind<my_sqrt>("sqrt");
 ```
 
-`FunctionBinder<FnPtr>` (`binder.hpp`) generates the `NativeFunction` wrapper at compile time: it extracts each argument from registers via `RoxyType<Arg>::from_reg`, calls the user function, and stores the result via `RoxyType<Ret>::to_reg`.
-
-### Type Mapping
-
-`RoxyType<T>` (`type_traits.hpp`) maps a C++ type to its Roxy type and provides register conversions: `get(TypeCache&)` returns the `Type*`, `from_reg(u64)` / `to_reg(T)` convert to and from a 64-bit register value. Specializations exist for `void`, `bool`, `i8`–`i64`, `u8`–`u64`, `f32`, `f64`, pointers (`T*`), and the interop wrappers `RoxyList<T>` / `RoxyString`. `FunctionTraits` (`function_traits.hpp`) extracts the signature at compile time.
+`FunctionBinder<FnPtr>` (`binder.hpp`) generates the `NativeFunction` wrapper at compile time, converting each argument and the result through `RoxyType<T>` (`type_traits.hpp`), which maps a C++ type to its Roxy type and to/from a 64-bit register. Supported C++ types are exactly its specializations.
 
 ### AOT Mode
 
@@ -45,7 +26,7 @@ In AOT mode the C emitter consults the same `NativeRegistry` (via `CEmitterConfi
 
 ## NativeRegistry
 
-`NativeRegistry` (`registry.hpp`) is the unified registration entry point. It offers automatic binding (`bind`, `bind_method`), string-signature binding (`bind_native`, `bind_method`, `bind_constructor`), struct registration (`register_struct`), and generic-type registration (`register_generic_type`, `bind_generic_destructor`, `bind_generic_copy_constructor`). `apply_*` methods push the registrations into semantic analysis (`apply_to_symbols`, `apply_structs_to_types`, `apply_methods_to_types`) and the runtime (`apply_to_module`); `get_index` / `is_native` serve the IR builder.
+`NativeRegistry` (`registry.hpp`) is the single registration entry point for functions, methods, constructors, native structs, and generic native types. Its `apply_*` methods push registrations into semantic analysis (`SemanticAnalyzer` takes an optional `NativeRegistry*` and applies them in passes 0c/1.5/1.6, before function bodies are checked) and into the runtime (`apply_to_module`).
 
 ## String-Based Binding
 
@@ -74,7 +55,7 @@ registry.bind_method(native_list_push, "fun List<T>.push(val: T)");
 registry.bind_constructor(native_map_init, "fun Map<K, V>.new(key_kind: i32, capacity: i32)", 1);
 ```
 
-A signature-bound method wrapper receives `self` as `regs[first_arg]` (a pointer to the struct on the stack), followed by any additional arguments. Use signature binding when a method needs direct VM access (allocation, complex register manipulation).
+A signature-bound wrapper is a raw `NativeFunction`; a method receives `self` as `regs[first_arg]` (a pointer to the struct), followed by the other arguments. Use signature binding when a native needs direct register access (e.g. generic element types).
 
 ## Native Structs and Methods
 
@@ -109,18 +90,7 @@ fun test(): i32 {
 }
 ```
 
-Method entries are stored under mangled names using the `$$` separator (`Point$$scaled`) — the same convention the IR builder uses for Roxy-defined methods — so `get_index()`, `apply_to_module()`, and `is_native()` work unchanged. During IR generation the builder checks the registry for the mangled name and emits `CallNative` instead of `Call`.
-
-### Compilation Pipeline Integration
-
-The `SemanticAnalyzer` accepts an optional `NativeRegistry*`. Native structs and methods slot into the analysis passes:
-
-| Pass | Action |
-|------|--------|
-| 0c | `apply_to_symbols()` — registers non-method native functions in the symbol table |
-| 1.5 | `apply_structs_to_types()` — creates struct types in TypeCache and SymbolTable |
-| 1.6 | `apply_methods_to_types()` — attaches `MethodInfo` entries to struct types |
-| 3 | Function bodies analyzed; method calls resolve via normal type-hierarchy lookup |
+Method entries are stored under the same `$$` mangle the IR builder uses for Roxy-defined methods (`Point$$scaled`); the builder finds the mangled name in the registry and emits `CallNative` instead of `Call`.
 
 ## Generic Native Types
 
@@ -136,13 +106,11 @@ registry.bind_method(native_list_push, "fun List<T>.push(val: T)");
 
 `register_generic_type("List<T>", ...)` parses the declaration to extract the base name (`List`) and parameter names (`[T]`). When the analyzer sees `List<i32>`, it finds the registered type, instantiates concrete `MethodInfo` entries and the constructor with `i32` substituted for `T`, and attaches them to the monomorphized struct type (`List$i32`). The runtime native functions are type-erased — all Roxy values are 64-bit — so one implementation handles every element type.
 
-### Built-in List and Map
-
-`List<T>` and `Map<K, V>` are registered this way in `src/roxy/vm/natives.cpp`. Their methods mirror the Roxy API: `List<T>` provides `new(cap)`, `len`, `cap`, `push`, `pop`, `index`/`index_mut`; `Map<K, V>` provides `new(key_kind, capacity)` (min_args=1), `len`, `contains`, `get`, `insert`, `remove`, `clear`, `keys`, `values`. String operations (`str_concat`, `str_eq`, `str_ne`, `str_len`, `print`) are bound as free functions.
+`List<T>` and `Map<K, V>` are registered this way in `register_builtin_natives` (`src/roxy/vm/natives.cpp`), along with the string and `print` natives.
 
 ## Interop Wrappers
 
-`RoxyString` (`roxy_string.hpp`), `RoxyList<T>` (`roxy_list.hpp`) and `RoxyMap<K, V>` (`roxy_map.hpp`) are aliases of the runtime's `roxy::String` / `roxy::List<T>` / `roxy::Map<K, V>` (`roxy_rt.h`) — thin non-owning typed wrappers around a Roxy data pointer, letting bound C++ functions read, modify, and create lists/strings. Their `RoxyType` specializations resolve to `List<T>` / `string` and handle register conversion, so they can be used directly as bound-function parameters and return types.
+`RoxyString` (`roxy_string.hpp`), `RoxyList<T>` (`roxy_list.hpp`) and `RoxyMap<K, V>` (`roxy_map.hpp`) are aliases of the runtime's `roxy::String` / `roxy::List<T>` / `roxy::Map<K, V>` (`roxy_rt.h`) — thin non-owning typed wrappers around a Roxy data pointer that allocate through the active context. Their `RoxyType` specializations let them appear directly as bound-function parameters and return types. Methods: see `roxy_rt.h`.
 
 ```cpp
 i32 list_sum(RoxyList<i32> list) {
@@ -156,26 +124,6 @@ RoxyString str_join(RoxyString a, RoxyString b) { return a.concat(b); }
 registry.bind<list_sum>("list_sum");
 registry.bind<str_join>("str_join");
 ```
-
-### RoxyList<T>
-
-| Method | Description |
-|--------|-------------|
-| `static RoxyList<T> alloc(i32 cap = 0)` | Allocate a new list (ctx allocator) |
-| `T get(i32 index) const` / `void set(i32, T)` | Bounds-checked access / write |
-| `void push(T)` / `T pop()` | Append (grows) / remove last |
-| `i32 len() const` / `i32 cap() const` | Length / capacity |
-| `bool is_valid() const` / `void* data() const` | Null check / raw pointer |
-
-### RoxyString
-
-| Method | Description |
-|--------|-------------|
-| `static RoxyString alloc(const char*, u32 length)` / `alloc(const char*)` | Allocate (ctx allocator + intern table); second form uses `strlen` |
-| `i32 length() const` / `const char* c_str() const` | Length / null-terminated data |
-| `bool equals(RoxyString) const` | Equality |
-| `RoxyString concat(RoxyString) const` | Concatenate, returns new string |
-| `bool is_valid() const` / `void* data() const` | Null check / raw pointer |
 
 ## End-to-End Usage
 
@@ -215,15 +163,4 @@ fun test(): i32 {
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `include/roxy/vm/binding/type_traits.hpp` | `RoxyType<T>` mappings |
-| `include/roxy/vm/binding/function_traits.hpp` | Compile-time signature extraction |
-| `include/roxy/vm/binding/binder.hpp` | `FunctionBinder` wrapper generation |
-| `include/roxy/vm/binding/registry.hpp` | `NativeRegistry` (declarations + templates) |
-| `src/roxy/vm/binding/registry.cpp` | `NativeRegistry` non-template implementations |
-| `include/roxy/vm/binding/roxy_string.hpp` | `RoxyString` alias + `RoxyType` specialization |
-| `include/roxy/vm/binding/roxy_list.hpp` | `RoxyList<T>` alias + `RoxyType` specialization |
-| `include/roxy/vm/binding/roxy_map.hpp` | `RoxyMap<K, V>` alias + `RoxyType` specialization |
-| `include/roxy/vm/binding/interop.hpp` | Convenience header |
-| `include/roxy/vm/natives.hpp`, `src/roxy/vm/natives.cpp` | Built-in natives (incl. `List<T>` / `Map<K, V>` registration) |
+Binding machinery: `include/roxy/vm/binding/` (`registry.{hpp,cpp}`, `binder.hpp`, `type_traits.hpp`, wrapper headers; `interop.hpp` is the convenience include). Built-in natives: `vm/natives.{hpp,cpp}`.

@@ -32,7 +32,7 @@ dies — and a type is move-only exactly when its drop has no inverse.
 - [RAII, moves, and `borrowed`](#raii-moves-and-borrowed) — the user-facing model.
 - [Lifecycle implementation and status](#lifecycle-implementation-and-status) —
   how the lifecycle is derived and lowered, and the ordering constraints behind
-  [separating Drop from Copy](#separating-drop-from-copy--landed-2026-08-02).
+  [separating Drop from Copy](#separating-drop-from-copy).
 - [Limitations and future directions](#limitations-and-future-directions).
 
 ---
@@ -718,8 +718,6 @@ synthetic-destructor fixpoint.
 `Type::needs_drop()`, `needs_retain()` and `is_trivial()` are structural predicates
 no codegen consults (pinned by the `Lifecycle Predicates` suite; `needs_drop()` backs
 one cross-check assertion in `build_delete_desc`).
-
-<a id="separating-drop-from-copy--landed-2026-08-02"></a>
 
 ### Separating Drop from Copy
 
