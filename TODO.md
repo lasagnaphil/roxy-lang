@@ -4,7 +4,7 @@ This document tracks known technical debt, incomplete implementations, and plann
 improvements. Completed items are removed as they land — the per-item records
 (measurements, rationale, regression-test pointers) live in this file's git history.
 
-Last updated: 2026-08-09
+Last updated: 2026-09-26
 
 ---
 
@@ -82,6 +82,33 @@ now compiles and runs verbatim. Per-bug records are in this file's git history.*
   matching increment. Also verified pre-existing for `uniq`. Passing a temporary
   as a borrow *argument* (`take(List<i32>())`) is fine: the caller frame keeps
   and drops it.
+
+- [ ] **A module global holding a dynamically built `string` dangles**:
+  `var gi: i32 = 7; var g: string = f"a{gi}";` then `print(g)` in `main` prints
+  an empty string (verified 2026-09-26; a literal-initialized string global is
+  fine, and a copyable struct global with an f-string field fails the same way).
+  `build_module_init` (`ir_builder.cpp`) consumes the initializer temp only for
+  noncopyable types, so the string temp is released at the end of
+  `__module_init` and the global keeps a dead pointer. `build_module_shutdown`
+  likewise skips every `is_copy()` global except `ref`, so a string-bearing
+  copyable global would also never be released. The store needs to retain (or
+  adopt the temp), and shutdown needs to drop per `member_needs_drop`.
+- [ ] **An `f` suffix on an integer literal yields 0.0**: `var h: f32 = 5f;`
+  holds `0` (`2.5f` is fine). In `Lexer` number scanning (`lexer.cpp`, the
+  `suffixes:` block) `is_float = true` is set *before* the
+  `if (!is_float) float_value = (f64)int_value;` it guards, so the conversion
+  never runs. `docs/grammar.md` advertises the suffix on any decimal literal.
+- [ ] **Top-level statements are silently dropped**: `print("x");` at module
+  scope compiles with no diagnostic and never runs. `docs/grammar.md` allows a
+  `statement` under `declaration`. Either reject it with an error or run it from
+  `__module_init`.
+
+- [ ] **Two traits' same-named methods on one struct silently collide**:
+  `fun S.go(): i32 for A` and `fun S.go(): i32 for B` both compile and `s.go()`
+  calls the last one (verified 2026-09-26; two non-trait `S.go` definitions are
+  rejected as a duplicate method). `docs/internals/traits.md` states it should
+  be an error — `TraitSystem`'s impl registration needs the same duplicate check
+  the plain method path has.
 
 ---
 
@@ -206,12 +233,14 @@ history. Remaining:
   two LSP error-recovering-parser infinite loops (`when self.<member>`
   discriminant; stray leading tokens like `}`/`"`/`,` with no forward-progress
   guard) and a lexer signed-overflow UB on out-of-range integer literals. One
-  finding remains open ↓.
-- [ ] **Structure-aware fuzzing** (design plan in `docs/internals/fuzzer.md` →
-  Roadmap): byte-level mutation plateaus at the parser — reaching sema / IR /
-  lowering / VM / C backend needs valid-by-construction programs. Staged: (1) a
-  grammar generator via libprotobuf-mutator for the parser + sema reject paths;
-  (2) scoping + type-directed generation to reach the IR builder/VM, with a
+  finding remains open (the LSP-parser OOM under Low Priority).
+- [ ] **Structure-aware fuzzing — remaining stages**: type-directed,
+  valid-by-construction generation **landed** (3395712: the hand-written
+  generator in `tests/fuzz/gen/` — not libprotobuf-mutator — driving
+  `fuzz_structured`, the `roxy_gen` corpus CLI, and the `Structured Gen` replay
+  suite; design in `docs/internals/fuzzer.md`). Still open: (1) a
   **VM-vs-C-backend differential** oracle (`compile_and_run` vs
-  `compile_and_run_cpp`) that catches miscompiles unit tests miss; (3) `uniq`
-  move-state modeling to reach RAII/drop/codegen paths.
+  `compile_and_run_cpp`) that catches miscompiles unit tests miss — the
+  generator already prints observable output for it; (2) `uniq`/`ref`/`weak`
+  move-state modeling to reach RAII/drop/codegen paths (the generator emits no
+  reference types in v1, `generator.hpp`).

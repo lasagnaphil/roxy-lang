@@ -80,7 +80,7 @@ When a `uniq` variable leaves scope without being explicitly deleted or moved, t
 
 ## Semantic Analysis
 
-The analyzer checks that: the named struct exists; no two constructors (or destructors) share a name; parameter types resolve; `self` appears only inside constructors/destructors; `new` expressions and `delete` statements reference valid constructors/destructors; and arguments match the resolved parameters.
+The analyzer checks that: the named struct exists; no two constructors (or destructors) share a name; parameter types resolve; `self` appears only inside constructors, destructors, and methods; `new` expressions and `delete` statements reference valid constructors/destructors; and arguments match the resolved parameters.
 
 ## Examples
 

@@ -10,16 +10,16 @@ See `traits.md` for the general trait system design.
 
 Operator dispatch is **structural**: the compiler rewrites each operator to a method call (`a + b` → `a.add(b)`, `a[i]` → `a.index(i)`) and resolves it by method name, so a type opts into an operator simply by defining the method — the `for Trait` clause is optional bookkeeping (it validates the signature and injects defaults). `Rhs` defaults to `Self` on the binary arithmetic/bitwise traits.
 
-Most operator traits below (`Add<Rhs>`, `Mul<Rhs>`, `Ord`, …) are **not** builtin — user code declares them (`trait Add<Rhs>;`) when it wants the `for` clause. The exceptions, registered as builtin traits in semantic analysis so `for ...` works without a user declaration, are `Eq`, `Exception`, and the subscript traits `Index<Idx, Output>` / `IndexMut<Idx, Output>`.
+Most operator traits below (`Add<Rhs>`, `Mul<Rhs>`, …) are **not** builtin — user code declares them (`trait Add<Rhs>;`) when it wants the `for` clause. The exceptions, registered as builtin traits in semantic analysis so `for ...` works without a user declaration, are `Eq`, `Ord`, `Printable`, `Hash`, `Exception`, and the subscript traits `Index<Idx, Output>` / `IndexMut<Idx, Output>`.
 
 ### Comparison
 
 | Trait | Methods | Operators |
 |-------|---------|-----------|
-| `Eq` | `eq`, `ne` | `==`, `!=` |
-| `Ord` : `Eq` | `cmp`, `lt`, `le`, `gt`, `ge` | `<`, `<=`, `>`, `>=` |
+| `Eq` | `eq` | `==` |
+| `Ord` | `lt`, `le`, `gt`, `ge` | `<`, `<=`, `>`, `>=` |
 
-`ne` defaults to `!eq`; the `Ord` comparisons default to `cmp(other)` (which returns -1/0/1) against 0.
+Each operator dispatches to its own method, with no defaults between them: a struct that defines only `eq` supports `==` but not `!=` (`invalid operands for comparison operator`), and a `for Ord` impl must define all four comparisons (there is no `cmp`).
 
 ### Arithmetic
 
@@ -158,13 +158,13 @@ Both primitive and struct operators resolve through one path, but codegen diverg
 
 - **Registration (Pass 1.7–1.8):** `register_builtin_index_trait()` registers the builtin `Index<Idx, Output>` / `IndexMut<Idx, Output>` traits (Pass 1.7, alongside `Eq` / `Exception`); `register_primitive_operator_methods()` registers operator methods on primitive types via `TypeCache::register_primitive_method()` (Pass 1.8); `populate_list_methods()` registers `index`/`index_mut` on list types. Primitive methods are not user-writable.
 - **Resolution:** `try_resolve_binary_op()`, `try_resolve_unary_op()`, and `analyze_index_expr()` call `TypeCache::lookup_method()`, which dispatches to struct hierarchy, primitive, or list lookup. Type checking is uniform across all kinds.
-- **Code generation:** primitives emit **direct IR ops** (`AddI`, `SubF`, …) rather than method calls; structs emit trait-method calls; lists/maps emit `CallNative` to their registered `index`/`index_mut` functions.
+- **Code generation:** primitives emit **direct IR ops** (`AddI`, `SubF`, …) rather than method calls; structs emit trait-method calls; list/map subscripts emit the dedicated `IROp::IndexGet` / `IndexSet` / `IndexTryAddr` ops (the registered `index`/`index_mut` natives only type them).
 
 Which primitive types carry which operators:
 
 | Type | Arithmetic | Bitwise | Comparison | Unary | Compound assign |
 |------|-----------|---------|-----------|-------|-----------------|
-| `i32`, `i64` | `add sub mul div mod` | `bit_and bit_or bit_xor shl shr` | all six | `neg bit_not` | all integer forms |
+| `i32`, `i64`, `u32`, `u64` | `add sub mul div mod` | `bit_and bit_or bit_xor shl shr` | all six | `neg bit_not` | all integer forms |
 | `f32`, `f64` | `add sub mul div` | — | all six | `neg` | `add/sub/mul/div_assign` |
 | `bool` | — | — | `eq ne` | — | — |
 | `List<T>` | — | — | — | — | `index` / `index_mut` |
@@ -178,5 +178,5 @@ The shared operator→method-name mappings live in `include/roxy/compiler/suppor
 | `include/roxy/compiler/support/operator_traits.hpp` | operator → method-name mappings |
 | `src/roxy/compiler/sema/trait_system.cpp` | trait/primitive operator-method registration (`TraitSystem`) |
 | `src/roxy/compiler/sema/semantic.cpp` | operator resolution (`try_resolve_binary_op`/`try_resolve_unary_op`, trait-bound dispatch) |
-| `src/roxy/compiler/ir/ir_builder.cpp` | direct IR ops for primitives, trait calls for structs |
+| `src/roxy/compiler/ir/ir_builder_expr.cpp` | direct IR ops for primitives, trait calls for structs |
 | `tests/e2e/test_traits.cpp` | operator-overloading E2E tests |

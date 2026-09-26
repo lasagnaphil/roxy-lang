@@ -48,7 +48,7 @@ constructor_decl -> ( "pub" )? "fun" "new" Identifier type_args? ( "." Identifie
                     "(" parameters? ")"
                     block ;
 
-destructor_decl  -> "fun" "delete" Identifier type_args? ( "." Identifier )?
+destructor_decl  -> ( "pub" )? "fun" "delete" Identifier type_args? ( "." Identifier )?
                     "(" parameters? ")"
                     block ;
 
@@ -221,7 +221,7 @@ BIN             -> "0b" ( "0" | "1" )+ ;
 OCT             -> "0o" ( "0" ... "7" )+ ;
 String          -> "\"" ( <any char except "\"" or "\\"> | escape )* "\"" ;
 FString         -> "f" "\"" ( <char> | escape | "{" expression "}" )* "\"" ;
-escape          -> "\\" ( "n" | "t" | "r" | "\\" | "\"" | "0" ) ;
+escape          -> "\\" ( "n" | "t" | "r" | "\\" | "\"" | "0" | "{" | "}" ) ;
 Identifier      -> ALPHA ( ALPHA | DIGIT )* ;
 ALPHA           -> "a" ... "z" | "A" ... "Z" | "_" ;
 DIGIT           -> "0" ... "9" ;

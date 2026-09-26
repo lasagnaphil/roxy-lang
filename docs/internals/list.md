@@ -59,7 +59,7 @@ ints) are rejected at the call site.
 
 ## Indexing
 
-List indexing (`list[i]` and `list[i] = val`) is handled via native `index` and `index_mut` methods registered through `NativeRegistry::bind_generic_method`. The compiler resolves these through `TypeCache::lookup_method()` and emits `CallNative` IR ops, the same path used by all other list methods (`.len()`, `.push()`, etc.). Both perform null checks and bounds checking, setting `vm->error` on failure.
+List indexing (`list[i]` and `list[i] = val`) is typed through native `index` and `index_mut` methods (registered with `NativeRegistry::bind_method`, resolved through `TypeCache::lookup_method()`), but lowers to dedicated IR ops rather than a native call: `IROp::IndexGet` / `IndexSet`, which become the `INDEX_GET_LIST` / `INDEX_SET_LIST` opcodes. A read is bounds-checked in IR and throws a catchable `IndexError` when out of range (see [exceptions.md](exceptions.md)); `.get()`/`.pop()` and the `inout`/`out` element-borrow path still abort.
 
 `index` is typed `fun List<T>.index(idx: i32): borrowed T` — the `borrowed` modifier demotes the element type to a borrow so `index` yields a *view*, not a transfer. For `List<uniq Point>` the result is `ref Point`, so `var x: uniq Point = list[i]` is a `ref → uniq` type error (you can't move an element out from under the list; borrow it or `pop()` it). For copyable `T` (`List<i32>`) `borrowed T` is just `T`, so indexing copies as before. The modifier is native-signature-only — it is not spellable in user source. See [lifetimes.md → The `borrowed` type modifier](lifetimes.md#the-borrowed-type-modifier).
 
@@ -98,14 +98,13 @@ A list value *is* the pointer to its slab-allocated header, so this is `uniq →
 
 ### Scope-Exit Cleanup (RAII)
 
-When a noncopyable list goes out of scope, the compiler emits a cleanup loop in the IR:
-
-1. Get the list length
-2. For each element: load via `List$$index`, destroy via the element type's destructor + `Delete` (for `uniq` elements)
-3. Call `List$$delete` to free the element buffer
-4. Call `Delete` to free the slab-allocated list header
-
-This follows the same block-argument loop pattern as `gen_for_stmt` in the IR builder.
+When a list goes out of scope, the compiler emits a single typed `Delete`. Its drop is
+planned by `compute_drop_plan` (`DropKind::List`, with the element's own plan nested
+inside) and lowered per backend: the VM builds a `BCDeleteDesc` (`List` cleanup) that
+`delete_value` walks in C++ — dropping each element that needs it, then freeing the
+element buffer and the slab-allocated header — and the C backend emits a
+`roxy_drop__<T>` glue function. See
+[lifetimes.md → One derivation, two executions](lifetimes.md#one-derivation-two-executions).
 
 ## Growth Strategy
 

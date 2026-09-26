@@ -129,7 +129,7 @@ Operator rewriting happens in `gen_binary_expr()`, which detects string operands
 
 ## String Interning
 
-Only **literals** are interned. On a `LOAD_CONST` for a string constant, the code calls `roxy_string_from_literal`, which probes the active context's intern table: a hit returns the existing pointer; a miss allocates and inserts one. Repeated loads of the same literal therefore return the same pointer. **Dynamically-created strings** (concat / f-string / `substr` / `to_string` / `read_file`) are **not** interned — they are fresh, uniquely-owned objects allocated via `roxy_string_new_owned`, so freeing one never has to evict an intern entry. The intern table lives in `roxy_ctx.string_intern` — populated by VM mode at `vm_init`, optional in AOT mode.
+Only **literals** are interned. String constants are interned once, when the module is loaded (`vm_load_module` calls `roxy_string_from_literal`, which probes the active context's intern table: a hit returns the existing pointer; a miss allocates and inserts one), and the pointer is cached in the constant; `LOAD_CONST` just loads it. Every load of the same literal therefore yields the same pointer. **Dynamically-created strings** (concat / f-string / `substr` / `to_string` / `read_file`) are **not** interned — they are fresh, uniquely-owned objects allocated via `roxy_string_new_owned`, so freeing one never has to evict an intern entry. The intern table lives in `roxy_ctx.string_intern` — populated by VM mode at `vm_init`, optional in AOT mode.
 
 ## Memory Management
 
@@ -171,7 +171,7 @@ fun main(): i32 {
 | `include/roxy/vm/string.hpp` | `StringHeader` typedef alias of `roxy_string_header`, VM-side helpers |
 | `src/roxy/vm/string.cpp` | Thin shim — `string_alloc(vm, ...)` → `roxy_string_from_literal(...)` |
 | `src/roxy/vm/natives.cpp` | Native function wrappers and registration (incl. `to_string`) |
-| `src/roxy/compiler/ir/ir_builder.cpp` | String operator rewriting, f-string IR generation |
+| `src/roxy/compiler/ir/ir_builder_expr.cpp` | String operator rewriting, f-string IR generation |
 | `src/roxy/compiler/parse/parser.cpp` | String literal and f-string parsing, escape processing |
 | `src/roxy/shared/lexer.cpp` | F-string tokenization with brace depth tracking |
 | `include/roxy/compiler/parse/ast.hpp` | `ExprStringInterp` AST node |

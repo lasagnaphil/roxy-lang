@@ -133,13 +133,13 @@ Handler/finally metadata is recorded on `IRFunction` as `IRExceptionHandler` (tr
 
 **Bytecode lowering.** `IROp::Throw` lowers to the `THROW` opcode (`0xD2`, ABC: throw `regs[a]`). Handler metadata is translated from block IDs to PC offsets as `BCExceptionHandler` (protected `[try_start_pc, try_end_pc)` range, `handler_pc`, `type_id`, and the `exception_reg` to receive the exception pointer in the handler — see `bytecode.hpp`).
 
-**Runtime.** `THROW` reads the exception pointer from a register, extracts `type_id` from its `ObjectHeader`, looks up the `message()` function index, and stows all three in VM state (`in_flight_exception`, `in_flight_exception_type_id`, `in_flight_message_fn_idx`) before entering the unwinding loop:
+**Runtime.** `THROW` reads the exception pointer from a register, extracts `type_id` from its `ObjectHeader`, and stows both in VM state (`in_flight_exception`, `in_flight_exception_type_id`) before entering the unwinding loop:
 
 1. Take the current frame's function and PC offset.
 2. Scan `exception_handlers` in order for a handler whose range covers the PC (`try_start_pc <= pc < try_end_pc`) and whose `type_id` matches (or is catch-all, `type_id == 0`).
 3. If found: set PC to `handler_pc`, store the exception pointer in `exception_reg`, clear `in_flight_exception`, resume.
-4. If not: clean up the current frame (ref-dec parameters), pop it, and continue unwinding in the caller.
-5. If the call stack empties: set `vm->error = "Unhandled exception: ..."` and return false.
+4. If not: run the frame's PC-range cleanup records (`execute_cleanup`), pop it, and continue unwinding in the caller. (The matched-handler path in step 3 also runs the cleanup records for scopes it exits.)
+5. If the call stack empties: free the exception object, set `vm->error = "Unhandled exception"`, and return false.
 
 **C backend.** The AOT path can't use the VM's runtime PC-range handler table, so
 it lowers the same IR (handlers, `finally` duplication, `cleanup_info`) with a
@@ -201,11 +201,12 @@ Catch (handler) blocks are not reachable through normal control flow — they're
 | `include/roxy/vm/bytecode.hpp` / `src/roxy/vm/interpreter.cpp` | `INDEX_TRYADDR_MAP` opcode (nullable map find) |
 | `tests/e2e/test_index_exceptions.cpp` | Index-operator exception E2E suite (both backends) |
 | `include/roxy/compiler/ir/ssa_ir.hpp` | `IROp::Throw`, `IRExceptionHandler`, `IRFinallyInfo` |
-| `src/roxy/compiler/ir/ir_builder.cpp` | `gen_throw_stmt()`, `gen_try_stmt()` (registers the caught exception as a catch-scope owned local — finding 9a); `emit_implicit_destroy` (catch-all `ExceptionRef` type-erased free) |
+| `src/roxy/compiler/ir/ir_builder_stmt.cpp` | `gen_throw_stmt()`, `gen_try_stmt()` (registers the caught exception as a catch-scope owned local — finding 9a) |
+| `src/roxy/compiler/ir/ir_builder_lifetime.cpp` | `emit_implicit_destroy` (catch-all `ExceptionRef` type-erased free) |
 | `src/roxy/compiler/ir/ssa_ir.cpp` | RPO reordering with handler block seeding |
 | `include/roxy/vm/bytecode.hpp` | `THROW` opcode, `BCExceptionHandler` |
 | `src/roxy/compiler/codegen/lowering.cpp` | Throw lowering, handler table PC translation |
-| `include/roxy/vm/vm.hpp` | `in_flight_exception`, `in_flight_message_fn_idx` |
+| `include/roxy/vm/vm.hpp` | `in_flight_exception`, `in_flight_exception_type_id` |
 | `src/roxy/vm/interpreter.cpp` | THROW handler, unwinding loop |
 | `src/roxy/vm/object.cpp` | `object_free` in-flight guard (skip the exception under unwind — finding 9a) |
 | `src/roxy/compiler/codegen/c_emitter.cpp` | `emit_cleanup_records` in-flight guard (`roxy_exception_current()`) |

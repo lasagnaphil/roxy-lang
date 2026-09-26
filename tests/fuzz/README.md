@@ -18,9 +18,9 @@ and `docs/internals/profiling.md` ("Benchmark corpora at scale").
 
 The `LLVMFuzzerTestOneInput` entry points live in `fuzz_<target>.cpp`; the actual
 harness logic is the shared `rx::fuzz::fuzz_one_*` functions declared in
-`fuzz_targets.hpp`. Each input is copied into an exact-size, **non-null-terminated**
-heap buffer before lexing — deliberately adversarial, since production always
-null-terminates its source, so any over-read is a real out-of-bounds access.
+`fuzz_targets.hpp`. Each input is copied into a fresh heap buffer of `size + 1`
+bytes with a terminating `\0` — the sentinel the lexer's `peek()` relies on, as in
+production — so any read past the sentinel is a real out-of-bounds access.
 
 ## Toolchain requirement
 

@@ -36,7 +36,7 @@ void  vm_register_native(RoxyVM* vm, StringView name, NativeFunction func, u32 p
 
 ## Value Representation
 
-`Value` is a tagged union used for the **public API and native function interface** — not the runtime register format. The tag is one of `Null, Bool, Int, Float, Ptr, Weak`, and the union carries the corresponding payload (a `Weak` value also stores a `u32 generation`).
+`Value` is a tagged union used for the **public API and native function interface** — not the runtime register format. The tag is one of `Null, Bool, Int, Float, Ptr, Weak`, and the union carries the corresponding payload (a `Weak` value also stores a `u64 generation`).
 
 ```cpp
 struct Value {
@@ -47,7 +47,7 @@ struct Value {
         i64   as_int;
         f64   as_float;
         void* as_ptr;
-        struct { void* ptr; u32 generation; } as_weak;
+        struct { void* ptr; u64 generation; } as_weak;
     };
     // make_null/make_bool/make_int/make_float/make_ptr/make_weak factories
     // is_null / is_truthy / is_weak_valid

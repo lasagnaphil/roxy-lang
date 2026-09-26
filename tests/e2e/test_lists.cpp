@@ -159,8 +159,7 @@ TEST_SUITE("E2E Lists") {
         CHECK(result.stdout_output == "30\n20\n10\n");
     }
 
-    TEST_CASE("List quicksort") { // VM-only: C backend: inout container threaded through loop block
-                                  // args loses its void** pointer-ness
+    TEST_CASE_TEMPLATE("List quicksort", Backend, RX_E2E_BACKENDS) {
         const char* source = R"(
         fun swap(lst: inout List<i32>, i: i32, j: i32) {
             var temp: i32 = lst[i];
@@ -206,7 +205,7 @@ TEST_SUITE("E2E Lists") {
         }
     )";
 
-        auto result = VMBackend::run(source);
+        auto result = Backend::run(source);
         CHECK(result.success);
         CHECK(result.stdout_output == "1\n2\n5\n8\n9\n");
     }

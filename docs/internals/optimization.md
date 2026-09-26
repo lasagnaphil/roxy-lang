@@ -18,7 +18,7 @@ Source → … → IR Builder → SSA IR → [Optimization] → Lowering → Byt
 
 - **`values_by_id`** — `IRFunction::values_by_id` is a `Vector<IRInst*>` indexed by `ValueId.id`; `IRFunction::inst_for(ValueId)` returns the defining instruction or `nullptr` (function/block params, which are treated as non-constant). Removed values are poisoned to `nullptr` so later passes catch stale lookups.
 - **Operand enumeration** — `for_each_operand(IRInst*, Fn)` / `for_each_terminator_operand(Terminator&, Fn)` are inline templates switching over every `IROp`. The callback receives a *mutable* `ValueId&`, so one helper serves both reading (use-count, DCE) and rewriting (copy-prop, CSE, arg-elim). Gotcha: `SetField` has **two** operands — `field.object` and the top-level `store_value`.
-- **Side-effect classification** — `has_side_effect(IROp)` is true for memory writes (`SetField`, `StorePtr`, `StructCopy`, `IndexSet`), ref counting (`RefInc`/`RefDec`), object lifecycle (`New`/`Delete` — user ctors/dtors have arbitrary effects), calls (`Call`/`CallNative`/`CallExternal`), control-flow/coroutine (`Throw`/`Yield`), and **`Nullify`**. `Nullify` is load-bearing: lowering reads its position to narrow cleanup scope after a `uniq` move; removing it would re-destroy moved-from owned locals.
+- **Side-effect classification** — `has_side_effect(IROp)` is true for memory writes (`SetField`, `StorePtr`, `StructCopy`, `IndexSet`), ref counting (`RefInc`/`RefDec`), object lifecycle (`New`/`Delete` — user ctors/dtors have arbitrary effects), calls (`Call`/`CallNative`/`CallExternal`/`CallIndirect`), string counting (`StrRetain`/`StrRelease`), `Closure`, the `AssertHeap` trap, container pins (`ContainerPin`/`ContainerUnpin`), control-flow/coroutine (`Throw`/`Yield`), and **`Nullify`** — `ir_optimize.cpp` is the authoritative list. `Nullify` is load-bearing: lowering reads its position to narrow cleanup scope after a `uniq` move; removing it would re-destroy moved-from owned locals.
 - **Substitution** — copy-prop, trivial-arg-elim, and CSE all build a function-wide `subst[id]` union-find table (path-compressed), then rewrite operands via `for_each_operand`. Redirected values fall to zero uses and are dropped by the next DCE run.
 
 ## Phase 1: IR Builder Optimizations
@@ -78,7 +78,7 @@ v5 = copy v3              ... uses v3 ...
 
 **Pure-Copy assumption:** a propagatable `IROp::Copy` is a borrow that retypes a uniq pointer as a ref pointer (same representation, 1 slot), always semantically `result := source`. A future Copy with runtime meaning (e.g. a strong-ref bump) must use a new opcode and be added to `has_side_effect`.
 
-**The `no_copy_prop` exception:** some `Copy`s carry an identity that later cleanup names, and `is_copy_candidate` skips those (`IRInst::no_copy_prop`). Two kinds:
+**The `no_copy_prop` exception:** some `Copy`s carry an identity that later cleanup names, and `is_propagatable_copy` skips those (`IRInst::no_copy_prop`). Two kinds:
 
 - **Call-site heap-root borrows** — the flag keeps the borrow a *distinct SSA value*, hence a distinct register from the receiver it straddles, so its `RefDec` + `Nullify` cleanup cannot clobber the owner's own `Delete` record. See [lifetimes.md](lifetimes.md) → "Call-site heap-root borrows".
 - **`ref` locals** (`var r: ref T = ref x`) — the local's cleanup record and its scope-exit `Nullify` both name the Copy's ValueId. Folding it into the source retargets them at the source: `var current: ref Node = ref node` emitted `nullify node; ref_dec node`, releasing a nulled pointer and leaving the param's borrow uncounted. Pinned in `pin_tracked_value` where the local is tracked.
@@ -147,7 +147,7 @@ b0:                              b0:
 ```
 
 - **Eligibility** (`is_cse_eligible`): all `Const*`, arithmetic, comparisons, logical (`Not`/`And`/`Or`), bitwise, conversions, and `Cast`. **Excluded** for safety: memory loads (`GetField`, `GetFieldAddr`, `LoadPtr`, `IndexGet` — may alias intervening writes), weak-ref reads (`WeakCheck`/`WeakCreate` — slab generation state), fresh-address ops (`StackAlloc`), `BlockArg`, `Copy`, and everything `has_side_effect` covers.
-- **Key** (`CSEKey`): `(op, result_type, a, b, payload)`. Binary uses `(left, right, 0)`; unary `(operand, 0, 0)`; `Cast` carries the source type to disambiguate conversion strategy; constants encode their literal in `payload` (bit-patterns for floats keep `+0.0`/`-0.0` distinct); `ConstString` uses `(data, size, 0)` — interned lexer buffers share identity, so equal literals collapse. `Type*` identity is reliable (types are interned in `TypeEnv`). Hashing uses the FNV-1a prime as a multiplier.
+- **Key** (`CSEKey`): `(op, result_type, a, b, payload)`. Binary uses `(left, right, 0)`; unary `(operand, 0, 0)`; `Cast` carries the source type to disambiguate conversion strategy; constants encode their literal in `payload` (bit-patterns for floats keep `+0.0`/`-0.0` distinct); `ConstString` uses `(data, size, 0)` — interned lexer buffers share identity, so equal literals collapse. `Type*` identity is reliable (types are interned in `TypeEnv`). `CSEKeyHash` hashes the key's bytes with XXH3.
 - **Algorithm**: per block, a `tsl::robin_map<CSEKey, ValueId>` records first-seen wins; equivalents go into the shared `subst` table. The map is cleared between blocks — cross-block CSE needs dominator info (global CSE/GVN, deferred). Commutativity is not exploited in v1 (`AddI a b` ≠ `AddI b a`).
 - **Placement**: inside the Phase 3 fixed-point loop, after trivial-arg-elim and before the Phase 2 re-run, so DCE drops the dead duplicates and block merging keeps feeding it longer straight-line blocks.
 
@@ -178,7 +178,7 @@ Deferred — these need more infrastructure:
 
 | File | Purpose |
 |---|---|
-| `include/roxy/compiler/ir/ir_builder.hpp` / `src/roxy/compiler/ir/ir_builder.cpp` | Phase 1 (fold / simplify / cast fold during IR building) |
+| `src/roxy/compiler/ir/ir_builder_expr.cpp` (`emit_binary` / `emit_unary` / `gen_primitive_cast`), `src/roxy/compiler/ir/ir_fold.cpp` | Phase 1 (fold / simplify / cast fold during IR building) |
 | `include/roxy/compiler/ir/ir_optimize.hpp` / `src/roxy/compiler/ir/ir_optimize.cpp` | Phases 2–4 passes and fixed-point driver |
 | `include/roxy/compiler/ir/ssa_ir.hpp` / `src/roxy/compiler/ir/ssa_ir.cpp` | IR data structures, `reorder_blocks_rpo`, printing |
 | `include/roxy/compiler/codegen/lowering.hpp` / `src/roxy/compiler/codegen/lowering.cpp` | IR → bytecode lowering |

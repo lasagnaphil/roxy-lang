@@ -85,13 +85,13 @@ The first two fields are a runtime layout contract: `__resume_idx` at slot 0 (so
 
 **Bytecode.** No new opcodes. All `Yield` instructions are lowered to field stores and returns before bytecode lowering; a `Yield` reaching lowering is an assertion failure. `IROp::FuncIndex` lowers to a `LOAD_INT` of the resolved function index. `resume()` lowers to the existing `CALL_INDIRECT`. The generated functions use only standard opcodes (`New`, `GetField`, `SetField`, `EqI`, `Branch`, `Goto`, `Return`, …).
 
-**C backend.** Because lowering happens before either backend, coroutines also work through the AOT C backend with no dedicated emitter logic: a known `Coro<T>` emits as a pointer to the synthesized state struct, an erased `Coro<T>` as `void*` (with a `__coro_header` cast for `done()`), the generated functions emit like any other, resume dispatches through `g_closure_fns[]`, and deleting a `Coro<T>` runs `__coro_<func>$$delete` (directly when known, via `__closure_delete` when erased). See `docs/internals/c-backend.md` ("Coroutines").
+**C backend.** Because lowering happens before either backend, coroutines also work through the AOT C backend with only a little dedicated emitter logic: a known `Coro<T>` emits as a pointer to the synthesized state struct, an erased `Coro<T>` as `void*` (with a `__coro_header` cast for `done()`), the generated functions emit like any other, resume dispatches through `g_closure_fns[]`, and deleting a `Coro<T>` runs `__coro_<func>$$delete` (directly when known, via `__closure_delete` when erased). One C-backend gap remains: cleanup of promoted `uniq` / `List<uniq T>` / `Map<_, uniq T>` state fields. See `docs/internals/c-backend.md` ("Coroutines", "Known C-backend gaps").
 
 ## Design Decisions
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Detection mechanism | Return type `Coro<T>` | No special keyword; fits the type system |
+| Detection mechanism | Returns `Coro<T>` **and** the body yields | No special keyword; fits the type system |
 | Execution model | Stackless state machine | Simple, no stack copying; suits generators |
 | Lowering level | IR-level transformation | Reuses SSA infrastructure; no bytecode changes |
 | Done sentinel | `__state == 0x7FFFFFFF` | Positive sentinel above states 0..N |
@@ -314,7 +314,7 @@ question. Pass by value, or pass a `uniq`/`ref`.
 | `src/roxy/compiler/ir/ir_builder.cpp` (`build_method`) | Coroutine-method detection: per-function coro type from `MethodInfo`, `self` captured as a `ref` param |
 | `include/roxy/compiler/ir/ssa_ir.hpp` | `IROp::Yield`, `IROp::FuncIndex`, coroutine metadata on `IRFunction` |
 | `src/roxy/compiler/ir/ir_builder_expr.cpp` | `resume()` → `CallIndirect`, `done()` → inline `__state` compare |
-| `src/roxy/compiler/ir/ir_builder.cpp` | `gen_yield_stmt()`, live-variable capture, resume blocks |
+| `src/roxy/compiler/ir/ir_builder_stmt.cpp` | `gen_yield_stmt()`, live-variable capture (`collect_live_locals`, `stmt_contains_yield`), resume blocks |
 | `src/roxy/compiler/ir/coroutine_lowering.cpp` | State machine transformation: init/resume/destructor, `__resume_idx` seeding |
 | `src/roxy/compiler/codegen/lowering.cpp` | `FuncIndex` → `LOAD_INT`; `New` records dtor for erased delete; Yield assertion |
 | `src/roxy/compiler/codegen/c_emitter.cpp` | Erased `Coro<T>` (`void*`, `__coro_header`), `FuncIndex`, coro resume in `g_closure_fns[]` |

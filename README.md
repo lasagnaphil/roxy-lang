@@ -32,8 +32,8 @@ cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-c
 ninja -C build
 ```
 
-This builds three executables: `roxy` (the CLI), `roxy_tests`, and
-`roxy_lsp_server`. The default build is `-O0`; for anything performance-related
+This builds four executables: `roxy` (the CLI), `roxy_tests`,
+`roxy_lsp_server`, and `roxy_gen` (the seeded benchmark-corpus generator). The default build is `-O0`; for anything performance-related
 configure a separate `-DCMAKE_BUILD_TYPE=RelWithDebInfo` build directory.
 
 ## Running

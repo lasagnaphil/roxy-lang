@@ -40,4 +40,4 @@ option (default OFF). Fetch with `git submodule update --init <path>`.
   - Replaces the previously vendored `fmt` library
 - **rx::StaticString\<N\>** (`include/roxy/core/static_string.hpp`)
   - Fixed-capacity string for stack-allocated formatting (no heap allocation)
-  - Used for name mangling and diagnostic messages in the compiler
+  - Used for IR and bytecode dump/disassembly formatting

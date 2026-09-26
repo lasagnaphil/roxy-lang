@@ -37,7 +37,7 @@ Each function call allocates a new register window from the shared register file
 | 0x40-0x4F | Integer Comparisons | `EQ_I`, `NE_I`, `LT_I`, `LE_I`, `GT_I`, `GE_I`, `LT_U`, `LE_U`, `GT_U`, `GE_U` |
 | 0x50-0x55 | f32 Comparisons | `EQ_F`, `NE_F`, `LT_F`, `LE_F`, `GT_F`, `GE_F` |
 | 0x56-0x5B | f64 Comparisons | `EQ_D`, `NE_D`, `LT_D`, `LE_D`, `GT_D`, `GE_D` |
-| 0x60-0x6F | Logical | `NOT`, `AND`, `OR` |
+| 0x60-0x6F | Logical | `NOT` (no `AND`/`OR` — `&&`/`||` lower to branches) |
 | 0x80-0x8F | Type Conversions | `I_TO_F64`, `F64_TO_I`, `I_TO_B`, `B_TO_I`, `TRUNC_S`, `TRUNC_U`, `F32_TO_F64`, `F64_TO_F32`, `I_TO_F32`, `F32_TO_I` |
 | 0x90-0x9A | Control Flow + Fused int cmp-branch | `JMP`, `JMP_IF`, `JMP_IF_NOT`, `RET`, `RET_VOID`, `JMP_IF_LT_I` … `JMP_IF_NE_I` |
 | 0xA0-0xAF | Calls, Container Indexing, Fused f64 cmp-branch | `CALL`, `CALL_NATIVE`, `INDEX_GET_LIST`, `INDEX_SET_LIST`, `INDEX_GET_MAP`, `INDEX_SET_MAP`, `JMP_IF_LT_D` … `JMP_IF_GE_D_RK` |
@@ -138,10 +138,13 @@ Field access encodes the slot offset in a second word:
 ```
 GET_FIELD: [GET_FIELD dst obj slot_count][slot_offset:16]
 SET_FIELD: [SET_FIELD obj val slot_count][slot_offset:16]
-STACK_ADDR: [STACK_ADDR dst][slot_offset:16]
 ```
 
-`slot_count` (1 or 2) determines whether to read/write 32-bit or 64-bit values.
+`slot_count` (1–4) determines how much is read/written: 1 or 2 slots move a 32- or
+64-bit value through one register; 3 or 4 slots (a small struct) span two
+consecutive registers.
+
+`STACK_ADDR` is a single-word ABI instruction: `[STACK_ADDR dst imm16=slot_offset]`.
 
 ### Fused Compare-and-Branch
 

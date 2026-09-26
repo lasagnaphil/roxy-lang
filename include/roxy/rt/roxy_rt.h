@@ -674,9 +674,9 @@ private:
     destructor_fn m_destructor;
 };
 
-// Shared reference: increments ref count on copy, decrements on destruction.
-// Last reference triggers `roxy_ref_dec` which frees if there is no outstanding
-// `uniq` owner.
+// Borrow handle: increments the borrowee's ref count on copy, decrements on
+// destruction, and never frees — the owning `uniq` does (constraint-reference
+// semantics, lifetimes.md).
 template <typename T> class ref {
 public:
     ref() : m_ptr(nullptr) {}

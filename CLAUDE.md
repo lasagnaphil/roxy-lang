@@ -376,7 +376,7 @@ Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA
 
 ### Keywords
 
-- Types/modifiers: `true false nil var fun struct enum pub native`
+- Types/modifiers: `true false nil var fun struct enum trait pub native`
 - Control flow: `if else for while break continue return when case try catch throw finally yield`
 - OOP: `self super new delete`
 - References: `uniq ref weak out inout`
@@ -402,7 +402,7 @@ See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 **Details:** `docs/internals/frontend.md` | **Files:** `compiler/sema/semantic.hpp`, `compiler/sema/semantic.cpp`, `compiler/sema/sema_context.hpp`, `compiler/sema/function_context.hpp`, `compiler/sema/lifetime_checker.{hpp,cpp}`, `compiler/sema/trait_system.{hpp,cpp}`, `compiler/sema/generic_call_resolver.{hpp,cpp}`, `compiler/sema/lambda_lifter.{hpp,cpp}`
 
 ### Type System
-**Types** - Primitives (`void`, `bool`, `i32`, `i64`, `f32`, `f64`, `string`), structs, enums, references.
+**Types** - Primitives (`void`, `bool`, `i8`/`i16`/`i32`/`i64`, `u8`/`u16`/`u32`/`u64`, `f32`, `f64`, `string`), structs, enums, references.
 **Files:** `compiler/types/types.hpp`, `compiler/types/types.cpp`
 
 **Enums** - C-style enumerations with integer underlying type. Access via `Type::Variant`.
@@ -486,7 +486,7 @@ Supported in both backends: the C backend dispatches `CallIndirect` through a pe
 **CEmitter** - AOT compilation via SSA IR → C/C++ transpilation. **Every language feature has a codegen path** — primitives, control flow, structs (inheritance, methods, ctors/dtors, nesting), enums, tagged unions, generics, traits/operators, strings, lists, maps, module globals, coroutines, exceptions, and closures. It emits a `.cpp` (C-style bodies, C++ at the embedder boundary) plus a public `.hpp` via `emit_header()` (pub types with inline method wrappers, `make_<T>` factories returning `roxy::uniq<T>`, pub function decls). Codegen quality remains basic by choice — the C compiler's optimizer covers DCE/`switch` lowering, and `#line` directives are emitted per function and statement.
 
 Points worth knowing before touching it:
-- **Feature-complete ≠ bug-free.** Four narrow gaps remain (ref-local count balancing, `inout` containers through loop block args, coroutine `uniq`-field cleanup, closure self-capture), each pinned by a `// VM-only: C backend:` test case. `docs/internals/c-backend.md` → "Known C-backend gaps" is the live list.
+- **Feature-complete ≠ bug-free.** Four narrow gaps remain (ref-local count balancing, coroutine `uniq`-field cleanup, a cleanup record naming a by-value struct, a tagged union with a pointer-sized variant field), each pinned by a `// VM-only: C backend:` test case. `docs/internals/c-backend.md` → "Known C-backend gaps" is the live list.
 - **Lowering order does the work.** `coroutine_lower()` runs before codegen, so `Coro<T>` is just a pointer to its synthesized state struct. Exceptions use a checked-return model (thread-local in-flight exception + per-try `__dispatch_<id>` labels + null-guarded cleanup) since there is no runtime handler table. Closures dispatch through a per-module `g_closure_fns[]` indexed by `__call_idx`.
 - **The runtime is unified, not duplicated.** `roxy_rt` owns the slab allocator, vmem, object/string/list/map headers, and the intern table; `vm/string.cpp` / `list.cpp` / `map.cpp` are thin shims over it, and `roxy_alloc` dispatches through `roxy_ctx.allocator` in both modes. `RoxyVM` embeds `roxy_ctx` as its first member.
 - **Natives take no `RoxyVM*`.** `bind<>`'d functions are plain `Ret(Args...)` and call `roxy_get_ctx()` if they need runtime state; AOT emits a typed direct call using the entry's `aot_symbol_name`, with `extern` decls pre-scanned into the preamble so binaries link against headers or separate TUs.

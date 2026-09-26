@@ -72,12 +72,12 @@ and must *never* crash or hang, so any input that breaks that is a bug.
 
 Two deliberate choices in the shared harness header:
 
-- **Exact-size, non-null-terminated copy.** Production source is always
-  `\0`-terminated; the fuzz input deliberately is not. So if the lexer ever reads
-  past `length` (the unchecked `advance()`), it touches memory it does not own — a
-  real out-of-bounds read a sanitizer can catch — instead of harmlessly hitting a
-  sentinel `\0`. A fresh exact-size heap allocation per input maximizes the odds
-  such an over-read faults.
+- **Exact-size copy plus one terminating `\0`.** The lexer's `peek()` relies on a
+  `\0` sentinel at `length`, exactly as production source provides, so the buffer
+  is `size + 1` bytes with a NUL at the end (`SourceBuffer` in
+  `fuzz_targets.hpp`). Anything *past* the sentinel is still memory the harness
+  does not own, so a fresh heap allocation per input keeps a genuine over-read a
+  real out-of-bounds access a sanitizer can catch.
 - **Fresh `BumpAllocator` per input.** All AST/CST nodes for one input live in an
   allocator destroyed at the end of the call, so no state leaks between inputs and
   a saved reproducer replays deterministically.
@@ -306,7 +306,7 @@ crash/hang/OOM:
   structured fuzzer unlocks.
 - **Valid-program-shouldn't-crash-the-compiler** — any well-typed, lifetime-correct
   program that makes sema/IR/lowering `assert` is a compiler bug by definition
-  (e.g. the register-overflow item in `TODO.md`: generate a huge function and watch
+  (e.g. the since-fixed register-overflow bug: generate a huge function and watch
   lowering fall over).
 - **Round-trip stability** — with an AST→source printer, `parse(unparse(ast))`
   should be structurally identical to `ast`, and `unparse` idempotent — catching

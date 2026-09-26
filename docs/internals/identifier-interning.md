@@ -60,16 +60,17 @@ each with its own literal that had to byte-match the others. That unification
 landed as a standalone refactor (`compiler/support/mangling.{hpp,cpp}`) and was kept: it
 is perf-neutral and removes a real drift hazard independent of interning.
 
-All mangled names now come from one module — `mangle_method`,
+Almost all mangled names now come from one module — `mangle_method`,
 `mangle_constructor`, `mangle_destructor`, `mangle_module_local`,
 `mangle_type_name`, `mangle_overload` — routed through by `semantic.cpp`,
 `ir_builder.cpp`, `lowering.cpp`, `generics.cpp`, `trait_system.cpp`,
-`coroutine_lowering.cpp`, and `c_emitter.cpp`.
+`coroutine_lowering.cpp`, and `c_emitter.cpp`. (One exception: `coroutine_lowering.cpp`
+still formats its synthesized `__coro_{}$$delete` name directly.)
 
 **The `$$` spelling is a load-bearing ABI.** Separately from re-derivation, the C
 emitter *parses* the byte structure of mangled names to route container methods
 to runtime functions: `suffix_after_last_dollar_dollar` splits on the last `$$`,
-and `ends_with(fn, "$$get" / "$$get_or" / "$$index" / "$$pop" / "$$delete")` and
+and `ends_with(fn, "$$get" / "$$get_or" / "$$index" / "$$pop")` and
 the `"$$resume"` suffix pattern-match the spelling. Changing the scheme means
 changing those readers.
 

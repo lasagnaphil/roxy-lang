@@ -19,7 +19,7 @@ The low-level signature carries the VM and register layout:
 typedef void (*NativeFunction)(RoxyVM* vm, u8 dst, u8 argc, u8 first_arg);
 ```
 
-A wrapper reads arguments from `vm->call_stack.back().registers[first_arg + i]` and writes the result to `registers[dst]`.
+A wrapper reads arguments from `vm->call_stack_back().registers[first_arg + i]` and writes the result to `registers[dst]`.
 
 ## Bound Functions Take Only Their Logical Args
 
@@ -56,7 +56,7 @@ The primary registration path uses Roxy signature strings. The registry parses e
 registry.bind_native(native_str_concat, "fun str_concat(a: string, b: string): string");
 
 // Name override — e.g. $$-mangled trait method names
-registry.bind_native("i32$$hash", native_i32_hash, "fun hash(val: i32): i64");
+registry.bind_native("i32$$hash", native_i32_hash, "fun hash(val: i32): u64");
 
 // One member of an OVERLOAD SET (see overloading.md): keyed by the
 // "$ol$print$i32" mangle, grouped by the parsed name into one overload
@@ -142,7 +142,7 @@ registry.bind_method(native_list_push, "fun List<T>.push(val: T)");
 
 ## Interop Wrappers
 
-`RoxyList<T>` (`roxy_string.hpp` sibling) and `RoxyString` (`roxy_string.hpp`) are thin non-owning typed wrappers around a Roxy data pointer, letting bound C++ functions read, modify, and create lists/strings. Their `RoxyType` specializations resolve to `List<T>` / `string` and handle register conversion, so they can be used directly as bound-function parameters and return types.
+`RoxyString` (`roxy_string.hpp`), `RoxyList<T>` (`roxy_list.hpp`) and `RoxyMap<K, V>` (`roxy_map.hpp`) are aliases of the runtime's `roxy::String` / `roxy::List<T>` / `roxy::Map<K, V>` (`roxy_rt.h`) — thin non-owning typed wrappers around a Roxy data pointer, letting bound C++ functions read, modify, and create lists/strings. Their `RoxyType` specializations resolve to `List<T>` / `string` and handle register conversion, so they can be used directly as bound-function parameters and return types.
 
 ```cpp
 i32 list_sum(RoxyList<i32> list) {
@@ -162,9 +162,9 @@ registry.bind<str_join>("str_join");
 | Method | Description |
 |--------|-------------|
 | `static RoxyList<T> alloc(i32 cap = 0)` | Allocate a new list (ctx allocator) |
-| `T get(i64 index) const` / `void set(i64, T)` | Bounds-checked access / write |
+| `T get(i32 index) const` / `void set(i32, T)` | Bounds-checked access / write |
 | `void push(T)` / `T pop()` | Append (grows) / remove last |
-| `u32 len() const` / `u32 cap() const` | Length / capacity |
+| `i32 len() const` / `i32 cap() const` | Length / capacity |
 | `bool is_valid() const` / `void* data() const` | Null check / raw pointer |
 
 ### RoxyString
@@ -181,19 +181,23 @@ registry.bind<str_join>("str_join");
 
 ```cpp
 BumpAllocator allocator(8192);
-TypeCache types(allocator);
-NativeRegistry registry(allocator, types);
+TypeEnv type_env(allocator);
+NativeRegistry registry(allocator, type_env.types());
 
 registry.register_struct("Point", {{"x", NativeTypeKind::I32}, {"y", NativeTypeKind::I32}});
 registry.bind_method<point_sum>("Point", "sum");
 register_builtin_natives(registry);          // list/map/string/print, etc.
 
-// Compile (pass the shared TypeCache and registry for type consistency)
+// Compile (pass the shared TypeEnv and registry for type consistency). The IR
+// passes run in the same order as Compiler::link_modules().
 ModuleRegistry modules(allocator);
-SemanticAnalyzer analyzer(allocator, types, modules, &registry);
+SemanticAnalyzer analyzer(allocator, type_env, modules, &registry);
 analyzer.analyze(program);
-IRBuilder ir_builder(allocator, types, registry, analyzer.symbols(), modules);
-BCModule* module = BytecodeBuilder().build(ir_builder.build(program));
+IRBuilder ir_builder(allocator, type_env, registry, analyzer.symbols(), modules);
+IRModule* ir_module = ir_builder.build(program);
+coroutine_lower(ir_module, allocator, type_env);
+optimize_module(ir_module, allocator);
+BCModule* module = BytecodeBuilder().build(ir_module);
 registry.apply_to_module(module);            // wire natives into the runtime
 
 // Execute
@@ -218,6 +222,8 @@ fun test(): i32 {
 | `include/roxy/vm/binding/binder.hpp` | `FunctionBinder` wrapper generation |
 | `include/roxy/vm/binding/registry.hpp` | `NativeRegistry` (declarations + templates) |
 | `src/roxy/vm/binding/registry.cpp` | `NativeRegistry` non-template implementations |
-| `include/roxy/vm/binding/roxy_string.hpp` | `RoxyString` / `RoxyList<T>` wrappers + `RoxyType` specializations |
+| `include/roxy/vm/binding/roxy_string.hpp` | `RoxyString` alias + `RoxyType` specialization |
+| `include/roxy/vm/binding/roxy_list.hpp` | `RoxyList<T>` alias + `RoxyType` specialization |
+| `include/roxy/vm/binding/roxy_map.hpp` | `RoxyMap<K, V>` alias + `RoxyType` specialization |
 | `include/roxy/vm/binding/interop.hpp` | Convenience header |
 | `include/roxy/vm/natives.hpp`, `src/roxy/vm/natives.cpp` | Built-in natives (incl. `List<T>` / `Map<K, V>` registration) |

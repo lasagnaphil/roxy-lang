@@ -38,7 +38,7 @@
 - LSP server for IDE support (error-recovering parser, diagnostics, go-to-definition, completions, hover, find references, rename)
 - Exception handling (`try`/`catch`/`throw`/`finally`, built-in `Exception` trait, handler tables)
 - First-class functions and closures (`fun(...) -> R` types, lambdas, copy/`[move]`/`self` captures, function references)
-- AOT compilation to C — **complete**: SSA IR → C/C++ transpilation with a unified runtime, covering **all** language features (incl. coroutines, exceptions, and closures). The interpreter is for development; the C backend compiles to native for shipping.
+- AOT compilation to C — **feature-complete**: SSA IR → C/C++ transpilation with a unified runtime, with a codegen path for **every** language feature (incl. coroutines, exceptions, and closures) and a few narrow known gaps (see [internals/c-backend.md](internals/c-backend.md) → "Known C-backend gaps"). The interpreter is for development; the C backend compiles to native for shipping.
 
 **Planned:**
 - Full LSP semantic analysis (routing every feature through `LspAnalysisContext`) and polish (signature help, code actions, workspace symbols)
@@ -265,7 +265,7 @@ fun main(args: List<string>) {
 
         - The value will be copied only if it overwritten inside the function, or small enough (<= 16 bytes)
 
-- Capturing by closure always copies the value instead of referencing it
+- Capturing by closure copies copyable values by default instead of referencing them; a noncopyable value must be moved in explicitly (`[move x]`), and `self` is captured as a `ref` unless overridden (`[copy self]` / `[weak self]`)
 
     - Removes confusion ("the dreaded for-loop dillema")
 
@@ -293,13 +293,13 @@ fun main(args: List<string>) {
 
         - Uses random generational uids under the hood
 
-        - The only reference type that can be 'null'
+        - Nullable, like `uniq` (a `ref` never is)
 
 - Auto-dereference by default (no -> as in C++)
 
 - Auto-conversion rules (simple to remember!):
 
-    - value -> uniq, value -> inout, value -> out
+    - value -> inout, value -> out
 
     - uniq -> ref, uniq -> weak
 
@@ -373,7 +373,7 @@ fun main(args: List<string>) {
 
 - An easy-to-use C++ API for binding external code using templates
 
-- Also has a (less ergonomic) C API for people wanting to bind the interpreter with other languages
+- A C API for binding the interpreter from other languages is not implemented (the only `extern "C"` surface is the runtime, `roxy_rt.h`)
 
 - Most importantly: C/C++ structs do not have to be boxed, and can be exposed to the language directly!
 
@@ -389,7 +389,7 @@ fun main(args: List<string>) {
 
 - The compiler is built from day-1 for LSP server support (like how Roslyn was made)
 
-- Parses the source code from scratch each keystroke, but with a smart caching system that reuses AST fragments
+- Re-parses the whole document on each change (full document sync) with an error-recovering parser; reusing AST fragments across edits is a possible future optimization
 
 - Aiming for fast incremental compilation times with this approach to compiler design
 
@@ -399,5 +399,5 @@ fun main(args: List<string>) {
     - Aiming for faster performance than reference Lua but slower than Java / C#
     - In most cases, binding layer performance should be much more important than raw performance
 
-- A "transpile to C" AOT backend is implemented for people who really need "close-to-metal" performance — it covers all language features and compiles to native code via any C++ compiler (see the C backend in [CLAUDE.md](../CLAUDE.md) and [internals/c-backend.md](internals/c-backend.md))
+- A "transpile to C" AOT backend is implemented for people who really need "close-to-metal" performance — it has a codegen path for every language feature (a few narrow known gaps remain) and compiles to native code via any C++ compiler (see the C backend in [CLAUDE.md](../CLAUDE.md) and [internals/c-backend.md](internals/c-backend.md))
     - JITs are nice but they are too complex...

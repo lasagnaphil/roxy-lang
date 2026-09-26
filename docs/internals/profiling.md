@@ -49,16 +49,22 @@ it is always on). The CLI prints it:
 
 ```
 == roxy --time: compile phases ==
-  parse             0.309 ms   11.3%
-  sema              0.382 ms   14.0%
-  ir-build          0.670 ms   24.6%
-  ir-optimize       0.479 ms   17.6%
-  ir-validate       0.047 ms    1.7%
-  bc-lower          0.827 ms   30.4%
-  link-other        0.005 ms    0.2%
-  compile           2.721 ms  100.0%
-  execute        3606.988 ms
+  parse             0.014 ms    4.2%
+  topo-sort         0.009 ms    2.5%
+  sema              0.162 ms   47.4%
+  ir-build          0.069 ms   20.3%
+  coro-lower        0.002 ms    0.5%
+  ir-optimize       0.022 ms    6.3%
+  ir-validate       0.002 ms    0.6%
+  bc-lower          0.044 ms   13.0%
+  link-other        0.018 ms    5.2%
+               ----------  ------
+  compile           0.342 ms  100.0%
+  execute           0.036 ms
 ```
+
+(`examples/fibonacci.roxy` on the `-O0` `build/` — the rows are what matters here,
+not the numbers.)
 
 The `execute` row is the program's `vm_call` time — the compile-vs-run split that
 tells you which regime to dig into. `link-other` is the unattributed remainder
@@ -143,7 +149,7 @@ Choose the workload to match the regime:
 | Regime | Workload | Why |
 |--------|----------|-----|
 | Compiler | `examples/lox/main.roxy` (big multi-file source) under `--repeat=N`; or the adversarial 8k-statement generated bodies | large to compile, cheap to run |
-| Interpreter | `benchmarks/nbody`, `mandelbrot`, `fib`, `binary_trees` | tiny source, long run |
+| Interpreter | `benchmarks/nbody`, `mandelbrot`, `quicksort`, `struct_copy`; `benchmarks/lox/*.lox` (e.g. `fib`, `binary_trees`) run through the Lox interpreter | tiny source, long run |
 
 ---
 
@@ -174,7 +180,7 @@ ninja -C build-tracy roxy
 `ROXY_FRAME_MARK` macros in `core/trace.hpp` compile to nothing). It builds with
 `TRACY_ON_DEMAND`, so an instrumented binary still **runs normally** when no
 profiler is attached. Instrumented zones today: the compile phases (`parse`,
-`sema`, `ir-build`, `coro-lower`, `ir-optimize`, `ir-validate`, `bc-lower`) and a
+`topo-sort`, `sema`, `ir-build`, `coro-lower`, `ir-optimize`, `ir-validate`, `bc-lower`) and a
 coarse `vm.run`; one Tracy frame is marked per compile in the `--repeat` loop.
 
 ### Build (headless capture tools, one-time)

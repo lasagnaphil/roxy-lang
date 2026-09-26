@@ -4,7 +4,7 @@
 >
 > **Language feature coverage:** every feature has a codegen path — primitives, structs (inheritance, methods, ctors/dtors, copy, nesting), enums, tagged unions, generics, traits/operators, strings, lists, maps, module globals, coroutines, exceptions, and **closures** (lambdas, captures, function references, self-capture). Roxy identifiers that are C++ keywords (e.g. a function named `double`, a field named `class`) are escaped with a reserved `roxy_kw_` prefix in `emit_mangled_name`, so they compile.
 >
-> **Correctness is *not* complete.** Running the full `tests/e2e/` suite through the C backend (see Testing below) surfaced real divergences from the VM that the prior hand-written tests never exercised. Most are fixed; four narrow gaps remain (ref-local count balancing, `inout` containers through loop block args, coroutine `uniq`-field cleanup, closure self-capture), each pinned by a VM-only test case. **Known C-backend gaps** under Testing is the authoritative list — it is kept in sync with the `// VM-only: C backend:` annotations in `tests/e2e/`.
+> **Correctness is *not* complete.** Running the full `tests/e2e/` suite through the C backend (see Testing below) surfaced real divergences from the VM that the prior hand-written tests never exercised. Most are fixed; four narrow gaps remain (ref-local count balancing, coroutine `uniq`-field cleanup, a cleanup record naming a by-value struct, a tagged union with a pointer-sized variant field), each pinned by a VM-only test case. **Known C-backend gaps** under Testing is the authoritative list — it is kept in sync with the `// VM-only: C backend:` annotations in `tests/e2e/`.
 
 The C backend (`CEmitter`) translates Roxy's SSA IR into a `.cpp` file that any C++ compiler can build. The body is C-style (structs, gotos, typed `vN` locals); native bindings and the public header use C++ to interface directly with the embedder. It operates on the same `IRModule` the bytecode lowering uses, so all frontend work (type checking, method/operator resolution, monomorphization, struct layout) is already done.
 
@@ -29,7 +29,7 @@ SSA IR is the chosen translation source: every op is typed, structs are laid out
 | `i8`–`i64` | `int8_t`–`int64_t` | `<stdint.h>` |
 | `u8`–`u64` | `uint8_t`–`uint64_t` | `<stdint.h>` |
 | `f32` / `f64` | `float` / `double` | — |
-| `string` | `roxy_string*` | `roxy_rt.h` |
+| `string` | `void*` (a `roxy_string` data pointer) | `roxy_rt.h` |
 
 ### Compound Types
 
@@ -37,7 +37,7 @@ SSA IR is the chosen translation source: every op is typed, structs are laid out
 |------|---|
 | `struct Point { x: i32; y: i32; }` | `typedef struct { int32_t x; int32_t y; } Point;` |
 | `enum Color { Red, Green, Blue }` | `typedef enum { Color_Red, Color_Green, Color_Blue } Color;` |
-| `List<T>` / `Map<K,V>` | `roxy_list*` / `roxy_map*` |
+| `List<T>` / `Map<K,V>` | `void*` (type-erased; typed at use sites) |
 | `uniq T` | `T*` (owns the allocation) |
 | `ref T` | `T*` (borrowing, ref-counted) |
 | `weak T` | `roxy_weak` (`{void* ptr; uint64_t generation;}`) |
@@ -56,7 +56,7 @@ All reference types point to data preceded by a `roxy_object_header` (`{uint64_t
 
 ```
 v0 = const_int 42          →  int32_t v0 = 42;
-v3 = const_string "hello"  →  roxy_string* v3 = roxy_string_from_literal("hello", 5);
+v3 = const_string "hello"  →  void* v3 = roxy_string_from_literal("hello", 5);
 v4 = const_null            →  void* v4 = NULL;
 v5 = const_int 1 (Color)   →  Color v5 = (Color)1;   // enum-typed constants need a cast
 ```
@@ -88,7 +88,7 @@ v3 = get_field v0.y         →  int32_t v3 = v0->y;
 
 For a scalar `StackAlloc` (out/inout on a primitive) the value is dereferenced instead: `set_field v1.n <- v0` → `*v1 = v0;`.
 
-`struct_copy v1, v0, 2` emits `*v1 = *v0;` when the concrete type is known (always, from `IRInst.type`), falling back to `memcpy(v1, v0, ...)` otherwise.
+`struct_copy v1, v0, 2` emits `memcpy(v1, v0, 2 * 4)` — the byte count comes from the slot model (see the tagged-union row under Known C-backend gaps for where that disagrees with the C layout).
 
 ### Functions
 
@@ -311,12 +311,13 @@ When `emit_native_call`'s static-table lookup misses, the emitter consults `CEmi
 
 ### Generic Native Types in AOT
 
-`List<T>` / `Map<K,V>` are type-erased — every Roxy value is 64 bits, so one C implementation serves all element types. Call boundaries cast through `uint64_t` (a no-op on 64-bit platforms for integers):
+`List<T>` / `Map<K,V>` are type-erased, slot-sized containers: one C implementation serves all element types. The list is allocated with its element size (`roxy_list_alloc(element_slot_count, element_is_inline)`), values go in and out by pointer, and the emitter casts at the use site:
 
 ```cpp
-roxy_list* v0 = roxy_list_new(16);
-roxy_list_push(v0, (uint64_t)42);
-int32_t v1 = (int32_t)roxy_list_get(v0, 0);
+void* v0 = roxy_list_alloc(1, 1);
+int32_t _vtmp = 42;
+roxy_list_push(v0, &_vtmp);
+int32_t v1 = *(int32_t*)roxy_list_get(v0, 0);
 ```
 
 ## Runtime Library (`roxy_rt.h`)
@@ -337,7 +338,7 @@ Allocation flows through `roxy_ctx.allocator`, a `roxy_allocator` vtable (`alloc
 `roxy_rt.h` provides C++ templates that the generated header's factories hand to the embedder for idiomatic ownership (all use `roxy_get_ctx()` internally, no stored ctx pointer):
 
 - **`roxy::uniq<T>`** — maps to `uniq T`; move-only, calls destructor + `roxy_free` on scope exit.
-- **`roxy::ref<T>`** — maps to `ref T`; ref-counted, copyable; last copy frees.
+- **`roxy::ref<T>`** — maps to `ref T`; a counted borrow handle — copy increments the borrowee's count, destruction decrements, and it never frees (the owning `uniq` does).
 - **`roxy::weak<T>`** — maps to `weak T`; non-owning, nullable; stores pointer + generation, `valid()`/`lock()` check liveness.
 
 It also provides thin typed facades over the type-erased C container functions — **`roxy::String`**, **`roxy::List<T>`**, **`roxy::Map<K,V>`**. The VM bindings `rx::RoxyString` / `rx::RoxyList<T>` / `rx::RoxyMap<K,V>` are now `using` aliases of these, so VM and AOT share one wrapper implementation; the `RoxyType<T>` specializations stay in the VM binding layer (they depend on `TypeCache`). See `rt/roxy_rt.h`.
@@ -358,7 +359,7 @@ The `.hpp` is what the embedder `#include`s. `pub` structs get inline method wra
 #include "roxy_rt.h"
 
 int32_t Point__sum(Point* self);            // mangled forward decl
-void Player__new(Player* self, roxy_string* name, int32_t health);
+void Player__new(Player* self, void* name, int32_t health);
 void Player__delete(Player* self);
 
 struct Point {
@@ -366,7 +367,7 @@ struct Point {
     int32_t sum() { return Point__sum(this); }   // inline wrapper
 };
 
-inline roxy::uniq<Player> make_Player(roxy_string* name, int32_t health) {
+inline roxy::uniq<Player> make_Player(void* name, int32_t health) {
     Player* ptr = (Player*)roxy_alloc(sizeof(Player), TYPEID_Player);
     Player__new(ptr, name, health);
     return roxy::uniq<Player>(ptr, Player__delete);
@@ -375,11 +376,11 @@ inline roxy::uniq<Player> make_Player(roxy_string* name, int32_t health) {
 int32_t main_entry();
 ```
 
-Only `pub` types/functions appear in the header; everything else is `static` in the `.cpp`. The `.cpp` includes its own `.hpp`, then the embedder's native headers, then `extern` declarations for user natives, then `static` prototypes and all bodies. In standalone mode it ends with a `main()` that does `roxy_ctx_init` → `roxy_set_ctx` → `main_entry()` → `roxy_ctx_destroy`. The embedder uses the header naturally — `Point p = {3,4}; p.sum();`, `auto pl = make_Player(...); pl->take_damage(25);` — bracketing calls with `roxy::ScopedContext`.
+Only `pub` types/functions appear in the header. The `.cpp` does not include it: it starts with the standard headers and `roxy_rt.h`, then the embedder's native headers, then `extern` declarations for user natives, then prototypes and all bodies. Functions are emitted with external linkage; module globals, drop glue and the closure dispatch table are `static`. In standalone mode it ends with a `main()` that does `roxy_ctx_init` → `roxy_set_ctx` → `main_entry()` → `roxy_ctx_destroy`. The embedder uses the header naturally — `Point p = {3,4}; p.sum();`, `auto pl = make_Player(...); pl->take_damage(25);` — bracketing calls with `roxy::ScopedContext`.
 
 ## Build Integration
 
-A CMake `add_custom_command` runs the compiler (`--backend=c --output-dir=... --native-includes=...`) to emit `scripts.{hpp,cpp}` before the main build; the generated `.cpp` is compiled and linked alongside engine code against `roxy_rt`. `--native-includes` maps to `CEmitterConfig::native_include_paths`, telling the emitter which embedder headers to `#include`.
+**Not implemented yet.** The `roxy` CLI has no C-backend flags, and `CEmitter` has no production driver (see Testing) — today it is reached only through `compile_to_cpp` / `compile_and_run_cpp` in the test harness. The intended shape is a CMake `add_custom_command` that runs the compiler to emit `scripts.{hpp,cpp}` before the main build, compiling the generated `.cpp` alongside engine code against `roxy_rt`, with the embedder's headers passed through `CEmitterConfig::native_include_paths`.
 
 ## Phase 5: `#line` Directives
 
@@ -439,9 +440,7 @@ pending fixes:
 | Area | Symptom |
 |------|---------|
 | **ref-local count balancing** | `ref`-local `RefInc`/`RefDec` balancing across control flow (loop continue/break, nested scopes). *(`inout uniq` reassignment to a value or nil, and `ref` to a `uniq` field, are now fixed.)* |
-| **inout container through loop block args** | an `inout List`/`Map` carried through a loop becomes a block param whose type loses its `void**` pointer-ness — it's declared `void*` yet both `load_ptr`'d (`*v`) and address-taken (`&v`). (Straight-line `inout` container, and by-value container deep-copy, now work.) |
 | **coroutine uniq-field cleanup** | `Coro<T>` promoting `uniq`/`List<uniq>`/`Map<_,uniq>` state |
-| **closures** | `self` capture and function-to-`ref fun` borrow conversion |
 | **cleanup record naming a by-value struct** | `emit_cleanup_records` guards every record with `if (v) { … v = 0; }`, which assumes the value is pointer-shaped. When the record names a *value* struct — a small struct returned by value and materialized into a local, e.g. the `make(a)` result in `var v: Box = Box(""); if (…) { v = make(a); } throw E(v);` — that emits `if (v8)` and `v8 = 0;` on a `Box`, and the generated source does not compile at all. Needs the same value-vs-pointer distinction `emit_typed_delete` already makes (address-of, and no null guard). |
 | **tagged union with a pointer-sized variant field** | byte sizes derived from the 4-byte slot model disagree with the C compiler's natural layout. `struct V { when kind: K { case Num: n: i32; case Str: s: string; } }` is 3 slots = 12 bytes, but the emitted `struct V { K kind; union { …; struct { void* s; }; }; }` aligns the union to 8, so `sizeof(V) == 16` and `s` lives at offset 8. `StructCopy` then emits `memcpy(dst, src, 12)` and copies **half the pointer**; the `memset` zeroing the variant payload is off by the same 4 bytes. Any use of the copy that touches the pointer field (a retain, a read) segfaults. Nothing to do with exceptions — a plain `var e: E = E { v = val };` crashes too. The VM is unaffected: there the slot model *is* the layout. Fixing it means sizing struct copies/zeroing from the emitted C type (`sizeof`/`offsetof`) rather than `slots * 4`. |
 
@@ -509,7 +508,7 @@ tests where the C binary aborts rather than trapping cleanly.
   entry for each copyable container value param (skipping noncopyable containers,
   which move, and ref/inout/out container params, which alias). Runs before
   block0's label, executing once on entry. (The `inout` container case threaded
-  through a loop is a separate, still-open block-param-typing gap.)
+  through a loop was a separate block-param-typing gap, since fixed.)
 - **Struct-value block argument deref.** A struct-VALUE block param (declared
   `T`, not `T*`) at a merge can be fed different representations by different
   predecessors — one passes a struct *local* (a pointer), another a by-value
@@ -544,7 +543,7 @@ tests where the C binary aborts rather than trapping cleanly.
   `SetField <- const_null`; it had tagged that store with `void` instead of the
   field's type, so the C emitter's null-cast path didn't fire and it emitted
   `field = nullptr` (`void*` → `T*`, ill-formed in C++). The store now carries
-  the field's real type (`nullify_moved_field_source` in `ir_builder.cpp`), so
+  the field's real type (`nullify_moved_field_source` in `ir_builder_lifetime.cpp`), so
   the existing `uniq`/`ref`-field null-cast applies. VM behavior is unchanged
   (it ignores the SetField type).
 - **String/utility runtime natives** `str_char_at` / `str_substr` / `str_to_f64` /
@@ -571,7 +570,7 @@ backend, plus the string/utility natives.
 | `include/roxy/compiler/codegen/c_emitter.hpp` | `CEmitter` + `CEmitterConfig` declarations |
 | `src/roxy/compiler/codegen/c_emitter.cpp` | C/header emission (`emit_source`, `emit_header`, native-call/extern-decl logic) |
 | `include/roxy/compiler/ir/ssa_ir.hpp` | `IRModule::struct_types` / `enum_types`, `IRFunction/IRInst::source_line` |
-| `src/roxy/compiler/ir/ir_builder.cpp` | Populates `struct_types` / `enum_types`; per-inst `source_line` |
+| `src/roxy/compiler/ir/ir_builder.cpp`, `ir_builder_expr.cpp` | Populates `struct_types` / `enum_types`; per-inst `source_line` (`emit_inst`) |
 | `include/roxy/rt/roxy_rt.h` | C runtime header + C++ RAII templates / container wrappers |
 | `src/roxy/rt/roxy_rt.cpp` | C runtime implementation |
 | `include/roxy/rt/slab_allocator.{hpp}`, `src/roxy/rt/slab_allocator.cpp` | Slab allocator + `make_slab_allocator_vtable` (moved from `vm/`) |

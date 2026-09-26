@@ -31,7 +31,7 @@ enum class MapKeyKind : u8 {
 };
 ```
 
-`MapKeyKind` is determined at compile time from the key type and passed as a hidden constructor argument; it controls hash and equality dispatch at runtime. Hash functions per kind: integers use a SplitMix64 bit mixer; floats normalize `-0.0 → +0.0` then hash the bit representation; strings read the XXH3 hash cached in the string header (see `strings.md`) — no re-hash per probe; bools use 0/1 directly.
+`MapKeyKind` is determined at compile time from the key type and passed as a hidden constructor argument; it controls hash and equality dispatch at runtime. Hash functions per kind: integers use a SplitMix64 bit mixer; floats normalize `-0.0 → +0.0` then hash the bit representation; strings read the XXH3 hash cached in the string header (see `strings.md`) — no re-hash per probe; bools are hashed as integers (SplitMix64).
 
 ### Struct Keys
 
@@ -69,7 +69,7 @@ anyway, because `map_keys_equal` compares key bytes. The drop descriptor's key
 gate matches, dropping only a move-only key (moved in, so nothing was acquired)
 or a `string`.
 
-A builtin `Hash` trait is declared in semantic pass 1.7b with a required `hash(): i64` method. All primitives (bool, integers, floats, string) automatically implement it; enums inherit Hash from their i32 underlying type.
+A builtin `Hash` trait is registered in semantic Pass 1.7 (`TraitSystem::register_builtin_traits`) with a required `hash(): u64` method. All primitives (bool, integers, floats, string) automatically implement it; enums inherit Hash from their i32 underlying type.
 
 ## API
 
@@ -145,12 +145,13 @@ A parameter typed `ref Map<K, V>` **borrows** instead of moving — the caller k
 
 ### Scope-Exit Cleanup (RAII)
 
-When a noncopyable map goes out of scope, the compiler emits cleanup IR:
-
-1. If `K` is noncopyable: call `Map$$keys` to extract keys into a temp list, run a cleanup loop on each key, free the temp list.
-2. If `V` is noncopyable: call `Map$$values` similarly, clean up each value.
-3. Call `Map$$delete` to free the map's internal buffers.
-4. Call `Delete` to free the slab-allocated map header.
+When a map goes out of scope, the compiler emits a single typed `Delete`, planned by
+`compute_drop_plan` (`DropKind::Map`). The VM lowers it to a `BCDeleteDesc` (`Map`
+cleanup, with key and value descriptors) that `delete_value` walks in C++ — dropping
+each occupied bucket's key and value where they need it, then freeing the bucket
+buffers and the slab-allocated header — and the C backend emits a `roxy_drop__<T>`
+glue function. See
+[lifetimes.md → One derivation, two executions](lifetimes.md#one-derivation-two-executions).
 
 ## Files
 
@@ -161,6 +162,6 @@ When a noncopyable map goes out of scope, the compiler emits cleanup IR:
 | `src/roxy/vm/map.cpp` | Thin shims around `roxy_map_*` that push/pop dispatch frames |
 | `src/roxy/vm/map_dispatch.cpp` | Thread-local dispatch stack + `vm_hash_trampoline` / `vm_eq_trampoline` |
 | `src/roxy/compiler/sema/semantic.cpp` | Hash trait, Map type resolution, methods |
-| `src/roxy/compiler/ir/ir_builder.cpp` | Map constructor + method call generation |
+| `src/roxy/compiler/ir/ir_builder_expr.cpp` | Map constructor + method call generation |
 | `src/roxy/vm/natives.cpp` | Hash + Map native function implementations |
 | `tests/e2e/test_maps.cpp` | E2E tests |

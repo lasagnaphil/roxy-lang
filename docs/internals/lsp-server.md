@@ -136,7 +136,7 @@ Layer 1 depends only on top-level declarations, so it is stable across most edit
 
 ## LSP Features
 
-- **Diagnostics** (`publishDiagnostics`) — two-tier: syntax diagnostics report immediately from the error-recovering parser on every keystroke; semantic diagnostics run lazy analysis after a debounce. Semantic checks cover unresolved identifiers/functions/types, unknown type annotations, unresolved field access / method calls / enum variants on known types, wrong argument counts (through inheritance), struct-literal field validation, missing required fields, named-constructor validation, duplicate parameter names, and var/return type mismatches — with cascade prevention so an unknown type doesn't spawn downstream errors.
+- **Diagnostics** (`publishDiagnostics`) — two-tier: syntax diagnostics report immediately from the error-recovering parser on every keystroke; semantic diagnostics follow immediately on each `didOpen`/`didChange` (no debounce). Semantic checks cover unresolved identifiers/functions/types, unknown type annotations, unresolved field access / method calls / enum variants on known types, wrong argument counts (through inheritance), struct-literal field validation, missing required fields, named-constructor validation, duplicate parameter names, and var/return type mismatches — with cascade prevention so an unknown type doesn't spawn downstream errors.
 - **Completions** (`completion`) — triggered by `.`, `::`, or a partial identifier. `.` enumerates fields + methods (including inherited and trait methods); `::` lists enum variants; a bare identifier lists locals, globals, functions, structs, enums, traits, and imports; a type-annotation position lists known types and `uniq`/`ref`/`weak` modifiers. Detail strings include signatures.
 - **Hover** (`hover`) — resolves the CST node at the cursor to its type/signature: variable type, function/method signature (with owning struct and trait), struct field, type definition, or enum variant.
 - **Go-to-Definition** (`definition`) — locals/params resolve within the current function scope; functions, types, methods, fields, and globals resolve via the global index, returning the declaration's `name_range`; imported symbols follow the import to the source module.
@@ -187,4 +187,4 @@ The LSP server shares existing compiler infrastructure rather than duplicating i
 | `tests/fuzz/fuzz_lsp_parser.cpp` | Coverage-guided libFuzzer target (see `tests/fuzz/README.md`) |
 | `tests/unit/test_fuzz_regression.cpp` | Replays the seed corpus + `examples/` through the parser harnesses each test run |
 
-The `roxy_lsp` library depends on `roxy_shared` (lexer, tokens) and `roxy_compiler` (AST types for CST-to-AST lowering).
+The `roxy_lsp` library links `roxy_compiler` (AST types for CST-to-AST lowering, and through it `roxy_shared` for the lexer) and `roxy_vm`.

@@ -658,7 +658,7 @@ TEST_SUITE("E2E Closures") {
         }
     }
 
-    TEST_CASE("self capture") { // VM-only: C backend: closure self-capture / borrow-conversion gap
+    TEST_CASE_TEMPLATE("self capture", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Implicit ref-self on noncopyable struct") {
             // Noncopyable struct ⇒ heap-only ⇒ ref counting protects; no runtime check.
             const char* source = R"(
@@ -675,7 +675,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{g()}");
             }
         )";
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
@@ -694,7 +694,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()}");
             }
         )";
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "99\n");
         }
@@ -712,7 +712,7 @@ TEST_SUITE("E2E Closures") {
                 var f = v.make();
             }
         )";
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK_FALSE(result.success); // Runtime trap from ASSERT_HEAP
         }
 
@@ -735,7 +735,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()}");
             }
         )";
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "7\n");
         }
@@ -755,7 +755,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()}");
             }
         )";
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "99\n");
         }
@@ -774,7 +774,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()}");
             }
         )";
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "21\n");
         }
@@ -792,7 +792,7 @@ TEST_SUITE("E2E Closures") {
                 var f = v.make();
             }
         )";
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK_FALSE(result.success);
         }
     }
@@ -802,11 +802,9 @@ TEST_SUITE("E2E Closures") {
     // still stack-capable, so the old "noncopyable ⇒ heap" assumption (which set
     // needs_heap_check only for copyable structs) skipped the gate and would
     // snapshot/borrow a bogus header from stack bytes. See lifetimes.md
-    // "Promotion" and the lifetime-audit "related items". VM-only (runtime trap).
-    TEST_CASE(
-        "self promotion heap gate on noncopyable stack receivers") { // VM-only: C backend: closure
-                                                                     // self-capture / runtime-trap
-                                                                     // reporting gap
+    // "Promotion" and the lifetime-audit "related items".
+    TEST_CASE_TEMPLATE("self promotion heap gate on noncopyable stack receivers", Backend,
+                       RX_E2E_BACKENDS) {
         // Each trap case must first *compile* (so the failure below is the runtime
         // heap gate, not a compile error), then fail at run time.
         BumpAllocator allocator(65536);
@@ -826,7 +824,7 @@ TEST_SUITE("E2E Closures") {
             }
         )";
             CHECK(compile(allocator, source) != nullptr);
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK_FALSE(result.success);
         }
 
@@ -845,7 +843,7 @@ TEST_SUITE("E2E Closures") {
             }
         )";
             CHECK(compile(allocator, source) != nullptr);
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK_FALSE(result.success);
         }
 
@@ -863,7 +861,7 @@ TEST_SUITE("E2E Closures") {
             }
         )";
             CHECK(compile(allocator, source) != nullptr);
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK_FALSE(result.success);
         }
 
@@ -883,7 +881,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{c.observe_self()}");
             }
         )";
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "7\n");
         }
@@ -903,7 +901,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()}");
             }
         )";
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "42\n");
         }
@@ -1026,8 +1024,7 @@ TEST_SUITE("E2E Closures") {
         }
     }
 
-    TEST_CASE(
-        "nested self capture") { // VM-only: C backend: closure self-capture / borrow-conversion gap
+    TEST_CASE_TEMPLATE("nested self capture", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Nested [copy self] on copyable + uniq receiver") {
             // Outer takes implicit ref-self (heap check passes for uniq); inner's
             // [copy self] reads via outer's __env.__self and snapshots into its
@@ -1048,7 +1045,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()()}");
             }
         )";
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "7\n");
         }
@@ -1070,7 +1067,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()()}");
             }
         )";
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "99\n");
         }
@@ -1094,7 +1091,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{f()()}");
             }
         )";
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "21\n");
         }
@@ -1117,13 +1114,12 @@ TEST_SUITE("E2E Closures") {
                 var f = v.factory();
             }
         )";
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK_FALSE(result.success);
         }
     }
 
-    TEST_CASE("transitive [move] across nested lambdas") { // VM-only: C backend: closure
-                                                           // self-capture / borrow-conversion gap
+    TEST_CASE_TEMPLATE("transitive [move] across nested lambdas", Backend, RX_E2E_BACKENDS) {
         SUBCASE("Inner [move c] from a noncopyable across one outer lambda") {
             // `c` lives in main's scope; the outer lambda doesn't reference it
             // directly, but the inner lambda's [move c] propagates a Move
@@ -1141,7 +1137,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{inner()}");
             }
         )";
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "7\n");
         }
@@ -1180,7 +1176,7 @@ TEST_SUITE("E2E Closures") {
                 print(f"{inner()}");
             }
         )";
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.stdout_output == "99\n");
         }
@@ -1425,8 +1421,7 @@ TEST_SUITE("E2E Closures") {
         }
     }
 
-    TEST_CASE("function-to-borrow conversion") { // VM-only: C backend: closure self-capture /
-                                                 // borrow-conversion gap
+    TEST_CASE_TEMPLATE("function-to-borrow conversion", Backend, RX_E2E_BACKENDS) {
         SUBCASE("pass a fun to a ref fun parameter and call it") {
             // `fun -> ref fun` borrows the closure (like uniq -> ref); the borrow
             // is callable, and the caller's `f` stays usable afterward.
@@ -1441,7 +1436,7 @@ TEST_SUITE("E2E Closures") {
                 return a + b;                // 42 + 10 == 52
             }
         )";
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.value == 52);
         }
@@ -1457,7 +1452,7 @@ TEST_SUITE("E2E Closures") {
                 return apply(f, 14);   // 42
             }
         )";
-            auto result = VMBackend::run(source);
+            auto result = Backend::run(source);
             CHECK(result.success);
             CHECK(result.value == 42);
         }

@@ -64,7 +64,9 @@ The IR builder synthesizes two parameterless functions:
 - **`__module_init`** — for each global with an initializer, in declaration
   order: evaluate the initializer (which runs `New` + the constructor for
   `uniq T(..)`), then store it into the global's slot (struct-copy for value
-  structs, `StorePtr` otherwise), consuming the initializer temp. Because init
+  structs, `StorePtr` otherwise), consuming the initializer temp when the type is
+  noncopyable. (A copyable counted value is *not* retained here — a dynamically
+  built `string` global currently dangles; see `TODO.md`.) Because init
   runs in order, a later global's initializer may read an earlier global.
 - **`__module_shutdown`** — for each noncopyable global, in **reverse** order:
   destroy it (`Delete` through the slot's address for value structs, or
@@ -120,7 +122,9 @@ The VM drives them around the module lifecycle:
 | File | Change |
 |------|--------|
 | `include/roxy/compiler/ir/ssa_ir.hpp` | `IROp::GlobalAddr`, `GlobalData`, `IRGlobal`, `IRModule::globals` / `global_slot_count` |
-| `src/roxy/compiler/ir/ir_builder.{hpp,cpp}` | `collect_globals`; `emit_global_addr` / `gen_global_read`; global read in `gen_identifier_expr`, global write in `gen_assign_local`; `build_module_init` / `build_module_shutdown` (incl. finding-8 `ref`-global RefInc/RefDec); `gen_delete_stmt` nulls a deleted `uniq` global's slot (finding 8b); `m_global_indices` |
+| `src/roxy/compiler/ir/ir_builder.{hpp,cpp}` | `collect_globals`; `emit_global_addr` / `gen_global_read`; `build_module_init` / `build_module_shutdown` (incl. finding-8 `ref`-global RefInc/RefDec); `m_global_indices` |
+| `src/roxy/compiler/ir/ir_builder_expr.cpp` | global read in `gen_identifier_expr`, global write in `gen_assign_local` |
+| `src/roxy/compiler/ir/ir_builder_stmt.cpp` | `gen_delete_stmt` nulls a deleted `uniq` global's slot (finding 8b) |
 | `src/roxy/compiler/codegen/lowering.cpp` | `GlobalAddr` → `GLOBAL_ADDR`; `BCModule::global_slot_count`; liveness no-operand classification |
 | `src/roxy/compiler/driver/compiler.cpp` | `link_modules` merges globals with offset re-basing + `GlobalAddr` rewrite |
 | `src/roxy/compiler/ir/ssa_ir.cpp`, `ir_validator.cpp`, `ir_optimize.hpp` | `GlobalAddr` in printers / validator / `for_each_operand` |

@@ -43,7 +43,7 @@ fun helper(): i32 { return 42; }               // private
 Built-in functions live in a special `"builtin"` module (`BUILTIN_MODULE_NAME`, `vm/natives.hpp`) auto-imported as a prelude, so they are available without any explicit import. The registration list in `src/roxy/vm/natives.cpp` is authoritative; broadly:
 
 - `print` — an **overload set**, one member per Printable primitive (`string`, `bool`, `i32`/`i64`/`u32`/`u64`, `f32`/`f64`). Structs, enums, and containers reach it through the sema-side `Printable` fallback (`print(v)` → `print(v.to_string())`); see [overloading.md](overloading.md).
-- `to_string` / `hash` — likewise overload sets over the primitives, backing the `Printable` and `Hash` traits.
+- `to_string` / `hash` — one native per primitive under a `$$`-mangled method name (`i32$$to_string`, `i32$$hash`, …), backing the `Printable` and `Hash` traits. Unlike `print`, these are methods, not an overload set.
 - Strings — `str_concat`, `str_eq`, `str_ne`, `str_len`, `str_char_at`, `str_substr`, `str_from_code`, `str_to_f64`.
 - Misc — `sqrt`, `clock`, `read_file`.
 - `List<T>` / `Map<K, V>` are registered as generic types with their method sets (plus `__list_*` / `__map_*` internal helpers the compiler emits, not user-callable).
@@ -99,7 +99,7 @@ Error message: `Circular import detected: module 'b' imports 'a' which creates a
 
 ## Cross-Module Calls (Static Linking)
 
-A call to an imported function lowers to `IROp::CallExternal`, which records the target module name, function name, and arguments (`CallExternalData`, emitted in `ir_builder.cpp`).
+A call to an imported function lowers to `IROp::CallExternal`, which records the target module name, function name, and arguments (`CallExternalData`, emitted in `ir_builder_expr.cpp`).
 
 Because all modules are linked statically, these are resolved entirely at compile time. `Compiler::link_modules()` merges every module's IR functions into one `IRModule` and builds a function-name → index map (`m_func_indices`) during lowering. Each `CallExternal` looks up its target in that map and is lowered to a regular `CALL` (or `CALL_NATIVE` for natives) with the resolved index. The result: no runtime resolution overhead, all function indices known at compile time, and a bytecode module containing only `CALL` / `CALL_NATIVE` opcodes.
 
@@ -134,6 +134,6 @@ modules.register_native_module("math", &math_registry, types);
 | `src/roxy/compiler/driver/compiler.cpp` | multi-module compilation, topological sort, linking |
 | `include/roxy/vm/natives.hpp` | `BUILTIN_MODULE_NAME` constant |
 | `src/roxy/compiler/sema/semantic.cpp` | import analysis, prelude auto-import, qualified access |
-| `src/roxy/compiler/ir/ir_builder.cpp` | `CallExternal` IR emission |
+| `src/roxy/compiler/ir/ir_builder_expr.cpp` | `CallExternal` IR emission |
 | `src/roxy/compiler/codegen/lowering.cpp` | static linking (`CallExternal` → `CALL`) |
 | `tests/e2e/test_modules.cpp` | module system E2E tests |

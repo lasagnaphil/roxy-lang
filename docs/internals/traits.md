@@ -1,6 +1,6 @@
 # Traits
 
-Traits define shared behavior across types, enabling polymorphism without function overloading. A trait is a named set of methods; types implement it with `for Trait` impls, and generic code constrains type parameters with trait bounds. Trait methods live on the struct and reuse the existing method machinery — there is no trait-object runtime.
+Traits define shared behavior across types, enabling ad-hoc polymorphism (free-function overloading also exists; see [overloading.md](overloading.md)). A trait is a named set of methods; types implement it with `for Trait` impls, and generic code constrains type parameters with trait bounds. Trait methods live on the struct and reuse the existing method machinery — there is no trait-object runtime.
 
 **Implemented:** trait declarations, required/default methods, `for Trait` impls, trait inheritance, `Self` type, generic traits with type parameters (`trait Add<Rhs>`), operator dispatch for all overloadable operators (arithmetic, comparison, bitwise, unary, compound-assignment, indexing) on both structs and primitives (see `operator-overloading.md`), and trait bounds on generics (`<T: Trait>`, with instantiation-site and definition-site checking — see `generics.md`).
 
@@ -76,13 +76,13 @@ If a required method is missing, the compiler reports an *incomplete trait imple
 A trait can extend another; implementing the sub-trait requires also implementing the parent.
 
 ```roxy
-trait Printable;
-fun Printable.print();
+trait Describe;
+fun Describe.describe();
 
-trait DebugPrintable : Printable;
-fun DebugPrintable.debug_print() {
+trait DebugDescribe : Describe;
+fun DebugDescribe.debug_describe() {
     print("[DEBUG] ");
-    self.print();
+    self.describe();
 }
 ```
 
@@ -105,8 +105,8 @@ Default methods may use trait type parameters; when injected into a struct, para
 
 **Constraints:**
 - A struct implements a given generic trait at most once per set of type arguments.
-- No default type arguments — always write `for Mul<i32>`, never bare `for Mul`.
-- The compiler rejects a wrong type-argument count (`for Mul` when `Mul<Rhs>` expects one) and type args on a non-generic trait (`for Eq<i32>`).
+- A bare `for Mul` on a generic trait means `Rhs = Self` (`fun V.mul(o: V): V for Mul`); write `for Mul<i32>` for any other argument.
+- The compiler rejects type args on a non-generic trait (`for Eq<i32>`).
 - Generic trait inheritance (`trait AddAssign<Rhs> : Add<Rhs>`) is not yet supported.
 
 ## Trait Bounds
@@ -155,7 +155,7 @@ When a method is called on a type:
 
 Default methods are injected by cloning the trait method's body, parameters, and return type with a `TypeSubstitution` that maps `Self` → the concrete struct and each trait type parameter → its concrete argument (via `GenericInstantiator::clone_stmt()` / `substitute_type_expr()`). The clones are processed as synthetic declarations alongside regular methods.
 
-Trait methods are stored on the struct and use standard method mangling, `Type$$method` (e.g. `Point$$eq`). Each struct has at most one implementation per method name; two traits defining the same method name on one struct is an error.
+Trait methods are stored on the struct and use standard method mangling, `Type$$method` (e.g. `Point$$eq`). Each struct has at most one implementation per method name. Two traits defining the same method name on one struct *should* be an error, but currently compiles and silently keeps the last impl (see `TODO.md`); two non-trait methods with one name are rejected.
 
 For operators, the compiler rewrites the operator into the corresponding method call (`==` → `eq`, `<` → `lt`, etc.) in both semantic analysis and IR generation. See `operator-overloading.md`.
 
@@ -184,5 +184,5 @@ generic_args   -> "<" type_expr ( "," type_expr )* ">" ;
 | `src/roxy/compiler/parse/parser.cpp` | `trait_declaration()`, `for Trait<Args>` parsing |
 | `include/roxy/compiler/types/generics.hpp` | `clone_stmt()`, `substitute_type_expr()` (default method injection) |
 | `src/roxy/compiler/sema/trait_system.cpp` | trait analysis/validation, generic trait type-arg resolution, default method injection (`TraitSystem`, driven by the semantic analyzer) |
-| `src/roxy/compiler/ir/ir_builder.cpp` | operator dispatch, synthetic decl processing |
+| `src/roxy/compiler/ir/ir_builder.cpp`, `ir_builder_expr.cpp` | synthetic decl processing; operator dispatch (`ir_builder_expr.cpp`) |
 | `tests/e2e/test_traits.cpp` | E2E tests |

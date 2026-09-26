@@ -116,12 +116,11 @@ Struct member resolution is memoized and recursive (`ensure_struct_members_resol
 The analyzer maintains a set of struct types currently being resolved (`m_resolving_structs`). When resolution re-enters a struct already in that set, the embedding is a genuine value-type cycle — direct, mutual, or through a generic instance — and it reports an infinite-size error at the embedding field. `uniq T` / `ref T` / `weak T` fields skip both the recursion and the check — they are always pointer-sized.
 
 ```
-error: recursive struct type 'Node' has infinite size
+error: recursive struct type 'Node' has infinite size; use 'uniq Node' for indirection
   --> main.roxy:1:1
   |
 1 | struct Node { value: i32; next: Node; }
   |                                 ^^^^
-  hint: use 'uniq Node' for indirection
 ```
 
 ## Recursive Destruction
@@ -130,7 +129,7 @@ When a `uniq` owner goes out of scope, its destructor runs and the object is fre
 
 Originally each node re-entered the bytecode interpreter to run its destructor (`interpret()` → `call_cleanup_destructor` → `delete_value` → `interpret()` …), pushing a full interpreter stack frame per ownership level — a 500-node linked list overflowed the native stack.
 
-**Descriptor-driven cleanup.** Parentless structs with a synthetic (compiler-generated) default destructor encode their owned-field cleanup as data: a `BCDeleteDesc` of kind `STRUCT_FIELDS` / `STRUCT_FIELDS+DEL_OBJ` listing each owned field as a `(slot_offset, field_desc)` action, with discriminant-guarded actions for tagged-union (`when`-clause) variant fields. The runtime walks these fields directly in C++ (`delete_value`, `vm/interpreter.cpp`) instead of running a bytecode destructor, exactly as `List`/`Map` element cleanup does. The descriptor is built once per type and memoized (`m_delete_desc_cache` in `lowering.cpp`) with reservation-before-recursion, so a self-referential struct yields a finite, self-referencing descriptor.
+**Descriptor-driven cleanup.** Parentless structs with a synthetic (compiler-generated) default destructor encode their owned-field cleanup as data: a `BCDeleteDesc` with cleanup `WalkFields` (plus `free_obj` for a heap object) listing each owned field as a `(slot_offset, field_desc)` action, with discriminant-guarded actions for tagged-union (`when`-clause) variant fields. The runtime walks these fields directly in C++ (`delete_value`, `vm/interpreter.cpp`) instead of running a bytecode destructor, exactly as `List`/`Map` element cleanup does. The descriptor is built once per type and memoized (`m_delete_desc_cache` in `lowering.cpp`) with reservation-before-recursion, so a self-referential struct yields a finite, self-referencing descriptor.
 
 This removes the heavyweight `interpret()` re-entry per node: destruction now recurses only through small `delete_value` frames, raising the practical depth limit by ~100× (deep linked lists destroy cleanly into the tens of thousands of nodes). Structs with a **user-defined** destructor, or that use **inheritance**, keep the original bytecode-destructor path — their bodies must run via the interpreter, and inherited-field cleanup chains through parent destructors.
 
@@ -146,7 +145,6 @@ Assigning to a `uniq` field that already holds a value (`node.next = uniq Node {
 |---|---|
 | `src/roxy/compiler/sema/semantic.cpp` | Self-reference resolution, direct value-cycle detection |
 | `src/roxy/compiler/codegen/lowering.cpp` | `BCDeleteDesc` construction, `m_delete_desc_cache` memoization |
-| `include/roxy/compiler/codegen/lowering.hpp` | `BCDeleteDesc` definition |
-| `include/roxy/vm/bytecode.hpp` | `BCDeleteDesc` kinds (`STRUCT_FIELDS`, `STRUCT_FIELDS+DEL_OBJ`) |
+| `include/roxy/vm/bytecode.hpp` | `BCDeleteDesc` definition (`WalkFields` cleanup, `free_obj`) |
 | `src/roxy/vm/interpreter.cpp` | `delete_value` descriptor-driven cleanup |
 | `tests/e2e/test_recursive_types.cpp` | E2E tests |

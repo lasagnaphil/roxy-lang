@@ -176,21 +176,28 @@ struct Ability {
 
 ## Type Safety Rules
 
-Variant field access is gated at compile time, so no runtime discriminant checks
-are emitted.
-
-**Variant fields require a matching `when` case.** Accessing a variant field
-outside its case is a compile error:
+Variant field access is **checked at runtime**, not at compile time. Every read
+or write of a variant field loads the discriminant and compares it against that
+variant's value; on a mismatch the program traps with *"variant field access
+with wrong discriminant"* (`TRAP` in the VM). A `when` arm, an `if` on the
+discriminant, or code that has just assigned the discriminant all pass the check
+naturally — none of them is required by the compiler:
 
 ```roxy
 fun example(skill: ref Skill) {
-    // var x = skill.damage;        // ERROR: outside a 'when'
     when skill.type {
         case Attack: var x = skill.damage;          // OK
         case Defend: var y = skill.damage_reduce;   // OK
     }
+    if (skill.type == SkillType::Attack) {
+        var z = skill.damage;                       // OK — guarded by the if
+    }
+    var w = skill.damage;   // compiles; traps at runtime unless type == Attack
 }
 ```
+
+Flow-sensitive typing that would reject the unguarded access at compile time is
+a planned feature (`TODO.md` → Planned Features).
 
 **The discriminant and fixed fields are always accessible.**
 
@@ -200,22 +207,22 @@ fun check(skill: ref Skill): bool {
 }
 ```
 
-**Constructors unlock variant fields after setting the discriminant** to a
-compile-time-constant value:
+**Constructors set the discriminant before its variant fields**, so the check
+passes:
 
 ```roxy
 fun new Skill.make_attack(dmg: i32) {
     self.name_id = 1;
     self.type = SkillType::Attack;   // after this...
-    self.damage = dmg;               // ...this variant field is valid
+    self.damage = dmg;               // ...this variant field passes the check
 }
 ```
 
 ## Interaction with Other Features
 
-- **Inheritance** — child structs inherit a parent's `when` clauses and may add
-  fixed fields. They cannot add new cases to an inherited clause, since that would
-  change the union size.
+- **Inheritance** — `when` clauses are not inherited: a child struct cannot access
+  its parent's variant fields (`struct 'Big' has no field 'damage'`). See
+  [inheritance.md](inheritance.md).
 - **Methods** — pattern-match on `self.<discriminant>` normally.
 - **Destructors** — a `fun delete` should handle every variant; owned (`uniq`)
   fields inside a variant are cleaned up under their matching case.
@@ -262,6 +269,7 @@ when_case       -> "case" Identifier ( "," Identifier )* ":" statement* ;
 | `include/roxy/compiler/types/types.hpp` | `WhenClauseInfo`, `VariantInfo`; `StructTypeInfo::when_clauses`, variant field lookup |
 | `src/roxy/compiler/parse/parser.cpp` | parse `when` clauses and `when` statements |
 | `src/roxy/compiler/sema/semantic.cpp` | `resolve_when_clauses`, union layout, variant-access and struct-literal validation |
-| `src/roxy/compiler/ir/ir_builder.cpp` | `gen_when_stmt` (comparison chain + phi merge), variant field access |
+| `src/roxy/compiler/ir/ir_builder_stmt.cpp` | `gen_when_stmt` (comparison chain + phi merge) |
+| `src/roxy/compiler/ir/ir_builder_expr.cpp` | variant field access + runtime discriminant check |
 | `src/roxy/compiler/codegen/lowering.cpp` | union memory access in bytecode |
 | `tests/e2e/test_tagged_unions.cpp` | E2E tests |

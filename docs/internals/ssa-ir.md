@@ -33,7 +33,7 @@ This gives a cleaner dataflow representation that lowers directly to bytecode: b
 
 ## IR Structure
 
-An `IRModule` holds `IRFunction`s, plus the module's struct types and globals; each function has block parameters, a return type, and a list of `IRBlock`s. A block has parameters, a list of `IRInst*`, and a terminator. Each `IRInst` carries an op, a result `ValueId`, a `Type*`, and a union of op-specific operand data (`ConstData`, `CallData`, `FieldData`, `IndexData`, …). Definitions are in `ssa_ir.hpp`, which is the authoritative list — the summary below groups the 93 ops:
+An `IRModule` holds `IRFunction`s, plus the module's struct types and globals; each function has block parameters, a return type, and a list of `IRBlock`s. A block has parameters, a list of `IRInst*`, and a terminator. Each `IRInst` carries an op, a result `ValueId`, a `Type*`, and a union of op-specific operand data (`ConstData`, `CallData`, `FieldData`, `IndexData`, …). Definitions are in `ssa_ir.hpp`, which is the authoritative list — the summary below groups the 95 ops:
 
 ```cpp
 enum class IROp : u8 {
@@ -91,7 +91,7 @@ enum class IROp : u8 {
     Throw,
     Yield,
 };
-// Total: 93 IR operations
+// Total: 95 IR operations
 ```
 
 ## Terminators

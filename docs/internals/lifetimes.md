@@ -204,11 +204,7 @@ never mix, so no representation or per-deref test straddles them.
 
 ## Counting mechanics
 
-> **Picking up the unwind-path cleanup bug?** `HANDOFF.md` at the repo root has
-> the operational half — both reproductions, the traps that cost a previous
-> session time, and the allocation-tagging / refcount-pairing method that found
-> the causes fixed so far. This section stays the canonical model: cleanup runs
-> on **every** exit path, exception unwinding included, exactly once.
+Cleanup runs on **every** exit path, exception unwinding included, exactly once.
 
 ### Increments
 
@@ -795,9 +791,10 @@ returns `is_alive() && weak_generation == generation`.
 
 ### Implicit destruction (RAII)
 
-`uniq` variables, value-structs with destructors, and noncopyable containers are
-cleaned up automatically at scope exit — no manual `delete` in most code. At every
-exit point the compiler emits cleanup for the live noncopyable locals of that scope,
+`uniq` variables, value structs with a destructor (user-written, or synthesized for
+an owning field — a `string` or `ref` field included), and containers are cleaned
+up automatically at scope exit — no manual `delete` in most code. At every exit
+point the compiler emits cleanup for the live owning locals of that scope,
 in **LIFO** (reverse-declaration) order:
 
 | Exit point | What's cleaned up |
@@ -815,8 +812,9 @@ container runs a per-element cleanup loop before freeing its buffers and header 
 ### Move semantics
 
 Binding / passing / returning a noncopyable value of matching type **moves**
-ownership; the source becomes invalid. This applies to `uniq`, value-structs with
-destructors, and noncopyable containers.
+ownership; the source becomes invalid. This applies to `uniq`, move-only value
+structs (a user-written destructor or a move-only field — a synthesized destructor
+for a `string`/`ref` field does not make a struct move-only), and containers.
 
 - Pass to a matching parameter → ownership transfers, source consumed.
 - Return → ownership transfers to the caller, no scope-exit delete.
@@ -1245,9 +1243,6 @@ is copyable, and each copy takes its own count. The per-feature mechanics live u
   unsafe op memory-safely on both backends, but the C backend's clean trap *report*
   (abort with a message) is part of the broader AOT-trap-reporting work, not yet
   done.
-- **`roxy::ref<T>` as a borrow handle.** The AOT C++ wrapper should be a borrow
-  handle — copy increments the borrowee's count, destruction decrements, and it never
-  frees — matching the constraint-reference semantics (rather than shared ownership).
 
 ## Related docs
 

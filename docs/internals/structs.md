@@ -13,7 +13,7 @@ Roxy structs are stack-allocated value types with a packed, slot-based memory la
 └─────────────────────────────────────────────┘
 ```
 
-- **Registers are untyped 8-byte values** (`u64`); type info is stored separately for debug mode only.
+- **Registers are untyped 8-byte values** (`u64`); no per-register type info is kept at runtime.
 - **The local stack uses 4-byte (`u32`) slots** — most values fit this granularity.
 - **64-bit values** (`i64`, `f64`, pointers) occupy 2 consecutive slots.
 - **Small types** (`i8`, `i16`) are widened to 4 bytes (1 slot).
@@ -143,6 +143,6 @@ fun main(): i32 {
 | `include/roxy/compiler/types/types.hpp` | `FieldInfo`, `StructTypeInfo`, `get_type_slot_count()` |
 | `src/roxy/compiler/parse/parser.cpp` | Struct literal parsing |
 | `src/roxy/compiler/sema/semantic.cpp` | Slot-count computation, struct literal validation |
-| `src/roxy/compiler/ir/ir_builder.cpp` | `StackAlloc` and struct literal IR emission |
+| `src/roxy/compiler/ir/ir_builder_expr.cpp` | `StackAlloc` and struct literal IR emission |
 | `src/roxy/compiler/codegen/lowering.cpp` | Stack slot allocation, field access lowering |
 | `src/roxy/vm/interpreter.cpp` | `STACK_ADDR` / `GET_FIELD` / `SET_FIELD`, frame local-stack management |
