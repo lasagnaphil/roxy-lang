@@ -321,45 +321,29 @@ Both tools need a full LLVM install (Apple clang ships neither); on macOS that's
 
 ```
 roxy-v2/
-├── include/roxy/
-│   ├── core/           # Core utilities (types.hpp, span.hpp, vector.hpp, allocators)
-│   ├── shared/         # Lexer and tokens
-│   ├── compiler/       # Grouped by pipeline phase (see below)
-│   │   ├── types/      #   Type system: types, type_env, symbol_table, generics
-│   │   ├── support/    #   Cross-cutting: mangling, error_reporter, operator_traits
-│   │   ├── parse/      #   ast, parser
-│   │   ├── sema/       #   semantic + its collaborators (sema_context, function_context,
-│   │   │               #   type_checker, lifetime_checker, trait_system,
-│   │   │               #   generic_call_resolver, lambda_lifter)
-│   │   ├── ir/         #   ssa_ir, ir_builder*, ownership_tracker, ir_fold,
-│   │   │               #   ir_optimize, ir_validator, coroutine_lowering
-│   │   ├── codegen/    #   lowering (→ bytecode), c_emitter (→ C/C++)
-│   │   └── driver/     #   compiler, module_registry
-│   ├── lsp/            # LSP server (syntax_tree, lsp_parser, indexer, global_index, cst_lowering, lsp_analysis_context, transport, server)
-│   ├── rt/             # Unified runtime (roxy_rt.h, slab_allocator, vmem, string_intern) — used by both VM and AOT-compiled programs
-│   └── vm/             # Bytecode, value, object, VM, interpreter, binding/, map_dispatch
-├── src/roxy/           # Implementation files matching include/ structure
-│                       #   (compiler/ir/ additionally holds the ir_builder_{expr,stmt,
-│                       #    lifetime}.cpp split TUs and their ir_builder_internal.hpp)
-├── benchmarks/         # lox, mandelbrot, nbody, quicksort, struct_copy workloads
-├── examples/           # Runnable Roxy programs (incl. lox/ — a Lox interpreter in Roxy)
-├── tests/
-│   ├── test_main.cpp   # Single doctest entry point
-│   ├── unit/           # Unit tests (lexer, parser, semantic, IR, bytecode, VM, LSP)
-│   ├── e2e/            # End-to-end tests (basics, structs, lists, strings, modules, etc.)
-│   └── fuzz/           # libFuzzer targets, structural generator (gen/), seed corpus
-├── docs/
-│   ├── overview.md     # Language features and design
-│   ├── grammar.md      # Grammar specification, numeric literals, type casting
-│   ├── libraries.md    # Vendored library documentation
-│   └── internals/      # Detailed implementation documentation
-└── CMakeLists.txt
+├── include/roxy/        # Headers; src/roxy/ mirrors this layout
+│   ├── core/            # Utilities (types.hpp, span, vector, allocators, doctest)
+│   ├── shared/          # Lexer and tokens
+│   ├── compiler/        # Grouped by pipeline phase:
+│   │                    #   types/ support/ parse/ sema/ ir/ codegen/ driver/
+│   ├── lsp/             # Error-recovering parser, indexer, LSP server
+│   ├── rt/              # Unified runtime (roxy_rt.h) — used by the VM and AOT programs
+│   └── vm/              # Bytecode, VM, interpreter, natives, binding/
+├── benchmarks/          # lox, mandelbrot, nbody, quicksort, struct_copy
+├── examples/            # Runnable programs (incl. lox/ — a Lox interpreter in Roxy)
+├── tests/               # unit/, e2e/, fuzz/ — one doctest binary, roxy_tests
+└── docs/                # overview, grammar, libraries, internals/
 ```
+
+`src/roxy/compiler/ir/` splits the IR builder across `ir_builder{,_expr,_stmt,_lifetime}.cpp`
+with shared helpers in `ir_builder_internal.hpp`.
 
 ## Compiler Pipeline
 
 ```
-Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA IR → Lowering → Bytecode → VM
+Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA IR
+       → coroutine_lower → optimize_module → IRValidator → Lowering → Bytecode → VM
+                                                         ↘ CEmitter → C/C++ (AOT)
 ```
 
 ## Key Language Features
@@ -382,167 +366,84 @@ Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA
 - References: `uniq ref weak out inout`
 - Imports: `import from`
 
-### Numeric Types and Casting
-
 See `docs/grammar.md` for numeric literal suffixes and type casting rules.
 
-## Implemented Components
+### Semantics worth knowing before writing Roxy
 
-### Frontend
-**Lexer** - Tokenizes source code with number bases, suffixes, escape sequences, nested comments.
-**Details:** `docs/internals/frontend.md` | **Files:** `shared/lexer.hpp`, `shared/lexer.cpp`
+- **Containers are move-only.** `List<T>` / `Map<K, V>` move on binding and passing; `.copy()` makes an independent duplicate. A `ref List<T>` / `ref Map<K, V>` parameter borrows instead (no call-site marker; mutation through it is allowed, rebinding the caller's slot is not).
+- **Index reads throw.** An out-of-bounds `list[i]` throws `IndexError`, a missing `m[k]` throws `KeyError` (both catchable); `.get()` / `.pop()` abort. `m.get_or(k, fallback)` never throws or inserts.
+- **Move-only is structural.** A struct is move-only iff it has a user-written destructor or a move-only field; a `string` or `ref` field keeps it copyable (copies retain).
+- **Printing.** `print` is an overload set over primitives; structs/enums/containers print through `Printable` (`f"{items}"` renders `[1, 2, 3]`). `weak` is not printable (it can dangle).
+- **Methods are one-per-name** (no method overloading, including across trait impls); free functions and natives may be overloaded.
+- **Variant fields of a tagged union are checked at runtime**, not compile time — reading the wrong variant traps.
+- **`when` exhaustiveness is detected, not required.** Covering every variant (with no `else`) counts as all-paths-return and sharpens `uniq` move-state merges; the impossible fall-through is compiled to a trap.
+- **Statements are only valid inside functions**; module scope holds declarations and `var` globals (initialized before `main`, torn down after).
+- **Coroutines:** a function is a coroutine iff it returns `Coro<T>` and its body yields. Not yet supported as methods of generic structs or traits.
 
-**Parser** - Recursive descent with Pratt parsing for expressions. Fail-fast design.
-**Details:** `docs/internals/frontend.md` | **Files:** `compiler/parse/parser.hpp`, `compiler/parse/parser.cpp`
+## Where things are documented
 
-**AST** - Expression, statement, and declaration node kinds (literals, operators, calls, control flow, structs, enums, traits, etc.).
-**Files:** `compiler/parse/ast.hpp`
+Each feature has an internals doc under `docs/internals/`; read it before changing that area.
 
-**Semantic Analysis** - Multi-pass analyzer with symbol resolution, type inference, and type checking. Extracted collaborators (each shared by reference via `SemaContext`, no back-reference to the analyzer): `LifetimeChecker` (move-state tracking for `uniq` variables / use-after-move detection, definite-termination branch merges, scope-exit destructor checks), `TraitSystem` (builtin trait registration, trait declarations, impl grouping/validation, default-method injection), `GenericCallResolver` (type-arg unification/inference, generic function calls, template refs in value position, trait bounds, Phase B template-body checking), and `LambdaLifter` (lambda expressions: capture validation, lifting the body into a synthetic call function, env-struct backfill, plus the capture rewrites on identifier/`self` references inside lambda bodies).
-**Details:** `docs/internals/frontend.md` | **Files:** `compiler/sema/semantic.hpp`, `compiler/sema/semantic.cpp`, `compiler/sema/sema_context.hpp`, `compiler/sema/function_context.hpp`, `compiler/sema/lifetime_checker.{hpp,cpp}`, `compiler/sema/trait_system.{hpp,cpp}`, `compiler/sema/generic_call_resolver.{hpp,cpp}`, `compiler/sema/lambda_lifter.{hpp,cpp}`
+| Area | Doc |
+|------|-----|
+| Lexer, parser, semantic analysis (and its collaborators) | `frontend.md`, `error-handling.md` (never-null `error_type` sentinels) |
+| **Ownership, borrows, drop/retain/move-only, RAII, runtime heap** | **`lifetimes.md`** — the single memory/lifecycle reference |
+| Structs, methods, constructors, inheritance, tagged unions, recursive types | `structs.md`, `methods.md`, `constructors.md`, `inheritance.md`, `tagged-unions.md`, `recursive-types.md` |
+| Traits, operators, overloading, generics | `traits.md`, `operator-overloading.md`, `overloading.md`, `generics.md` |
+| Lists, maps, strings | `list.md`, `maps.md`, `strings.md` |
+| Exceptions, coroutines, closures | `exceptions.md`, `coroutines.md`, `closures.md` |
+| Modules, globals, C++ interop | `modules.md`, `globals.md`, `interop.md` |
+| SSA IR, optimizer, bytecode, VM | `ssa-ir.md`, `optimization.md`, `bytecode.md`, `vm.md`, `vm-optimization.md` |
+| C backend (incl. the live "Known C-backend gaps" list) | `c-backend.md` |
+| LSP server | `lsp-server.md` |
+| Fuzzing, profiling | `fuzzer.md`, `profiling.md`, `identifier-interning.md` (a rejected optimization's post-mortem) |
 
-### Type System
-**Types** - Primitives (`void`, `bool`, `i8`/`i16`/`i32`/`i64`, `u8`/`u16`/`u32`/`u64`, `f32`, `f64`, `string`), structs, enums, references.
-**Files:** `compiler/types/types.hpp`, `compiler/types/types.cpp`
+Language-level: `docs/overview.md` (design and philosophy), `docs/grammar.md`, `docs/libraries.md`
+(vendored libraries). At the repo root: `TODO.md` (known bugs and technical debt — check it before
+assuming a feature works) and `OPTIMIZATION.md` (the compiler's compile-time performance program:
+baseline, measurement rules, negative results).
 
-**Enums** - C-style enumerations with integer underlying type. Access via `Type::Variant`.
-**Tests:** `tests/e2e/test_enums.cpp`
+### C backend: points worth knowing before touching it
 
-**Structs** - Stack-allocated value types with slot-based layout, inheritance, methods, constructors/destructors.
-**Details:** `docs/internals/structs.md`, `docs/internals/methods.md`, `docs/internals/inheritance.md`, `docs/internals/constructors.md`
-
-**Tagged Unions** - Discriminated unions with `when` clause in struct definitions.
-**Details:** `docs/internals/tagged-unions.md` | **Tests:** `tests/e2e/test_tagged_unions.cpp`
-
-**Recursive Types** - Self-referential structs via `uniq` indirection (linked lists, trees, tagged-union ASTs) and mutually recursive structs. Direct value-type cycles (`struct Node { next: Node; }`) are rejected at compile time with an "infinite size" error. Recursive destruction is descriptor-driven — a `BCDeleteDesc` walks owned fields directly in C++ rather than re-entering the interpreter per node — so deep ownership chains destroy without overflowing the native stack.
-**Details:** `docs/internals/recursive-types.md` | **Tests:** `tests/e2e/test_recursive_types.cpp`
-
-### IR and Bytecode
-**SSA IR** - Block arguments (not phi nodes); operations spanning arithmetic, comparisons, memory, calls, control flow, object lifecycle, and closures.
-**Details:** `docs/internals/ssa-ir.md` | **Files:** `compiler/ir/ssa_ir.hpp`, `compiler/ir/ir_builder.hpp`, `compiler/ir/ownership_tracker.{hpp,cpp}` (owned-local state + keyed name/value lookups behind the IRBuilder's `OwnershipTracker` collaborator; the builder keeps all IR emission)
-
-**IR Optimizations** - Phase 1 (constant folding, algebraic simplifications, cast folding) eagerly applied during IR building. Phases 2 (DCE, copy propagation), 3 (branch folding, block merging, trivial block-argument elimination), and 4 (block-local Common Subexpression Elimination) as standalone passes between coroutine lowering and IR validation, iterated to a fixed point with a final RPO sweep.
-**Details:** `docs/internals/optimization.md` | **Files:** `compiler/ir/ir_optimize.hpp`, `compiler/ir/ir_optimize.cpp`
-
-**Bytecode** - 32-bit fixed-width register-based, three instruction formats (ABC, ABI, AOFF). Liveness-based register allocation with free-list reuse; register spilling via furthest-first eviction when pressure exceeds 255 registers.
-**Details:** `docs/internals/bytecode.md`, `docs/internals/ssa-ir.md` | **Files:** `vm/bytecode.hpp`, `compiler/codegen/lowering.hpp`
-
-### Runtime
-**VM** - Shared register file with windowing, call frame stack, module loading.
-**Details:** `docs/internals/vm.md` | **Files:** `vm/vm.hpp`, `vm/interpreter.hpp`
-
-**Lists** - Dynamic lists (`List<T>`) with bounds checking, push/pop/len/cap methods. An out-of-bounds `list[i]` read throws a catchable `IndexError` (see Exceptions). Always noncopyable (move-only — a container owns a heap buffer, like `uniq`); explicit `.copy()` for an independent duplicate. **Borrowable**: a `ref List<T>` parameter borrows instead of moving (implicit conversion, no call-site marker, aliasing allowed — this is the read-only container parameter that previously had to be `inout`); mutation through the borrow is allowed, reassigning the caller's slot and moving out of the frame are not. Element cleanup at scope exit; `List<ref T>` counts its borrowed elements (push RefInc, destroy/overwrite RefDec). Implements `Printable` structurally (iff `T` does, recursively): `f"{items}"` / `items.to_string()` / `print(items)` render `[1, 2, 3]` via a compiler-synthesized per-instantiation IR to_string (both backends free).
-**Details:** `docs/internals/list.md` | **Files:** `vm/list.hpp`
-
-**Maps** - Hash tables (`Map<K, V>`) with Robin Hood open addressing, backward-shift deletion, insert/get/get_or/remove/contains/clear/keys/values methods, index operator support. `get_or(key, fallback)` is the missing-key-tolerant read (single probe, returns the value or the fallback, never aborts and never inserts; restricted to copyable `V`). A missing-key `m[k]` read throws a catchable `KeyError` (see Exceptions); `get()` still aborts. Builtin `Hash` trait for primitives. Always noncopyable (move-only, like `List`); explicit `.copy()` for an independent duplicate. Borrowable via `ref Map<K, V>`, exactly as `List`. `Map<_, ref V>` counts its borrowed values (insert RefInc with replace handling; remove/clear/destroy RefDec), and a **`string` key** is counted by the runtime (insert acquires only for a genuinely new key, since insert replaces in place and keeps the stored one; remove/clear/keys()/teardown balance it). `values()`/`copy()` share the original's elements, so the compiler emits a retain loop over the result. Implements `Printable` structurally (iff `K` and `V` do): renders `{k: v, ...}` in unspecified bucket order via the synthesized per-instantiation to_string.
-**Details:** `docs/internals/maps.md` | **Files:** `vm/map.hpp`, `vm/map.cpp`
-
-**Strings** - Heap-allocated string objects. Operations via native functions (`str_concat`, `str_eq`, `str_len`). F-string interpolation (`f"hello {expr}"`) with automatic `to_string` conversion via builtin `Printable` trait; the per-type dispatch is centralized in the IR builder's `emit_to_string_value`. A `uniq`/`ref` prints as its pointee (same representation, statically live); `weak` is excluded — it can dangle. Primitive `to_string`/`hash` are reachable as methods (`42.to_string()`, `x.hash()`, enum `.to_string()`).
-**Details:** `docs/internals/strings.md` | **Files:** `vm/string.hpp`
-
-**Function Overloading** - Free functions and natives may have multiple definitions per name, differing in parameter types or arity (`Symbol::next_overload` chains; `$ol$name$types` mangles; exact-then-assignable resolution with settled literals; overloaded refs in value position coerce at typed sites). `print` is an overload set (one member per Printable primitive, direct printf natives) with a sema-side Printable fallback rewriting `print(v)` → `print(v.to_string())` for structs/enums/containers. Methods/ctors/trait methods stay one-per-name; a name is either generic or overloaded, never both; `main` can't be overloaded.
-**Details:** `docs/internals/overloading.md` | **Tests:** `tests/e2e/test_overloads.cpp`
-
-**Slab Allocator** - Custom allocator with Vale-style random generational references, tombstoning. Exposes a **teardown census** (`SlabAllocator::live_object_stats`): everything still alive, minus immortal string literals. `vm_destroy` takes it after `__module_shutdown` and before freeing the slabs, leaving it on `RoxyVM::teardown_heap_stats`; `roxy_rt_heap_stats()` is the AOT equivalent.
-**Details:** `docs/internals/lifetimes.md` → Runtime foundations | **Files:** `rt/slab_allocator.hpp`, `rt/vmem.hpp`
-
-### Interop and Modules
-**C++ Interop** - Type-safe function binding with automatic wrapper generation via `NativeRegistry`.
-**Details:** `docs/internals/interop.md` | **Files:** `vm/binding/`
-
-**Module System** - Multi-file compilation with `import`/`from` syntax, topological sorting, static linking.
-**Details:** `docs/internals/modules.md` | **Files:** `compiler/driver/module_registry.hpp`, `compiler/driver/compiler.hpp`
-
-**Module Globals** - Top-level `var` declarations with persistent storage, a synthesized `__module_init` running initializers/constructors before `main`, and `__module_shutdown` running destructors for noncopyable globals at teardown (RAII). VM accesses via the `GLOBAL_ADDR` opcode; the C backend emits real C globals (`g_<name>`) with init/teardown driven from the generated `main()`. Both backends supported (single-module; multi-module init is a documented limitation). The C-backend `Delete` op gained typed-delete (runs destructors) as part of this.
-**Details:** `docs/internals/globals.md` | **Files:** `compiler/ir/ir_builder.cpp` (`collect_globals`/`build_module_init`/`build_module_shutdown`), `compiler/codegen/c_emitter.cpp`, `vm/vm.cpp`
-
-### Control Flow
-**When Statement** - Pattern matching on enum values with phi node support for variable modifications. Exhaustiveness is *detected* (all variants covered) — not required — and drives all-paths-return, sharper `uniq` move-state merges, and a trap on the impossible no-`else` fall-through.
-**Tests:** `tests/e2e/test_when.cpp`
-
-### Traits
-**Traits** - Ad-hoc polymorphism with trait declarations, required/default methods, `for Trait` implementations, trait inheritance, `Self` type, operator dispatch (arithmetic, comparison, bitwise, unary, indexing) for structs, primitives, and lists via unified `TypeCache::lookup_method()`, and generic traits with type parameters (`trait Add<Rhs>`, `for Mul<i32>`). Builtin traits: `Printable`, `Hash`, `Eq`, `Ord` (lt/le/gt/ge), `Exception`, `Index`/`IndexMut` — with primitive trait *membership* registered so `<T: Eq>`/`<T: Ord>` bounds instantiate at primitives (and enums, ordered by discriminant — `enumA < enumB` is legal); explicit operator-named method calls on primitive receivers (`a.lt(b)`) lower to the raw IR ops; user redeclarations of builtin traits merge, adopting user default-method bodies.
-**Details:** `docs/internals/traits.md`, `docs/internals/operator-overloading.md` | **Tests:** `tests/e2e/test_traits.cpp`
-
-### Generics
-**Generics** - Parametric polymorphism with monomorphization. Generic functions (`fun identity<T>(v: T): T`) and generic structs (`struct Box<T> { value: T; }`). Supports local type inference from function arguments and struct field values (`identity(42)` infers T=i32, `Box { value = 42 }` infers T=i32). Explicit type arguments also supported. Angle bracket syntax with trial-parse disambiguation. Trait bounds on type parameters (`<T: Printable>`, `<T: Add<i32> + Hash>`) with Phase A instantiation-site checking and Phase B definition-site checking (bounded generic bodies are validated against declared trait bounds; f-string interpolation consults bounds too — `f"{v}"` on `<T: Printable>` and `f"{xs}"` on `List<T>` both pass, via `bound_includes_trait` + the container-recursive `type_implements_printable`). User-defined external methods on generic structs (`fun Box<T>.get(): T`) with monomorphization. User-defined constructors/destructors on generic structs (`fun new Box<T>(v: T)`, `fun delete Box<T>()`).
-**Details:** `docs/internals/generics.md` | **Tests:** `tests/e2e/test_generics.cpp`
-
-### Exception Handling
-**Exceptions** - Structured error recovery via `try`/`catch`/`throw`/`finally`. Built-in `Exception` trait with required `message(): string` method. Concrete-type catch matching via `type_id` comparison, catch-all with opaque `ExceptionRef` type. Handler tables for zero-overhead on non-exception path. Stack unwinding with frame cleanup. Supported in both backends: the C backend uses a checked-return model (thread-local in-flight exception + per-try dispatch labels + null-guarded cleanup) since it has no runtime PC-range handler table. **Built-in index exceptions**: an out-of-bounds `list[i]` read throws a catchable `IndexError` and a missing-key `m[k]` read throws `KeyError` (both decl-less fieldless structs registered once in the shared TypeEnv, implementing `Exception`; `message()` synthesized on demand like container to_string; generic messages — no embedded key/index). List reads add a cheap in-IR bounds check; map reads stay single-probe via `IROp::IndexTryAddr` (VM `INDEX_TRYADDR_MAP` / C `roxy_map_get_or(..., NULL)`) branching on a null value-slot pointer. `.get()`/`.pop()` and the `inout`/`out` element-borrow lvalue path still abort.
-**Details:** `docs/internals/exceptions.md` | **Tests:** `tests/e2e/test_exceptions.cpp`
-
-### Coroutines
-**Coroutines** - Generator-style stackless coroutines via the built-in `Coro<T>`. A compile-time state-machine transformation produces init/resume functions plus a generated `__coro_*$$delete`; block cloning is graph-preserving, so `yield` works in straight-line code and if/else branches. `Coro<T>` is noncopyable (RAII cleanup of the heap state struct), and promoted `uniq`/noncopyable fields are null-ified on the done path to prevent double-free. **First-class values** — a `Coro<T>` can be passed, returned, and stored erased: a function is a coroutine iff its body yields (`FunDecl::is_coroutine`), `resume()` dispatches through the closure `CALL_INDIRECT` machinery, and erased owned values delete via `DropKind::Closure`. **Coroutine methods** (`fun S.count(): Coro<T>`) work on non-generic structs (`self` is captured like any `ref` param); the generic-struct and trait cases are rejected with a clear error. Supported in both backends.
-Parameters and locals live across a yield become state-struct fields: scalars and pointer-shaped values round-trip by value, **value structs live inline** (addressed via `GetFieldAddr`, `StructCopy` write-back), `out`/`inout` params are **rejected** (second-class values can't outlive the call), and a coroutine method's receiver must be heap — a stack receiver trips `AssertHeap`.
-**Details:** `docs/internals/coroutines.md` | **Tests:** `tests/e2e/test_coroutines.cpp`
-
-### Closures
-**Closures** - First-class functions and closures via `fun(...) -> R` type syntax and lambda expressions. `IROp::Closure` + `CALL_INDIRECT` opcode for indirect dispatch. Implicit copy capture for copyable values (primitives, copyable structs, `ref`/`weak`); explicit `[move x]` capture for noncopyables with use-after-move enforcement. Function references (`var f = double`) lower to per-target trampoline closures. Nested closures with transitive captures (captures flow through enclosing envs at any depth). `self` capture in methods with three modes: implicit `ref self` (default), `[copy self]` (struct-value snapshot), `[weak self]` (cycle-breaker); ref/weak self on copyable receivers emits a runtime slab-range check that traps on stack-allocated receivers. Capture-aware destructor codegen for envs holding noncopyable captures.
-Supported in both backends: the C backend dispatches `CallIndirect` through a per-module `g_closure_fns[]` table indexed by `__call_idx` (the AOT analogue of the VM's function table), with a type-erased `__closure_delete` and an `AssertHeap` → `roxy_heap_owns` trap.
-**Details:** `docs/internals/closures.md` | **Tests:** `tests/e2e/test_closures.cpp`, `tests/e2e/test_c_backend.cpp`
-
-### C Backend
-**CEmitter** - AOT compilation via SSA IR → C/C++ transpilation. **Every language feature has a codegen path** — primitives, control flow, structs (inheritance, methods, ctors/dtors, nesting), enums, tagged unions, generics, traits/operators, strings, lists, maps, module globals, coroutines, exceptions, and closures. It emits a `.cpp` (C-style bodies, C++ at the embedder boundary) plus a public `.hpp` via `emit_header()` (pub types with inline method wrappers, `make_<T>` factories returning `roxy::uniq<T>`, pub function decls). Codegen quality remains basic by choice — the C compiler's optimizer covers DCE/`switch` lowering, and `#line` directives are emitted per function and statement.
-
-Points worth knowing before touching it:
-- **Feature-complete ≠ bug-free.** Four narrow gaps remain (ref-local count balancing, coroutine `uniq`-field cleanup, a cleanup record naming a by-value struct, a tagged union with a pointer-sized variant field), each pinned by a `// VM-only: C backend:` test case. `docs/internals/c-backend.md` → "Known C-backend gaps" is the live list.
-- **Lowering order does the work.** `coroutine_lower()` runs before codegen, so `Coro<T>` is just a pointer to its synthesized state struct. Exceptions use a checked-return model (thread-local in-flight exception + per-try `__dispatch_<id>` labels + null-guarded cleanup) since there is no runtime handler table. Closures dispatch through a per-module `g_closure_fns[]` indexed by `__call_idx`.
-- **The runtime is unified, not duplicated.** `roxy_rt` owns the slab allocator, vmem, object/string/list/map headers, and the intern table; `vm/string.cpp` / `list.cpp` / `map.cpp` are thin shims over it, and `roxy_alloc` dispatches through `roxy_ctx.allocator` in both modes. `RoxyVM` embeds `roxy_ctx` as its first member.
-- **Natives take no `RoxyVM*`.** `bind<>`'d functions are plain `Ret(Args...)` and call `roxy_get_ctx()` if they need runtime state; AOT emits a typed direct call using the entry's `aot_symbol_name`, with `extern` decls pre-scanned into the preamble so binaries link against headers or separate TUs.
-- Identifiers colliding with C++ keywords get a reserved `roxy_kw_` prefix in `emit_mangled_name`.
-
-**Details:** `docs/internals/c-backend.md` | **Files:** `compiler/codegen/c_emitter.{hpp,cpp}`, `rt/roxy_rt.{h,cpp}`, `rt/slab_allocator.{hpp,cpp}`, `rt/vmem.hpp`, `rt/vmem_{unix,win32}.cpp`, `rt/string_intern.{hpp,cpp}`, `vm/map_dispatch.{hpp,cpp}`, `vm/binding/binder.hpp`, `vm/binding/registry.hpp` | **Tests:** `tests/e2e/test_c_backend.cpp`, `tests/unit/test_runtime_ctx.cpp`
-
-### LSP Server (Phases 1–7)
-**LSP Parser** - Error-recovering parser producing a lossless CST. Three recovery strategies: synthetic token insertion, statement boundary synchronization, bracket-aware skipping. Handles all grammar productions from the compiler parser.
-**Details:** `docs/internals/lsp-server.md` | **Files:** `lsp/syntax_tree.hpp`, `lsp/lsp_parser.hpp`, `lsp/lsp_parser.cpp`
-
-**LSP Transport** - JSON-RPC over stdin/stdout with Content-Length framing.
-**Files:** `lsp/transport.hpp`, `lsp/transport.cpp`
-
-**LSP Server** - Request dispatch, document management, diagnostics, go-to-definition, completions, hover, find references, rename. Supports initialize/shutdown/exit lifecycle, full document sync.
-**Files:** `lsp/server.hpp`, `lsp/server.cpp`, `lsp/protocol.hpp`
+- **Feature-complete ≠ bug-free.** Every language feature has a codegen path, but narrow gaps remain, each pinned by a `// VM-only: C backend:` test case. `c-backend.md` → "Known C-backend gaps" is the live list.
+- **Lowering order does the work.** `coroutine_lower()` runs before codegen, so `Coro<T>` is just a pointer to its state struct. Exceptions use a checked-return model (thread-local in-flight exception + per-try dispatch labels) since there is no runtime handler table. Closures dispatch through a per-module `g_closure_fns[]`.
+- **The runtime is unified, not duplicated.** `roxy_rt` owns the allocator, object/string/list/map headers and the intern table; `vm/string.cpp` / `list.cpp` / `map.cpp` are thin shims, and `RoxyVM` embeds `roxy_ctx` as its first member.
+- **Natives take no `RoxyVM*`.** `bind<>`'d functions are plain `Ret(Args...)` and call `roxy_get_ctx()` for runtime state; AOT emits a typed direct call via the entry's `aot_symbol_name`.
+- There is no production driver: the C backend is reached through the test harness (`compile_to_cpp` / `compile_and_run_cpp`). Codegen quality (DCE, `switch` lowering, readable names) is deliberately left to the C compiler.
 
 ## Planned Components (Not Yet Implemented)
 
-- C backend — **feature-complete**, with four known gaps (see the C Backend section above). The remaining codegen-quality items (DCE, Relooper, `switch` lowering, readable variable names) are **deliberately not pursued** — the C compiler's optimizer covers them and they don't affect debugger UX.
 - LSP Phase 8: route every feature through `LspAnalysisContext` (several still answer from the string-typed `GlobalIndex`)
 - LSP Phase 9: Polish (signature help, code actions, workspace symbols, semantic tokens)
 - Optimization future phases: global CSE / GVN, loop-invariant code motion, function inlining, tail-call optimization, escape analysis (see `docs/internals/optimization.md`)
 
 ## Testing
 
-- **Framework:** doctest (vendored in `include/roxy/core/doctest/`)
-- **Single executable:** `roxy_tests` contains all unit and E2E tests
-- **Helpers:** `tests/e2e/test_helpers.hpp` provides `compile()`, `compile_and_run()`, `run_and_capture()`, `compile_to_cpp()`, `compile_and_run_cpp()`
-- **Every VM program run asserts the teardown leak invariant.** `run_and_capture` checks that nothing is still alive after `main()` returns (immortal string literals aside), so ~880 existing tests cover leaks without having been written to. The free-trap only fires on an explicit `delete`, so before this a missing drop or unbalanced retain was invisible. A test pinning a *known* leak opts out with a scoped `ExpectedLeak` naming its `TODO.md` entry — those opt-outs are the live list of unfixed leaks. VM only; the C backend runs no census (see `docs/internals/lifetimes.md` → "The teardown invariant").
-- **The E2E harness mirrors the real pipeline**: IRBuilder → `coroutine_lower` → `optimize_module` → validate → bytecode/C, the same order as `Compiler::link_modules()`. Keep it that way — it did not always run the optimizer, and that gap hid a crash on *every* coroutine program behind a fully green suite.
+- **Framework:** doctest (vendored in `include/roxy/core/doctest/`); one executable, `roxy_tests`.
+- **Helpers:** `tests/e2e/test_helpers.hpp` — `compile()`, `compile_and_run()`, `run_and_capture()`, `compile_to_cpp()`, `compile_and_run_cpp()`.
+- **Every VM program run asserts the teardown leak invariant.** `run_and_capture` checks that nothing is still alive after `main()` returns (immortal string literals aside), so every VM E2E test is also a leak test. A test pinning a *known* leak opts out with a scoped `ExpectedLeak` naming its `TODO.md` entry. VM only; the C backend runs no census (`lifetimes.md` → "The teardown invariant").
+- **The E2E harness mirrors the real pipeline** (IRBuilder → `coroutine_lower` → `optimize_module` → validate → bytecode/C, the order of `Compiler::link_modules()`). Keep it that way — when the harness skipped the optimizer, a crash on *every* coroutine program hid behind a green suite.
 
 ### Running Tests
 
 Tests are grouped into doctest `TEST_SUITE`s (one per file). E2E suites are named
 `E2E <Category>` (e.g. `E2E Structs`, `E2E C Backend`); unit suites are bare
-(e.g. `Lexer`, `IR Optimize`, `LSP Hover`). Filter by suite:
+(e.g. `Lexer`, `IR Optimize`, `LSP Hover`).
 
 ```bash
 cd build
 ./roxy_tests                                # Run all tests
 ./roxy_tests --test-suite-exclude="E2E*"    # Run only unit tests
-./roxy_tests --test-suite="E2E*"            # Run only E2E tests
 ./roxy_tests --test-suite="E2E Structs"     # Run a specific suite
 ./roxy_tests --test-case="*field access*"   # Run cases matching a name
 ./roxy_tests --list-test-suites             # List all suites
-./roxy_tests --list-test-cases              # List all test cases
 ```
 
 On Windows, use `.exe` extension.
 
 **Backend-parametric E2E tests (`<VM>` / `<C>`):** most `tests/e2e/` suites run
-each test on *both* the bytecode VM and the AOT C backend via doctest's
-`TEST_CASE_TEMPLATE` (harness: `tests/e2e/test_e2e_backend.hpp`). doctest names
-each instantiation `<TestName><VM>` / `<TestName><C>`, so the backend is
-selectable by name filter:
+each test on *both* backends via `TEST_CASE_TEMPLATE` (harness:
+`tests/e2e/test_e2e_backend.hpp`), named `<TestName><VM>` / `<TestName><C>`:
 
 ```bash
 ./roxy_tests --test-case="*<VM>*"                                  # VM only (fast, sandbox-safe)
@@ -550,51 +451,29 @@ selectable by name filter:
 ./roxy_tests --test-case-exclude="*<C>*" --test-suite-exclude="E2E C Backend"  # everything compiler-free
 ```
 
-Cases the C backend can't run are plain `TEST_CASE` (VM-only) with a
-`// VM-only: <reason>` annotation; see `docs/internals/c-backend.md` → "Known
-C-backend gaps" for the current list.
+Cases the C backend can't run are plain `TEST_CASE` with a `// VM-only: <reason>`
+annotation. When a C-backend gap is fixed, convert its tests to `TEST_CASE_TEMPLATE`.
 
-**`E2E CLI` (`tests/e2e/test_cli.cpp`)** is the exception to the "tests link the
-libraries" shape: the driver in `src/roxy.cpp` is its own executable and isn't
-linked into `roxy_tests`, so the only way to cover what it does with argv
-(building the `List<string>` for `main(args)`) is to run the binary. CMake passes
-its path as `ROXY_CLI_PATH` and makes `roxy_tests` depend on the `roxy` target;
-without that define the file compiles to nothing. The cases assert on *how the
-process exited* (`WIFEXITED` vs. signal-terminated), not just stdout — the bug
-they exist for printed correct output and then aborted during teardown. It needs
-no system compiler, so it's sandbox-safe.
+**`E2E CLI` (`tests/e2e/test_cli.cpp`)** runs the `roxy` binary itself (CMake passes
+its path as `ROXY_CLI_PATH`), since the driver isn't linked into `roxy_tests`. It
+asserts on *how the process exited*, not just stdout. Sandbox-safe.
 
 **Note for Claude Code:** anything that exercises the C backend — the `*<C>*`
-cases above and the `E2E C Backend` suite — invokes the system C++ compiler, so
-those require running outside the sandbox (`dangerouslyDisableSandbox: true`).
-Everything else (including `--test-case-exclude="*<C>*"`) runs fine inside the
-sandbox. (ASAN is currently disabled — see the AddressSanitizer note above; when
-re-enabled, ASAN builds also need to run outside the sandbox for the symbolizer.)
+cases and the `E2E C Backend` suite — invokes the system C++ compiler, so it
+must run outside the sandbox (`dangerouslyDisableSandbox: true`). Everything else
+runs inside the sandbox. (When ASAN is re-enabled, ASAN builds also need to run
+outside the sandbox for the symbolizer.)
 
-### Fuzzing (lexer / parser / LSP parser / structural)
+### Fuzzing
 
-Coverage-guided libFuzzer targets live in `tests/fuzz/` and build only under
-`-DENABLE_FUZZERS=ON` with a Clang toolchain that ships the libFuzzer runtime
-(Homebrew LLVM / upstream / Windows LLVM — **not** Apple clang). Besides the
-three byte-level front-end targets, `fuzz_structured` drives the **structural
-generator** (`tests/fuzz/gen/` — type-directed, valid-by-construction programs)
-through the full pipeline + VM, so mutations mutate program structure and reach
-sema/IR/lowering/interpreter. The always-on `Fuzz Regression` doctest suite
-replays the checked-in seed corpus (`tests/fuzz/corpus/`) plus `examples/`
-through the byte-level harnesses, and the `Structured Gen` suite replays fixed
-generator seeds (compile + run) — both on every normal `roxy_tests` run (no
-fuzzer toolchain needed), so found-and-fixed crashes stay fixed and the
-generator's model of the language can't drift from the compiler. The same
-generator powers the `roxy_gen` benchmark-corpus CLI (see Profiling below).
-Architecture + roadmap: `docs/internals/fuzzer.md`; quickstart:
-`tests/fuzz/README.md`.
+libFuzzer targets live in `tests/fuzz/` (build with `-DENABLE_FUZZERS=ON` and a Clang
+that ships libFuzzer — **not** Apple clang). The always-on `Fuzz Regression` and
+`Structured Gen` suites replay the seed corpus, `examples/`, and fixed generator
+seeds on every `roxy_tests` run. **Never** add an OOM/very-slow reproducer to
+`tests/fuzz/corpus/` — the replay has no resource cap. Details: `docs/internals/fuzzer.md`,
+quickstart: `tests/fuzz/README.md`.
 
-> The three harnesses each guarantee bounded work per input, so the regression
-> replay is fast — **never** add an OOM/very-slow reproducer to
-> `tests/fuzz/corpus/` (the replay has no resource cap). See `TODO.md` for the
-> one open fuzzing finding (an LSP-parser super-linear-memory OOM).
-
-### Profiling (compiler / interpreter)
+### Profiling
 
 Profile an **optimized** build, never the default `-O0` `build/`:
 
@@ -604,60 +483,8 @@ ninja -C build-profile roxy
 ./build-profile/roxy --time program.roxy        # per-phase compile timing + compile-vs-execute split
 ./build-profile/roxy --repeat=200 program.roxy  # avg over 200 in-process compiles (profiler loop)
 ./build/roxy --check-leaks program.roxy         # heap objects still alive after main() (exit 70 if any)
-
-# Huge-codebase compile benchmarks: generate a reproducible multi-module corpus
-./build/roxy_gen --seed=7 --modules=400 --out=/tmp/corpus_400   # ~257 KLOC, seeded
-./build-profile/roxy --time /tmp/corpus_400/main.roxy
+./build/roxy_gen --seed=7 --modules=400 --out=/tmp/corpus_400   # ~257 KLOC seeded compile benchmark
 ```
 
-The compiler and interpreter are separate regimes — isolate them (a compute
-benchmark is ~100% VM). The interpreter has its own per-opcode profiler under
-`-DENABLE_BC_PROFILE=ON`. For a richer, cross-platform, **terminal** profile,
-[Tracy](https://github.com/wolfpld/tracy) is vendored as a submodule
-(`third_party/tracy`) behind `-DENABLE_TRACY=ON` (OFF by default, zero-overhead);
-capture headless with `tracy-capture` and export per-zone stats with
-`tracy-csvexport`, both built from the submodule. Full workflow (sampling
-profilers, Tracy, workload classes, guardrails, baseline findings):
-`docs/internals/profiling.md`.
-
-## Documentation
-
-- `CLAUDE.md` - Quick reference for Claude Code (this file)
-- `docs/overview.md` - Language design philosophy and roadmap
-- `docs/grammar.md` - Grammar specification, numeric literals, type casting
-- `docs/libraries.md` - Vendored library documentation
-- `docs/internals/` - Detailed implementation documentation:
-  - `vm.md` - VM state, interpreter loop, value representation
-  - `bytecode.md` - Instruction encoding, opcode reference
-  - `ssa-ir.md` - Block arguments, lowering to bytecode
-  - `lifetimes.md` - **The single memory/lifetime/lifecycle reference.** Two models: constraint-reference *borrow soundness* (`uniq`/`ref`/`weak`, counting, the free-trap, the teardown invariant, second-class `out`/`inout`/`self`, container element lvalues) and the *value lifecycle* — Drop / Retain / Move-only as three independent properties, with the principle that **a type is move-only exactly when its drop has no inverse**. Plus runtime foundations (object header, slab allocator, tombstoning, generational refs) and RAII/move/`borrowed`. **States implementation status explicitly**: all three are derived independently and wired (landed 2026-08-02) — Drop via `compute_drop_plan`, lowered by both backends; Retain via `compute_retain_plan`, emitted at every duplication site (`emit_struct_clone_glue` / `emit_value_retain`); Move-only via the structural `is_move_only` flag, so `string`/`ref` struct fields are released and stay copyable. Records the three-step separation and why its order mattered. Absorbed the former `memory.md` and `lifecycle-traits.md`.
-  - `structs.md` - Stack-allocated structs, slot-based layout, struct parameters/returns
-  - `list.md` - Dynamic lists (`List<T>`), bounds checking
-  - `maps.md` - Hash tables (`Map<K, V>`), Robin Hood open addressing
-  - `strings.md` - String objects, concatenation, comparison
-  - `interop.md` - Native functions, automatic C++ binding
-  - `frontend.md` - Lexer, parser, semantic analysis
-  - `error-handling.md` - Compiler-internal error strategy: error-collecting passes (accumulate + never-null `error_type` sentinels) vs fail-fast checks, and why `Result<T, Error>` is deliberately not adopted
-  - `modules.md` - Module system, imports, multi-file compilation
-  - `globals.md` - Module-level globals: storage, `__module_init`/`__module_shutdown`, GLOBAL_ADDR, RAII teardown
-  - `constructors.md` - Named constructors/destructors, `self` keyword
-  - `methods.md` - Struct methods, `self` parameter, name mangling
-  - `inheritance.md` - Struct inheritance, subtyping, `super` keyword
-  - `tagged-unions.md` - Discriminated unions with `when` clause
-  - `recursive-types.md` - Self-referential / mutually recursive structs via `uniq`, value-cycle detection, descriptor-driven recursive destruction
-  - `traits.md` - Traits: declarations, required/default methods, trait inheritance, operator dispatch, builtin trait membership on primitives (Printable/Hash/Eq/Ord)
-  - `operator-overloading.md` - Operator traits (arithmetic, comparison, bitwise, unary) with unified primitive/struct dispatch; operator-named method calls on primitive receivers
-  - `overloading.md` - Function overloading: `$ol$` mangles, symbol chains, resolution rules, overloaded refs, per-type `print` overloads + Printable fallback
-  - `generics.md` - Generic functions and structs with monomorphization
-  - `exceptions.md` - Exception handling: try/catch/throw/finally, Exception trait, handler tables
-  - `coroutines.md` - Coroutines: Coro<T>, yield, state machine transformation, graph-preserving block cloning
-  - `closures.md` - Closures and first-class functions: function types, lambdas, capture modes, function references, self capture
-  - `c-backend.md` - C backend (AOT via SSA IR → C/C++): type/op mapping, runtime library, generated header, and the live "Known C-backend gaps" list
-  - `lsp-server.md` - LSP server architecture: map-reduce design, error-recovering parser, indexing, lazy analysis
-  - `optimization.md` - SSA IR optimization passes: Phase 1 (in IRBuilder), Phase 2 (DCE, copy propagation), Phase 3 (branch folding, block merging, trivial block-arg elim), and Phase 4 (block-local CSE) all implemented; future phases (global CSE/GVN, LICM, inlining, TCO, escape analysis) design plan
-  - `vm-optimization.md` - Interpreter runtime optimizations (dispatch, call/ret, fused branches, RK, string constants): what landed, what was superseded, what remains
-  - `fuzzer.md` - Fuzzing: coverage-guided libFuzzer targets for lexer/parser/LSP parser + always-on regression replay (implemented); structure-aware (grammar/type-directed) generation with a VM-vs-C differential oracle (design plan)
-  - `profiling.md` - Profiling the compiler & interpreter: RelWithDebInfo build, `roxy --time` per-phase compile timing + compile-vs-execute split, `roxy --repeat=N` in-process compile loop, the `ENABLE_BC_PROFILE` opcode profiler, and the samply/Instruments sampling-profiler workflow
-  - `identifier-interning.md` - Post-mortem on the abandoned `Sym` interning attempt (+5.6% regression), and the canonical mangler that was kept from it
-
-Two more at the repo root: `TODO.md` (known bugs and technical debt — check it before assuming a feature works) and `OPTIMIZATION.md` (the compiler's own compile-time performance program: baseline, measurement rules, negative results).
+The compiler and interpreter are separate regimes — isolate them. Opcode profiler:
+`-DENABLE_BC_PROFILE=ON`; Tracy: `-DENABLE_TRACY=ON`. Full workflow: `docs/internals/profiling.md`.
