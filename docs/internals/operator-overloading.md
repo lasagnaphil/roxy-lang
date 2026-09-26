@@ -1,73 +1,35 @@
 # Operator Overloading
 
-Operators in Roxy are implemented via traits. The compiler rewrites each operator into a trait method call, so user-defined types support standard operators through the same dispatch path as primitives.
-
-Dispatch covers arithmetic (`+ - * / %`), comparison (`== != < <= > >=`), bitwise (`& | ^ ~ << >>`), unary (`-`, `~`), compound assignment (`+=` etc.), and indexing (`[]`), for both struct and primitive types, through a unified trait-method lookup. Lists participate via `index`/`index_mut` methods registered alongside their native methods.
-
-See `traits.md` for the general trait system design.
+Operators in Roxy are implemented via traits. The compiler rewrites each operator into a method call, so user-defined types support standard operators through the same dispatch path as primitives. See `traits.md` for the general trait system.
 
 ## Operator Traits
 
 Operator dispatch is **structural**: the compiler rewrites each operator to a method call (`a + b` → `a.add(b)`, `a[i]` → `a.index(i)`) and resolves it by method name, so a type opts into an operator simply by defining the method — the `for Trait` clause is optional bookkeeping (it validates the signature and injects defaults). `Rhs` defaults to `Self` on the binary arithmetic/bitwise traits.
 
-Most operator traits below (`Add<Rhs>`, `Mul<Rhs>`, …) are **not** builtin — user code declares them (`trait Add<Rhs>;`) when it wants the `for` clause. The exceptions, registered as builtin traits in semantic analysis so `for ...` works without a user declaration, are `Eq`, `Ord`, `Printable`, `Hash`, `Exception`, and the subscript traits `Index<Idx, Output>` / `IndexMut<Idx, Output>`.
+Most operator traits below (`Add<Rhs>`, `Mul<Rhs>`, …) are **not** builtin — user code declares them (`trait Add<Rhs>;`) when it wants the `for` clause. The builtin ones (usable in `for ...` without a declaration) are `Eq`, `Ord`, and `Index` / `IndexMut`; see `traits.md` for the full builtin list.
 
-### Comparison
+| Trait | Method | Operator | | Trait | Method | Operator |
+|-------|--------|----------|-|-------|--------|----------|
+| `Add<Rhs>` | `add` | `+` | | `AddAssign<Rhs>` | `add_assign` | `+=` |
+| `Sub<Rhs>` | `sub` | `-` | | `SubAssign<Rhs>` | `sub_assign` | `-=` |
+| `Mul<Rhs>` | `mul` | `*` | | `MulAssign<Rhs>` | `mul_assign` | `*=` |
+| `Div<Rhs>` | `div` | `/` | | `DivAssign<Rhs>` | `div_assign` | `/=` |
+| `Mod<Rhs>` | `mod` | `%` | | `ModAssign<Rhs>` | `mod_assign` | `%=` |
+| `BitAnd<Rhs>` | `bit_and` | `&` | | `BitAndAssign<Rhs>` | `bit_and_assign` | `&=` |
+| `BitOr<Rhs>` | `bit_or` | `\|` | | `BitOrAssign<Rhs>` | `bit_or_assign` | `\|=` |
+| `BitXor<Rhs>` | `bit_xor` | `^` | | `BitXorAssign<Rhs>` | `bit_xor_assign` | `^=` |
+| `Shl<Rhs>` | `shl` | `<<` | | `ShlAssign<Rhs>` | `shl_assign` | `<<=` |
+| `Shr<Rhs>` | `shr` | `>>` | | `ShrAssign<Rhs>` | `shr_assign` | `>>=` |
+| `Neg` | `neg` | `-x` | | `BitNot` | `bit_not` | `~x` |
+| `Eq` | `eq` | `==` | | — | `ne` | `!=` |
+| `Ord` | `lt`, `le`, `gt`, `ge` | `<`, `<=`, `>`, `>=` | | | | |
+| `Index<Idx, Output>` | `index` | `a[i]` (read) | | `IndexMut<Idx, Output>` | `index_mut` | `a[i] = v` (write) |
 
-| Trait | Methods | Operators |
-|-------|---------|-----------|
-| `Eq` | `eq` | `==` |
-| `Ord` | `lt`, `le`, `gt`, `ge` | `<`, `<=`, `>`, `>=` |
+Compound-assignment methods modify `self` in place and return `void`.
 
-Each operator dispatches to its own method, with no defaults between them: a struct that defines only `eq` supports `==` but not `!=` (`invalid operands for comparison operator`), and a `for Ord` impl must define all four comparisons (there is no `cmp`).
+**Comparisons have no defaults between them:** each operator dispatches to its own method, so a struct that defines only `eq` supports `==` but not `!=` (`invalid operands for comparison operator`) — `!=` needs its own `ne` method, which belongs to no builtin trait — and a `for Ord` impl must define all four comparisons (there is no `cmp`).
 
-### Arithmetic
-
-| Trait | Method | Operator |
-|-------|--------|----------|
-| `Add<Rhs>` | `add` | `+` |
-| `Sub<Rhs>` | `sub` | `-` |
-| `Mul<Rhs>` | `mul` | `*` |
-| `Div<Rhs>` | `div` | `/` |
-| `Mod<Rhs>` | `mod` | `%` |
-| `Neg` | `neg` | `-x` (unary) |
-
-### Compound Assignment
-
-These modify `self` in-place (return `void`).
-
-| Trait | Method | Operator |
-|-------|--------|----------|
-| `AddAssign<Rhs>` | `add_assign` | `+=` |
-| `SubAssign<Rhs>` | `sub_assign` | `-=` |
-| `MulAssign<Rhs>` | `mul_assign` | `*=` |
-| `DivAssign<Rhs>` | `div_assign` | `/=` |
-| `ModAssign<Rhs>` | `mod_assign` | `%=` |
-| `BitAndAssign<Rhs>` | `bit_and_assign` | `&=` |
-| `BitOrAssign<Rhs>` | `bit_or_assign` | `\|=` |
-| `BitXorAssign<Rhs>` | `bit_xor_assign` | `^=` |
-| `ShlAssign<Rhs>` | `shl_assign` | `<<=` |
-| `ShrAssign<Rhs>` | `shr_assign` | `>>=` |
-
-### Bitwise
-
-| Trait | Method | Operator |
-|-------|--------|----------|
-| `BitAnd<Rhs>` | `bit_and` | `&` |
-| `BitOr<Rhs>` | `bit_or` | `\|` |
-| `BitXor<Rhs>` | `bit_xor` | `^` |
-| `BitNot` | `bit_not` | `~` (unary) |
-| `Shl<Rhs>` | `shl` | `<<` |
-| `Shr<Rhs>` | `shr` | `>>` |
-
-### Indexing
-
-| Trait | Method | Operator | Access |
-|-------|--------|----------|--------|
-| `Index<Idx, Output>` | `index` | `a[i]` | read |
-| `IndexMut<Idx, Output>` | `index_mut` | `a[i] = v` | write |
-
-`Index` / `IndexMut` are builtin generic traits (registered in semantic Pass 1.7). They carry **two** type parameters — the index type `Idx` and the element type `Output` — because Roxy has no associated types to name the element type the way Rust's `Index { type Output; }` does. So `index(idx: Idx): Output` and `index_mut(idx: Idx, val: Output)`; an impl writes `for Index<i32, uniq Cell>`. The `for` clause is optional (subscripting dispatches structurally on the method name) but validates the index/element types against the method signature when present. `List<T>` / `Map<K, V>` provide `index` / `index_mut` via native methods rather than the trait.
+**`Index` / `IndexMut` carry two type parameters** — the index type `Idx` and the element type `Output` — because Roxy has no associated types to name the element type the way Rust's `Index { type Output; }` does. So `index(idx: Idx): Output` and `index_mut(idx: Idx, val: Output)`; an impl writes `for Index<i32, uniq Cell>`. The `for` clause validates the index/element types against the method signature when present. `List<T>` / `Map<K, V>` provide `index` / `index_mut` as native methods rather than via the trait.
 
 ### Non-Overloadable Operators
 
@@ -79,46 +41,11 @@ These modify `self` in-place (return `void`).
 | `.` | Member access |
 | `::` | Scope resolution |
 
-## Compiler Rewrites
-
-Each operator is rewritten to its trait method call (binary trait `Rhs` shown as `_`, resolved by lookup):
-
-| Operator | Rewrite | Operator | Rewrite |
-|----------|---------|----------|---------|
-| `a + b` | `a.add(b)` | `a += b` | `a.add_assign(b)` |
-| `a - b` | `a.sub(b)` | `a -= b` | `a.sub_assign(b)` |
-| `a * b` | `a.mul(b)` | `a *= b` | `a.mul_assign(b)` |
-| `a / b` | `a.div(b)` | `a /= b` | `a.div_assign(b)` |
-| `a % b` | `a.mod(b)` | `a %= b` | `a.mod_assign(b)` |
-| `-a` | `a.neg()` | | |
-| `a == b` | `a.eq(b)` | `a != b` | `a.ne(b)` |
-| `a < b` | `a.lt(b)` | `a <= b` | `a.le(b)` |
-| `a > b` | `a.gt(b)` | `a >= b` | `a.ge(b)` |
-| `a & b` | `a.bit_and(b)` | `a &= b` | `a.bit_and_assign(b)` |
-| `a \| b` | `a.bit_or(b)` | `a \|= b` | `a.bit_or_assign(b)` |
-| `a ^ b` | `a.bit_xor(b)` | `a ^= b` | `a.bit_xor_assign(b)` |
-| `a << b` | `a.shl(b)` | `a <<= b` | `a.shl_assign(b)` |
-| `a >> b` | `a.shr(b)` | `a >>= b` | `a.shr_assign(b)` |
-| `~a` | `a.bit_not()` | | |
-| `a[i]` | `a.index(i)` | `a[i] = v` | `a.index_mut(i, v)` |
-
 ### The receiver may be an rvalue
 
-`self` is passed as a pointer, so the receiver needs an address. A *place*
-expression (identifier, field access, index) yields one directly; anything else
-is an rvalue: operator dispatch calls `gen_lvalue_addr(expr, rvalue_ok=true)`,
-whose fallback is `gen_expr`. No materialization is needed there because lowering already unpacks
-a struct return into a stack-allocated pointer, so `gen_expr` hands back exactly
-the pointer `self` wants.
-
-This is what lets operators chain — `(a + b) * 2` uses one operator's result as
-the next one's receiver. Taking the address with the lvalue path alone rejected
-that with "expression is not a valid lvalue", while `a.add(b).mul(2)` worked,
-since explicit method calls never went through it.
+`self` is passed as a pointer, so the receiver needs an address. Operator dispatch takes it with `gen_lvalue_addr(expr, rvalue_ok=true)`, whose fallback for a non-place expression is `gen_expr`; no materialization is needed because lowering already unpacks a struct return into a stack-allocated pointer. This is what lets operators chain — `(a + b) * 2` uses one operator's result as the next one's receiver.
 
 ## Example
-
-A struct opts into an operator by implementing the trait method with a `for Trait` clause. Same-type operations default `Rhs` to `Self`; mixed-type operations name the right-hand type explicitly.
 
 ```roxy
 struct Vec2 { x: f64; y: f64; }
@@ -127,7 +54,7 @@ fun Vec2.add(other: Vec2): Vec2 for Add {        // Rhs = Self
     return Vec2 { x = self.x + other.x, y = self.y + other.y };
 }
 
-fun Vec2.mul(scalar: f64): Vec2 for Mul<f64> {   // mixed-type, requires generics
+fun Vec2.mul(scalar: f64): Vec2 for Mul<f64> {   // mixed-type (generic trait)
     return Vec2 { x = self.x * scalar, y = self.y * scalar };
 }
 
@@ -136,17 +63,12 @@ fun Vec2.add_assign(other: Vec2) for AddAssign { // in-place
     self.y = self.y + other.y;
 }
 
-fun Vec2.eq(other: Vec2): bool for Eq {
-    return self.x == other.x && self.y == other.y;
-}
-
 fun main() {
     var a = Vec2 { x = 1.0, y = 2.0 };
     var b = Vec2 { x = 3.0, y = 4.0 };
     var c = a + b;     // a.add(b)
     var d = a * 2.0;   // a.mul(2.0)
     a += b;            // a.add_assign(b)
-    if (a == b) { /* ... */ }
 }
 ```
 
@@ -154,11 +76,11 @@ Mixed-type operator traits (`Mul<f64>`, `Add<i32>`) rely on generic traits — s
 
 ## Unified Dispatch
 
-Both primitive and struct operators resolve through one path, but codegen diverges.
+Primitive, struct, and list operators all resolve through `TypeCache::lookup_method()` (operator methods are registered on primitive types by the trait system; they are not user-writable), so type checking is uniform. Codegen diverges:
 
-- **Registration (Pass 1.7–1.8):** `register_builtin_index_trait()` registers the builtin `Index<Idx, Output>` / `IndexMut<Idx, Output>` traits (Pass 1.7, alongside `Eq` / `Exception`); `register_primitive_operator_methods()` registers operator methods on primitive types via `TypeCache::register_primitive_method()` (Pass 1.8); `populate_list_methods()` registers `index`/`index_mut` on list types. Primitive methods are not user-writable.
-- **Resolution:** `try_resolve_binary_op()`, `try_resolve_unary_op()`, and `analyze_index_expr()` call `TypeCache::lookup_method()`, which dispatches to struct hierarchy, primitive, or list lookup. Type checking is uniform across all kinds.
-- **Code generation:** primitives emit **direct IR ops** (`AddI`, `SubF`, …) rather than method calls; structs emit trait-method calls; list/map subscripts emit the dedicated `IROp::IndexGet` / `IndexSet` / `IndexTryAddr` ops (the registered `index`/`index_mut` natives only type them).
+- **primitives** emit **direct IR ops** (`AddI`, `SubF`, …), not calls;
+- **structs** emit trait-method calls;
+- **list/map subscripts** emit the dedicated `IROp::IndexGet` / `IndexSet` / `IndexTryAddr` ops (the registered `index`/`index_mut` natives only type them).
 
 Which primitive types carry which operators:
 
@@ -167,16 +89,7 @@ Which primitive types carry which operators:
 | `i32`, `i64`, `u32`, `u64` | `add sub mul div mod` | `bit_and bit_or bit_xor shl shr` | all six | `neg bit_not` | all integer forms |
 | `f32`, `f64` | `add sub mul div` | — | all six | `neg` | `add/sub/mul/div_assign` |
 | `bool` | — | — | `eq ne` | — | — |
-| `List<T>` | — | — | — | — | `index` / `index_mut` |
 
-The shared operator→method-name mappings live in `include/roxy/compiler/support/operator_traits.hpp` (`binary_op_to_trait_method()`, `unary_op_to_trait_method()`, `assign_op_to_trait_method()`), used by both semantic analysis and IR generation. The header also carries the REVERSE maps (`trait_method_to_binary_op()`, `trait_method_to_unary_op()`), which power **explicit operator-named method calls on primitive receivers**: `a.lt(b)` / `(10).add(5)` on a primitive lowers to the same raw IR op the operator expression would emit (so `u64.lt` is `LtU`, `f64.add` is `AddD`), `"a".eq(b)` routes to the string natives, and enums compare as i32 discriminants. Compound-assign methods have no reverse mapping and are rejected as explicit calls. This is what makes generic bodies calling bound trait methods (`<T: Ord>` with `a.lt(b)`) work when instantiated at primitives.
+The operator↔method-name mappings live in `include/roxy/compiler/support/operator_traits.hpp`, shared by sema and IR generation. The reverse maps power **explicit operator-named method calls on primitive receivers**: `a.lt(b)` / `(10).add(5)` lowers to the same raw IR op the operator expression would emit (so `u64.lt` is `LtU`, `f64.add` is `AddD`), `"a".eq(b)` routes to the string natives, and enums compare as i32 discriminants. Compound-assign methods have no reverse mapping and are rejected as explicit calls (they need an assignable receiver). This is what makes generic bodies calling bound trait methods (`<T: Ord>` with `a.lt(b)`) work when instantiated at primitives.
 
-## Files
-
-| File | Purpose |
-|------|---------|
-| `include/roxy/compiler/support/operator_traits.hpp` | operator → method-name mappings |
-| `src/roxy/compiler/sema/trait_system.cpp` | trait/primitive operator-method registration (`TraitSystem`) |
-| `src/roxy/compiler/sema/semantic.cpp` | operator resolution (`try_resolve_binary_op`/`try_resolve_unary_op`, trait-bound dispatch) |
-| `src/roxy/compiler/ir/ir_builder_expr.cpp` | direct IR ops for primitives, trait calls for structs |
-| `tests/e2e/test_traits.cpp` | operator-overloading E2E tests |
+**Tests:** `tests/e2e/test_traits.cpp`

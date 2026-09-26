@@ -44,22 +44,7 @@ The key payoff: **most edits are inside function bodies and don't touch the inde
 
 ## Error-Recovering Parser
 
-The compiler parser is fail-fast (stops on first error). The LSP parser must always produce a tree, even for incomplete or malformed code, so it is a **separate implementation** sharing only the lexer and token definitions — keeping recovery complexity out of the compiler's fast path.
-
-| Aspect | Compiler Parser | LSP Parser |
-|--------|----------------|------------|
-| Error handling | Fail-fast (one error) | Error recovery (always produces tree) |
-| Tree format | Lossy AST (discards trivia) | Lossless CST (preserves whitespace, comments) |
-| Allocation | BumpAllocator | Arena per parse (replaceable) |
-| Output | `Program*` (AST nodes) | `SyntaxTree` (CST nodes) |
-
-### Concrete Syntax Tree (CST)
-
-The CST preserves all source information using a single flat `SyntaxNode` struct (no inheritance), each carrying a `SyntaxKind`, a byte-offset `TextRange`, parent/children links, and a `Token` for leaves. See `lsp/syntax_tree.hpp`.
-
-- **Leaf nodes** have `kind` in the terminal range (e.g. `TokenIdentifier`) and `token` set.
-- **Interior nodes** have `kind` in the non-terminal range (e.g. `NodeVarDecl`) and children populated.
-- **Error nodes** have `kind == SyntaxKind::Error` and `error_message` set.
+The LSP parser must always produce a tree, even for incomplete or malformed code, so it is a **separate implementation** from the fail-fast compiler parser (see [frontend.md](frontend.md) for the comparison), sharing only the lexer and token definitions — keeping recovery complexity out of the compiler's fast path. It produces a lossless CST (`lsp/syntax_tree.hpp`: one flat `SyntaxNode` type; leaves carry a token, error nodes carry `SyntaxKind::Error` and a message).
 
 ### Recovery Strategies
 
@@ -82,33 +67,13 @@ For semantic analysis, the CST lowers to the compiler's existing AST format (`ls
 
 ## Per-File Index (Stubs)
 
-The indexer runs after the error-recovering parse and extracts top-level declarations into lightweight stubs (`FileStubs`, holding vectors of `StructStub`, `EnumStub`, `FunctionStub`, `MethodStub`, `ConstructorStub`, `DestructorStub`, `TraitStub`, `ImportStub`, `GlobalVarStub`; see `lsp/indexer.hpp`). Each stub captures the declaration's **syntax** — name, ranges (full and name-token), visibility, params/fields with types as *unresolved* `TypeRef` strings, generics, trait associations — without resolving types. Trait implementations are recorded on the `MethodStub` (its `trait_name`), not as a separate stub kind.
-
-| Declaration | Extracted information |
-|-------------|----------------------|
-| `struct Point { x: i32; }` | Name, fields (names + unresolved types), parent, when clauses, generics |
-| `enum Color { Red, Green }` | Name, variants (names + values) |
-| `fun add(a: i32): i32 { ... }` | Name, params (names + unresolved types), return type, visibility |
-| `fun Point.sum(): i32 { ... }` | Struct name, method name, params, return type |
-| `fun Point.eq(o: Point): bool for Eq` | Struct name, method name, trait name, trait type args |
-| `fun new Point(x: i32) { ... }` | Struct name, constructor name, params |
-| `fun delete Point() { ... }` | Struct name, destructor name |
-| `trait Printable;` | Trait name, parent trait, type params |
-| `import math;` / `from math import sin;` | Module path, imported symbols |
-| `var global_count: i32 = 0;` | Name, unresolved type |
-
-The indexer does **not** look inside function bodies — bodies are analyzed lazily on demand.
+The indexer (`lsp/indexer.hpp`) extracts top-level declarations into lightweight `FileStubs` capturing each declaration's **syntax** — name, ranges (full and name-token), visibility, params/fields with types as *unresolved* `TypeRef` strings, generics, trait associations — without resolving types. Trait implementations are recorded on the method stub (its `trait_name`), not as a separate stub kind. The indexer does **not** look inside function bodies — bodies are analyzed lazily on demand.
 
 ## Global Index
 
-The global index (`GlobalIndex`, see `lsp/global_index.hpp`) merges all per-file stubs into unified lookups keyed by name: `find_struct` / `find_enum` / `find_trait` / `find_function` / `find_global`, and struct-qualified `find_method` / `find_constructor` / `find_field`, each returning a `SymbolLocation` (uri + ranges). `find_any` collects every category for one name. It also caches the string-typed information features need without full analysis: struct parents (`find_struct_parent`), field and return types, signatures, parameter counts, field-default flags (`field_has_default`), and `for_each_*` enumeration for completions. All maps are `tsl::robin_map`.
+`GlobalIndex` (`lsp/global_index.hpp`) merges all per-file stubs into name-keyed lookups (types, functions, globals, and struct-qualified methods/constructors/fields) returning declaration locations, plus the string-typed information features need without full analysis (struct parents, field/return types, signatures, field-default flags, enumeration for completions).
 
-### Update on file edit
-
-1. Re-lex and re-parse the file (error-recovering parser).
-2. Re-run the indexer to produce new `FileStubs`.
-3. `update_file()` replaces that file's index entries (`remove_file` + re-insert).
-4. Function bodies are not indexed, so body-only edits change nothing in the index.
+On a file edit the file is re-parsed and re-indexed, and `update_file()` replaces that file's entries. Function bodies are not indexed, so body-only edits change nothing in the index.
 
 ## Lazy Semantic Analysis
 
@@ -150,41 +115,10 @@ The server is single-threaded today; every request is handled synchronously on t
 
 ## Reused Components
 
-The LSP server shares existing compiler infrastructure rather than duplicating it:
-
-| Component | Reuse |
-|-----------|-------|
-| **Lexer** (`shared/lexer.hpp`) | As-is — all token types, positions, f-strings |
-| **Token kinds** (`shared/token_kinds.hpp`) | As-is — single source of truth for keywords/operators |
-| **TypeCache** (`compiler/types/types.hpp`) | As-is — interning, method lookup, trait checking |
-| **TypeEnv** (`compiler/types/type_env.hpp`) | With invalidation support for index updates |
-| **ModuleRegistry** (`compiler/driver/module_registry.hpp`) | As-is — native + script module lookups |
-| **NativeRegistry** (`vm/binding/registry.hpp`) | As-is — built-in signatures for completions |
-| **GenericInstantiator** (`compiler/types/generics.hpp`) | Template registration reusable; instantiation may need per-request arenas |
+The LSP shares the compiler's lexer, token kinds, `TypeCache`, `TypeEnv`, `ModuleRegistry`, and `NativeRegistry` as-is rather than duplicating them. `GenericInstantiator` template registration is reusable; instantiation may need per-request arenas.
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `include/roxy/lsp/syntax_tree.hpp` | CST node types, `SyntaxKind`, `TextRange` |
-| `include/roxy/lsp/lsp_parser.hpp` | Error-recovering parser producing CST |
-| `include/roxy/lsp/indexer.hpp` | Per-file stub extraction |
-| `include/roxy/lsp/global_index.hpp` | Merged index: qualified lookups, type info, field defaults, param counts |
-| `include/roxy/lsp/cst_lowering.hpp` | CST-to-AST lowering for declarations and function bodies |
-| `include/roxy/lsp/lsp_analysis_context.hpp` | Persistent type state + declaration rebuild + per-body analysis |
-| `include/roxy/lsp/transport.hpp` | JSON-RPC over stdin/stdout |
-| `include/roxy/lsp/server.hpp` | Request dispatch, document state, feature handlers |
-| `include/roxy/lsp/protocol.hpp` | LSP protocol types (Position, Range, etc.) |
-| `src/roxy/lsp/*.cpp` | Implementations |
-| `tests/unit/test_lsp_parser.cpp` | CST parsing, error recovery |
-| `tests/unit/test_indexer.cpp` | Per-file stub extraction |
-| `tests/unit/test_cst_lowering.cpp` | CST → AST lowering |
-| `tests/unit/test_global_index.cpp` | Index CRUD, qualified lookups |
-| `tests/unit/test_lsp_analysis_context.cpp` | Declaration rebuild, per-body analysis |
-| `tests/unit/test_lsp_completion.cpp` | Dot, `::`, bare, type completions |
-| `tests/unit/test_lsp_hover.cpp` | Hover on vars, functions, fields, types |
-| `tests/unit/test_lsp_references.cpp` | Find references, rename, symbol categories |
-| `tests/fuzz/fuzz_lsp_parser.cpp` | Coverage-guided libFuzzer target (see `tests/fuzz/README.md`) |
-| `tests/unit/test_fuzz_regression.cpp` | Replays the seed corpus + `examples/` through the parser harnesses each test run |
+Sources are `include/roxy/lsp/` + `src/roxy/lsp/` (`lsp_parser`, `indexer`, `global_index`, `cst_lowering`, `lsp_analysis_context`, `transport`, `server`). Unit tests are `tests/unit/test_lsp_*.cpp`, `test_indexer.cpp`, `test_cst_lowering.cpp`, `test_global_index.cpp`; the parser is fuzzed by `tests/fuzz/fuzz_lsp_parser.cpp` (see [fuzzer.md](fuzzer.md)).
 
 The `roxy_lsp` library links `roxy_compiler` (AST types for CST-to-AST lowering, and through it `roxy_shared` for the lexer) and `roxy_vm`.

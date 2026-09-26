@@ -41,12 +41,10 @@ flows through the rest of analysis inertly — comparisons against it succeed,
 coercions short-circuit — so one bad annotation produces one diagnostic, not a
 cascade.
 
-**Pipeline plumbing.** The phase methods (`parse_all`, `analyze_all`,
-`build_ir_all`, `topological_sort`) return `bool` for "did this phase succeed",
-while the *details* live in the side-channel error list. `Compiler::compile()`
-(`compiler.hpp`) returns `BCModule*` and yields `nullptr` on failure; callers
-inspect `has_errors()` / `errors()` for the messages. The `bool` is a gate, not
-the payload.
+**Pipeline plumbing.** Phase methods return `bool` for "did this phase
+succeed" and `Compiler::compile()` returns `nullptr` on failure; the *details*
+live in the side-channel error list (`has_errors()` / `errors()`). The `bool` is
+a gate, not the payload.
 
 ### 2. Fail-fast (bool / null sentinel, halt on first)
 
@@ -54,19 +52,16 @@ Used where continuing past a failure buys nothing — either because the output 
 already meaningless, or because a failure means a *compiler bug* rather than a
 user error.
 
-- **Strict parser** (`compiler/parse/parser.hpp`) — recursive descent with a single
-  `m_has_error` flag (`has_error()`), reporting through `report_error_at`. Node
-  constructors return `Expr*`/`Stmt*` and yield null on failure. This parser does
-  **not** recover; the error-recovering variant lives in the LSP (see below).
+- **Strict parser** (`compiler/parse/parser.hpp`) — a single error flag; node
+  constructors yield null on failure. It does **not** recover; the
+  error-recovering variant lives in the LSP (see below).
 - **IR validator** (`compiler/ir/ir_validator.hpp`) — a structural-integrity check
   between IR building and lowering. Malformed IR is a compiler bug, so it stops
-  at the first violation: `m_has_error` + a single `m_error`/`m_error_buf`,
-  surfaced via `has_error()` / `error()`.
-- **Leaf I/O and parse ops** — `read_file_to_buf` (`core/file.hpp`) returns
-  `bool` with the buffer in an out-parameter; `json_parse` / `JsonParser::parse`
-  (`core/json.hpp`) return `bool` and drive a SAX-style `Handler` whose callbacks
-  themselves return `bool` (false = stop). The outcome is binary and the caller
-  decides what to do with it.
+  at the first violation and keeps a single error message.
+- **Leaf I/O and parse ops** — `read_file_to_buf` (`core/file.hpp`) and
+  `json_parse` (`core/json.hpp`, a SAX-style `Handler` whose callbacks also
+  return `bool`) return `bool` with results in out-parameters. The outcome is
+  binary and the caller decides what to do with it.
 
 ---
 
@@ -102,10 +97,6 @@ shape for this compiler:
   validator have binary outcomes whose callers rarely use structured error
   detail; they print a message or halt. `bool` + an out-param (or a documented
   error field) is locally clear, and `Result` would be ceremony without payoff.
-
-The net: the existing split is coherent and matched to each consumer. A
-project-wide `Result` type would add churn in the fail-fast leaves and cause
-active harm in the error-collecting passes.
 
 ---
 
@@ -172,13 +163,3 @@ Pick the strategy by consumer, matching what's already there:
    value in an out-param), or set a documented error field the caller reads.
 4. **Do not** introduce a `Result<T, Error>` monad — it works against the
    accumulate-and-continue architecture above.
-
----
-
-## See also
-
-- `frontend.md` — lexer, parser, semantic analysis passes
-- `exceptions.md` — the Roxy *language's* exception feature (a runtime construct,
-  not compiler error handling)
-- `modules.md` — pipeline phases and multi-module linking
-- `lsp-server.md` — the error-recovering parser and LSP diagnostics

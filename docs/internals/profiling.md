@@ -104,14 +104,9 @@ Same seed → byte-identical corpus, so numbers are comparable across compiler
 changes. Generate at several sizes and check time-per-KLOC stays flat — a
 super-linear drift localizes the offending phase immediately:
 
-| `--modules` | LOC | compile (RelWithDebInfo, arm64, 2026-07-17) | ms/KLOC |
-|---|---|---|---|
-| 25 | 15.7k | 37 ms | 2.4 |
-| 100 | 66k | 138 ms | 2.1 |
-| 400 | 257k | 672 ms | 2.6 |
-
-At 257 KLOC the phase split was ir-build 36%, bc-lower 24%, ir-optimize 20%,
-parse 11%, sema 9% — consistent with the single-file findings below.
+(`--modules` 25 / 100 / 400 ≈ 16k / 66k / 257k LOC.) Current baselines and the
+measurement rules (A/B/A on the same day; small inputs like Lox are below the
+noise floor for compile-time changes) live in `OPTIMIZATION.md`.
 
 ### Interpreter: the bytecode opcode profiler
 
@@ -179,8 +174,7 @@ ninja -C build-tracy roxy
 `ENABLE_TRACY` is OFF by default and zero-overhead when off (the `ROXY_ZONE` /
 `ROXY_FRAME_MARK` macros in `core/trace.hpp` compile to nothing). It builds with
 `TRACY_ON_DEMAND`, so an instrumented binary still **runs normally** when no
-profiler is attached. Instrumented zones today: the compile phases (`parse`,
-`topo-sort`, `sema`, `ir-build`, `coro-lower`, `ir-optimize`, `ir-validate`, `bc-lower`) and a
+profiler is attached. Instrumented zones: the compile phases (as in `--time`) and a
 coarse `vm.run`; one Tracy frame is marked per compile in the `--repeat` loop.
 
 ### Build (headless capture tools, one-time)
@@ -220,38 +214,16 @@ benchmark so the `vm.run` zone (and future finer VM zones) show up. Open
 ## Guardrails (repo-specific)
 
 - **RelWithDebInfo, never Debug** (Layer 0). This is the #1 mistake.
-- **Loop short work in-process** (`--repeat`) to amortize startup and get samples.
-- **Separate compile from run** — the `--time` split exists so you profile the
-  right thing.
 - **No `perf`, no `timeout` on macOS**; ASAN is disabled on this machine (see the
   ASAN note in the build docs), so don't profile ASAN builds either.
 - Opcode-profiler cycles are a **relative ranking** on arm64, not absolute ns.
 
 ---
 
-## First-pass findings (2026-07-16, RelWithDebInfo, arm64)
+## Interpreter baseline
 
-A baseline snapshot from the workflow above — a starting map, not a target list.
-
-**Compiler** (Lox interpreter, avg of 200 compiles): the back half dominates —
-`bc-lower` 30% (SSA→bytecode incl. register allocation) > `ir-build` 25% >
-`ir-optimize` 18% > `sema` 14% > `parse` 11%. The three IR/bytecode phases are
-~73% of compile time; frontend is ~25%.
-
-**Interpreter** (`nbody`, opcode profile): field/element access dominates —
-`GET_FIELD` 37% + `INDEX_GET_LIST` 15% ≈ 52% of VM cycles, ahead of the
-floating-point arithmetic opcodes. `GET_FIELD` is cheap per-op (~1.5 cyc) but
-runs 208M times in the physics loop.
-
-Next drill-downs (Layer 2, not yet done): open `bc-lower` (register allocation /
-`compute_liveness`) and `ir-build` (the per-scope `robin_map` copies flagged in
-prior reviews) with a sampling profiler; and confirm whether `GET_FIELD` dispatch
-in the interpreter can be specialized for the common small-struct case.
-
----
-
-## See also
-
-- `optimization.md` — the SSA IR optimization passes measured as `ir-optimize`
-- `bytecode.md` — opcode reference for reading the opcode profile
-- `vm.md` — the interpreter dispatch loop the opcode profiler instruments
+On `nbody` (opcode profile, RelWithDebInfo, arm64) field/element access
+dominates — `GET_FIELD` + `INDEX_GET_LIST` ≈ half of VM cycles, ahead of the
+floating-point arithmetic opcodes; `GET_FIELD` is cheap per-op but runs hundreds
+of millions of times in the physics loop. Compiler baselines live in
+`OPTIMIZATION.md`; interpreter optimizations in `vm-optimization.md`.

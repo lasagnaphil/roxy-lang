@@ -42,19 +42,9 @@ Every method has an implicit first parameter `self` of type `ref<StructType>`. T
 
 ## Name Mangling
 
-Methods compile to regular functions with names mangled using the `$$` separator:
+Methods compile to regular functions named `Struct$$method` (e.g. `Point$$sum`), with `self` as the first IR parameter; lowering treats them as any other function.
 
-| Method Declaration | Mangled Name |
-|--------------------|--------------|
-| `fun Point.sum()` | `Point$$sum` |
-| `fun Point.add(dx, dy)` | `Point$$add` |
-| `fun Counter.increment()` | `Counter$$increment` |
-
-## How It Works
-
-The parser detects the `fun Identifier.` pattern and produces a `DeclMethod` AST node (`MethodDecl`, holding the struct name, method name, user-declared params — `self` excluded — return type, body, and visibility). Semantic analysis registers a `MethodInfo` on the struct's `StructTypeInfo.methods` (its `param_types` likewise excludes `self`) and type-checks the body with `self` in scope. The IR builder emits a function with the mangled name and `self` as the first parameter; lowering treats it as any other function. See `ast.hpp` (`MethodDecl`) and `types.hpp` (`MethodInfo`) for the exact field layouts.
-
-### Method vs. constructor disambiguation
+## Method vs. constructor disambiguation
 
 Both method calls (`obj.method()`) and named-constructor calls (`Type.ctor()`) use `GetExpr` as the callee. The compiler distinguishes them by the receiver: if `GetExpr.object` is an identifier that resolves to a named type, it is a constructor call; otherwise it is a method call.
 
@@ -70,13 +60,4 @@ Both method calls (`obj.method()`) and named-constructor calls (`Type.ctor()`) u
 
 - **No method overloading** — each struct can have only one method with a given name. Overloading exists for free functions and natives only; see [overloading.md](overloading.md).
 
-## Files
-
-| File | Purpose |
-|------|---------|
-| `include/roxy/compiler/types/types.hpp` | `MethodInfo` struct |
-| `include/roxy/compiler/parse/ast.hpp` | `DeclMethod`, `MethodDecl` |
-| `src/roxy/compiler/parse/parser.cpp` | method parsing |
-| `src/roxy/compiler/sema/semantic.cpp` | method registration and body analysis |
-| `src/roxy/compiler/ir/ir_builder.cpp` | method IR generation (mangled name, `self` param) |
-| `tests/e2e/test_methods.cpp` | E2E tests |
+**Tests:** `tests/e2e/test_methods.cpp`

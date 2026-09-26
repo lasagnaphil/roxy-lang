@@ -41,29 +41,11 @@ struct Data { a: i32; b: i64; }
 → Total: 3 slots (12 bytes)
 ```
 
-`get_type_slot_count()` (see `types.hpp`) maps each type to its slot count; semantic analysis assigns `slot_offset`/`slot_count` per field and the total `slot_count` per struct during type resolution. These live on `FieldInfo` and `StructTypeInfo` in `types.hpp`.
+Slot counts come from `get_type_slot_count()`; per-field `slot_offset`/`slot_count` are assigned during type resolution (`FieldInfo` / `StructTypeInfo` in `types.hpp`).
 
 ## Compilation Pipeline
 
-- **SSA IR** — `StackAlloc` allocates local-stack space and yields a pointer; `GetField`/`SetField` read and write fields through that pointer using the field's `slot_offset`/`slot_count`. (`ssa_ir.hpp`.)
-
-  ```
-  v0 = stack_alloc 2       // Point struct (2 slots)
-  v1 = const_int 10
-  v2 = set_field v0.x <- v1
-  v3 = const_int 20
-  v4 = set_field v0.y <- v3
-  v5 = get_field v0.x
-  v6 = get_field v0.y
-  v7 = add_i v5, v6
-  return v7
-  ```
-
-- **Bytecode** — three opcodes back struct access. `STACK_ADDR` (0xB2, ABI format) computes a field/struct base address from a stack slot offset; `GET_FIELD` (0xB0) and `SET_FIELD` (0xB1) read/write 1 or 2 slots, each using an ABC word plus a second word holding the 16-bit `slot_offset`. `BCFunction` carries a `local_stack_slots` count sized to hold all local structs. (`bytecode.hpp`.)
-
-- **Lowering** — `BytecodeBuilder` bump-allocates stack slots via `m_next_stack_slot` and maps each `StackAlloc` result ValueId to its stack offset, emitting `STACK_ADDR`. Field ops lower to `GET_FIELD`/`SET_FIELD` with the recorded offset/count. (`lowering.cpp`.)
-
-- **Interpreter** — on `CALL` the frame's `local_stack_base` is aligned up to 4 slots (16 bytes) and `local_stack_top` advances by the callee's `local_stack_slots`; `RET` pops the local stack back to `local_stack_base`. `STACK_ADDR`/`GET_FIELD`/`SET_FIELD` compute `local_stack + base + slot_offset` and move 1 or 2 slots. (`interpreter.cpp`.)
+A struct local is an IR `StackAlloc` (yields a pointer into the local stack); `GetField`/`SetField` access fields through it by `slot_offset`/`slot_count`. Lowering bump-allocates stack slots per function and emits `STACK_ADDR` / `GET_FIELD` / `SET_FIELD` (the field ops are two-word: ABC + 16-bit offset, moving 1 or 2 slots). Each `BCFunction` records `local_stack_slots`; on `CALL` the interpreter aligns `local_stack_base` up to 16 bytes and advances the stack top by that count, and `RET` pops back.
 
 ## Struct Literals
 
@@ -89,7 +71,7 @@ field_init_list -> field_init ("," field_init)*
 field_init      -> Identifier "=" expression
 ```
 
-`analyze_struct_literal_expr()` checks that the type name resolves to a struct, every named field exists, there are no duplicates, all non-defaulted fields are supplied, and each value is assignable to its field type. IR generation emits `StackAlloc` then one `SetField` per field; omitted fields with defaults evaluate the default expression. The AST nodes are `FieldInit` / `StructLiteralExpr` in `ast.hpp`.
+Unknown or duplicate field names, missing non-defaulted fields, and non-assignable values are errors. An omitted field's default expression is evaluated at each literal.
 
 ## Struct Parameters and Returns
 
@@ -134,15 +116,3 @@ fun main(): i32 {
     return pt.x + pt.y;      // returns 60
 }
 ```
-
-## Files
-
-| File | Purpose |
-|------|---------|
-| `include/roxy/compiler/parse/ast.hpp` | `FieldInit`, `StructLiteralExpr` AST nodes |
-| `include/roxy/compiler/types/types.hpp` | `FieldInfo`, `StructTypeInfo`, `get_type_slot_count()` |
-| `src/roxy/compiler/parse/parser.cpp` | Struct literal parsing |
-| `src/roxy/compiler/sema/semantic.cpp` | Slot-count computation, struct literal validation |
-| `src/roxy/compiler/ir/ir_builder_expr.cpp` | `StackAlloc` and struct literal IR emission |
-| `src/roxy/compiler/codegen/lowering.cpp` | Stack slot allocation, field access lowering |
-| `src/roxy/vm/interpreter.cpp` | `STACK_ADDR` / `GET_FIELD` / `SET_FIELD`, frame local-stack management |

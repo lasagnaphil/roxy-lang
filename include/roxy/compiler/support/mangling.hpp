@@ -19,7 +19,7 @@ struct Type;
 // name must route through these functions — previously the format literals were
 // hand-copied across ir_builder / lowering / semantic / coroutine_lowering /
 // c_emitter, an eight-way drift hazard. See
-// docs/internals/identifier-interning.md §6.1.
+// docs/internals/identifier-interning.md → "Name mangling is canonical".
 //
 // Two output modes share one format literal per kind (defined in mangling.cpp):
 //   - the arena form returns a StringView living as long as `alloc` (the hot

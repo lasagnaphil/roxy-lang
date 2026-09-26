@@ -1,8 +1,5 @@
 # Tagged Unions (Discriminated Unions)
 
-> **Status:** Core implementation complete, including exhaustiveness *detection*
-> (see below). Flow-sensitive typing of variant fields is not yet implemented.
-
 Tagged unions let a struct hold variant-specific fields selected by a discriminant
 enum value. They give memory-efficient sum types with a union layout (all variants
 share storage) and pattern matching via the `when` statement. The feature reuses
@@ -68,16 +65,12 @@ Matching is **partial** — unhandled cases fall through as no-ops. An optional
 `else` block handles the default:
 
 > **Exhaustiveness detection.** When the cases cover *every* variant of the
-> discriminant enum, the `when` is **exhaustive**: the compiler knows the
-> fall-through can never be taken. It records this on `WhenStmt::is_exhaustive`,
-> which (1) lets `branch_terminates()` propagate — an exhaustive `when` whose
-> every arm returns/throws is treated as terminating, so no trailing return is
-> required — (2) sharpens `uniq` move-state merges (a value moved in every arm is
-> `Moved`, not `MaybeValid`, after the `when`), and (3) makes the IR builder emit
-> an `Unreachable` trap on the impossible fall-through instead of re-joining the
-> merge with pre-`when` values. A *non*-exhaustive no-`else` `when` still falls
-> through as before. This is detection, not enforcement: a non-exhaustive `when`
-> is not an error (partial matching is intentional).
+> discriminant enum, the `when` is **exhaustive** (`WhenStmt::is_exhaustive`):
+> (1) if every arm returns/throws, the `when` terminates, so no trailing return
+> is required; (2) a `uniq` moved in every arm is `Moved`, not `MaybeValid`,
+> afterwards; (3) the impossible fall-through becomes an `Unreachable` trap.
+> This is detection, not enforcement: a non-exhaustive `when` is not an error
+> (partial matching is intentional).
 
 ```roxy
 when skill.type {
@@ -148,7 +141,8 @@ both occupy union slot 0).
 ### Multiple `when` clauses
 
 A struct may have several independent `when` clauses, each contributing its own
-discriminant slot and union region. Each is matched separately.
+discriminant slot and union region (laid out in declaration order). Each is
+matched separately.
 
 ```roxy
 struct Ability {
@@ -162,16 +156,6 @@ struct Ability {
         case Area:   radius: f32;
     }
 }
-```
-
-```
-┌────────────────────────────────┐
-│ name (string)                  │
-│ damage_type (DamageType)       │
-│ UNION 1 (damage variants)      │
-│ target_type (TargetType)       │
-│ UNION 2 (target variants)      │
-└────────────────────────────────┘
 ```
 
 ## Type Safety Rules
@@ -235,14 +219,10 @@ fun new Skill.make_attack(dmg: i32) {
 `when` statements lower to a comparison chain (`==` against each enum value plus a
 conditional branch) rather than a dedicated `SWITCH` opcode — for the small enums
 typical of game scripting the comparison chain is competitive and simpler. Variant
-field accesses become `GetField` at the union base offset. Variables assigned
-across cases are reconciled at a merge block via phi (block-argument) values.
+field accesses become `GetField` at the union base offset.
 
-The semantic analyzer validates that the discriminant is an enum, that case names
-are variants of *that* enum (resolved through the enum type's own variant table,
-so a same-named variant of a different enum is rejected), and that struct-literal
-variant fields match the discriminant. It computes union layout (max of variant
-slot counts) and per-variant field offsets.
+Case names resolve through the discriminant enum's own variant table, so a
+same-named variant of a *different* enum is rejected.
 
 ## Grammar
 
@@ -263,13 +243,4 @@ when_case       -> "case" Identifier ( "," Identifier )* ":" statement* ;
 
 ## Files
 
-| File | Purpose |
-|---|---|
-| `include/roxy/compiler/parse/ast.hpp` | `WhenFieldDecl` / `WhenCaseFieldDecl` (struct decls), `StmtWhen` / `WhenCase` |
-| `include/roxy/compiler/types/types.hpp` | `WhenClauseInfo`, `VariantInfo`; `StructTypeInfo::when_clauses`, variant field lookup |
-| `src/roxy/compiler/parse/parser.cpp` | parse `when` clauses and `when` statements |
-| `src/roxy/compiler/sema/semantic.cpp` | `resolve_when_clauses`, union layout, variant-access and struct-literal validation |
-| `src/roxy/compiler/ir/ir_builder_stmt.cpp` | `gen_when_stmt` (comparison chain + phi merge) |
-| `src/roxy/compiler/ir/ir_builder_expr.cpp` | variant field access + runtime discriminant check |
-| `src/roxy/compiler/codegen/lowering.cpp` | union memory access in bytecode |
-| `tests/e2e/test_tagged_unions.cpp` | E2E tests |
+Layout and validation: `src/roxy/compiler/sema/semantic.cpp` (`resolve_when_clauses`); `when` lowering: `gen_when_stmt` in `src/roxy/compiler/ir/ir_builder_stmt.cpp`; variant access + discriminant check: `src/roxy/compiler/ir/ir_builder_expr.cpp`. Tests: `tests/e2e/test_tagged_unions.cpp`.

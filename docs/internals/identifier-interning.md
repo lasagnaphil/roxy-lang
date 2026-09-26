@@ -9,10 +9,8 @@
 The plan (OPTIMIZATION.md §5.1) was to intern every source identifier to a dense
 `u32` symbol ID (`Sym`) at lex time, so name-keyed maps would hash and compare
 integers instead of re-running an FNV-1a byte loop and a `memcmp` on every probe.
-It was implemented through Phases 0–1d plus §5.2a, measured, and **reverted**.
-The full design document and migration map are in this file's git history
-(`docs/internals/identifier-interning.md` before 2026-08); this page keeps only
-the result and the facts that outlived it.
+It was implemented, measured, and **reverted**; the full design and migration map
+are in this file's git history.
 
 ## What was measured
 
@@ -32,20 +30,13 @@ not be used for this class of measurement):
 
 ## Why the ceiling looked high, and why that reasoning failed
 
-The apparent upside was real: every name is a raw `StringView` into the source
-buffer, `std::hash<StringView>` is a byte-wise FNV-1a loop re-run on every map
-probe in sema/ir-build/bc-lower, and field/method/variant resolution is a linear
-scan doing a `memcmp` per element. Interning collapses all of that to `u32`
-identity.
-
-The error was in where the payoff was banked. It was to come from the §5.2b
-`IRInst` union shrink — better locality on the IR walk, which is ~68 % of
-compile time. But **§5.2a (a contiguous `IRInst` pool) measured neutral**: the IR
-walk is *not* `IRInst`-cache-locality-bound (the bottleneck is the
-`Vector<IRInst*>` indirection and per-op compute), so a smaller `IRInst` would
-not have helped either. `BumpAllocator` cost is size-independent, so there was no
-allocation-time saving either. Removing a cost downstream never paid for the cost
-added at the lexer.
+The apparent upside was real (names are raw `StringView`s re-hashed on every map
+probe; field/method/variant resolution is a `memcmp` scan). But the big payoff was
+banked on a follow-up `IRInst` shrink for IR-walk locality, and **a contiguous
+`IRInst` pool (§5.2a) measured neutral**: the IR walk is *not*
+`IRInst`-cache-locality-bound (the bottleneck is the `Vector<IRInst*>` indirection
+and per-op compute). Removing a cost downstream never paid for the cost added at
+the lexer.
 
 **Transferable lesson:** front-loading work onto the highest-frequency event in
 the pipeline (one lex token) to save work on lower-frequency events (map probes)
@@ -55,17 +46,10 @@ negative-results register and §8 for where compile-time effort should go instea
 ## Name mangling is canonical (the piece that was kept)
 
 Interning was only *sound* if the `$$` mangling scheme had one byte-producing
-definition — it was previously re-`format()`'d at eight sites across five files,
-each with its own literal that had to byte-match the others. That unification
-landed as a standalone refactor (`compiler/support/mangling.{hpp,cpp}`) and was kept: it
-is perf-neutral and removes a real drift hazard independent of interning.
-
-Almost all mangled names now come from one module — `mangle_method`,
-`mangle_constructor`, `mangle_destructor`, `mangle_module_local`,
-`mangle_type_name`, `mangle_overload` — routed through by `semantic.cpp`,
-`ir_builder.cpp`, `lowering.cpp`, `generics.cpp`, `trait_system.cpp`,
-`coroutine_lowering.cpp`, and `c_emitter.cpp`. (One exception: `coroutine_lowering.cpp`
-still formats its synthesized `__coro_{}$$delete` name directly.)
+definition, so the scattered `format()` sites were unified into
+`compiler/support/mangling.{hpp,cpp}`. That was kept: it is perf-neutral and
+removes a real drift hazard. New mangled names should go through it (one
+exception today: `coroutine_lowering.cpp` formats `__coro_{}$$delete` directly).
 
 **The `$$` spelling is a load-bearing ABI.** Separately from re-derivation, the C
 emitter *parses* the byte structure of mangled names to route container methods

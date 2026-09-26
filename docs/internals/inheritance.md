@@ -116,13 +116,7 @@ Supported conversions: `uniq Child → uniq Parent`, `uniq Child → ref Parent`
 
 ## Implementation Details
 
-**Type system.** `StructTypeInfo.parent` points at the parent type (or null), and `StructTypeInfo.fields` holds *all* fields (inherited + own) in parent-first order. `is_subtype_of()` walks the parent chain; `check_assignable()` permits struct subtyping (with slicing) and covariant reference conversions.
-
-**Method lookup.** `lookup_method_in_hierarchy()` searches child-to-parent. A `super` call mangles against the parent's name.
-
-**Chaining rules.** Constructor chaining is explicit (implicit `super()` to the parent's default when omitted); the child body runs after the parent. Destructor chaining is automatic; the child runs before the parent.
-
-A destructor chains to the **nearest ancestor that has a default destructor**, not necessarily its direct parent. Only structs that need one get a default destructor, so a plain value struct in the middle of a chain has none — emitting a call to it anyway failed the compile with "function not found during bytecode lowering". Skipping such a level is sound precisely because it has nothing to run: no user body and no owned fields. See `nearest_default_destructor` in `ir_builder.cpp`.
+`StructTypeInfo.fields` holds *all* fields (inherited + own) in parent-first order; own fields start at `parent->struct_info.fields.size()`. Method lookup (`lookup_method_in_hierarchy()`) searches child-to-parent; a `super` call mangles against the parent's name.
 
 ### Who destroys which fields
 
@@ -132,26 +126,10 @@ Destruction runs **most-derived first**, and each level handles exactly its own 
 2. the struct's **own** fields (those declared on it, not inherited);
 3. the nearest ancestor's default destructor — which repeats the same three steps.
 
-Two invariants make that split work, and both were bugs before:
+Invariants that make that split work:
 
-- **`emit_field_cleanup` walks only own fields.** `StructTypeInfo::fields` is parent-prefixed, so cleaning the whole span destroyed an inherited `uniq` once in the child and again in the parent — a double free. Own fields start at `parent->struct_info.fields.size()`. (`when_clauses` need no such split; they are resolved per-struct and not inherited.) Nothing is left uncleaned, because a parent with owned fields always has a destructor of its own.
-- **A struct inherits the *obligation* to have a destructor.** `struct_needs_synthetic_dtor` returns true when any ancestor has a default destructor, even if the struct itself has nothing to drop — otherwise it gets no destructor at all and the ancestor's never runs. The synthesis pass's fixpoint loop propagates this down a chain regardless of declaration order.
+- **Field cleanup walks only own fields.** Cleaning the whole parent-prefixed span would destroy an inherited `uniq` in both child and parent — a double free. Nothing is left uncleaned, because a parent with owned fields always has a destructor of its own. (`when_clauses` are resolved per-struct and not inherited, so need no split.)
+- **A struct inherits the *obligation* to have a destructor.** `struct_needs_synthetic_dtor` is true when any ancestor has a default destructor, even if the struct itself has nothing to drop — otherwise the ancestor's would never run. The synthesis pass's fixpoint loop propagates this regardless of declaration order.
+- **A destructor chains to the nearest ancestor that *has* a default destructor** (`nearest_default_destructor` in `ir_builder.cpp`), not necessarily its direct parent: a plain value struct mid-chain has none, and skipping it is sound because it has nothing to run.
 
-### Name mangling
-
-| Declaration | Mangled name |
-|-------------|--------------|
-| `fun Animal.speak()` | `Animal$$speak` |
-| `fun new Animal()` | `Animal$$new` |
-| `fun new Animal.named()` | `Animal$$new$$named` |
-| `fun delete Animal()` | `Animal$$delete` |
-
-## Files
-
-| File | Purpose |
-|---|---|
-| `src/roxy/compiler/types/types.cpp` | `StructTypeInfo.parent`, field layout, `is_subtype_of()` |
-| `src/roxy/compiler/sema/type_checker.cpp` | `TypeChecker::check_assignable()` (subtype conversions) |
-| `src/roxy/compiler/sema/semantic.cpp` | inheritance resolution, method lookup, `super` resolution, constructor/destructor chaining |
-| `src/roxy/compiler/ir/ir_builder_expr.cpp` | static method dispatch, value slicing, covariant reference conversions |
-| `tests/e2e/test_inheritance.cpp` | E2E tests |
+**Tests:** `tests/e2e/test_inheritance.cpp`

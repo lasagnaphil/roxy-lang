@@ -1,21 +1,12 @@
 # Frontend Architecture
 
-The Roxy frontend consists of a compiler and an LSP server that share some components (lexer, token kinds). See [lsp-server.md](lsp-server.md) for the LSP architecture.
-
-## Compiler Pipeline
+The Roxy frontend consists of a compiler and an LSP server that share the lexer and token kinds. See [lsp-server.md](lsp-server.md) for the LSP architecture.
 
 ```
 Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA IR → Lowering → Bytecode → VM
 ```
 
-## Shared Components
-
-- **Lexer** — Token definitions, lexing rules, trivia handling
-- **Token/Syntax kinds** — Single source of truth for grammar
-- **Type system** — Type definitions, compatibility rules
-- **Semantic rules** — Shared validation logic
-
-## Separate Components
+## Compiler vs. LSP
 
 | Compiler | LSP |
 |----------|-----|
@@ -24,7 +15,7 @@ Source → Lexer → Parser → AST → Semantic Analysis → IR Builder → SSA
 | Batch processing | Per-file indexing + lazy per-function analysis |
 | One arena per compile | One arena per parse (re-parsed per keystroke) |
 
-The LSP side reuses the shared lexer, token kinds, AST, and — through `LspAnalysisContext` — the semantic analyzer itself, but runs its own error-recovering parser over a lossless CST. See [lsp-server.md](lsp-server.md) for that architecture.
+The LSP side reuses the shared lexer, token kinds, AST, and — through `LspAnalysisContext` — the semantic analyzer itself, but runs its own error-recovering parser over a lossless CST.
 
 ## Key Design Decisions
 
@@ -35,129 +26,31 @@ The LSP side reuses the shared lexer, token kinds, AST, and — through `LspAnal
 | Bytecode | Register-based, 32-bit fixed-width | Easy C transpilation, natural SSA lowering |
 | Memory | Bump/arena allocation throughout | Fast batch compile; whole-arena reset per LSP re-parse |
 
-## Lexer
-
-The lexer tokenizes Roxy source code:
-- Decimal, hex (`0xFF`), binary (`0b1010`), octal (`0o77`) number literals
-- Integer suffixes (`u`, `l`, `ul`) and float suffix (`f`)
-- String literals (raw tokens with quotes)
-- All operators including two-character ones (`::`, `&&`, `||`, `+=`, etc.)
-- Line comments (`//`) and nested block comments (`/* */`)
-- Keyword recognition via trie-style switch
-- Accurate line/column tracking
-
-## Parser
-
-The compiler parser is a recursive descent parser with Pratt parsing for expressions:
-- Fail-fast design (stops on first error)
-- Produces typed AST nodes
-- Arena allocation for all nodes
-- **String literal processing**: Strips quotes and handles escape sequences (`\n`, `\t`, `\r`, `\\`, `\"`, `\0`)
-
-## AST
-
-Complete AST node definitions (see `compiler/parse/ast.hpp`, `enum class AstKind`):
-- Expression nodes (literals, binary/unary ops, calls, index, get, lambda, etc.)
-- Statement nodes (if, while, for, return, block, when, try, throw, yield, etc.)
-- Declaration nodes (var, fun, struct, field, enum, import, constructor, destructor, method, trait)
+The compiler parser is recursive descent with Pratt parsing for expressions, fail-fast (stops on the first error). Literal syntax (number bases/suffixes, escapes) is specified in `docs/grammar.md`.
 
 ## Semantic Analysis
 
-Multi-pass semantic analyzer (`analyze()` in `semantic.cpp` is the running order):
-1. **Pass 0**: Auto-import the builtin prelude, process user imports, apply native symbols.
-2. **Pass 1**: Collect type declarations (structs, enums), create native struct types and methods, register builtin traits (`Printable`/`Hash`/`Eq`/`Ord`/`Exception`/`Index`), register the builtin exception types (`KeyError`, `IndexError`), register primitive operator-trait methods, resolve trait bounds on type parameters.
-3. **Pass 2**: Resolve type members — field types, parent types, method/function signatures, globals.
-4. **Pass 3**: Analyze function bodies (full type checking).
+Multi-pass; `analyze()` in `semantic.cpp` is the running order: imports and the builtin prelude, then type declarations and builtin registrations, then type members and signatures, then function bodies. Types are registered before members are resolved, so declaration order doesn't matter.
 
-Features:
-- Symbol resolution with scoped symbol tables
-- Type inference and type checking
-- Function signature validation
-- Error reporting with source locations
-- NativeRegistry integration for built-in functions
-- Struct slot count computation for memory layout
-- Out/inout parameter validation
-- Lifetime analysis (use-after-move detection, definite-termination branch
-  merges, scope-exit destructor checks) via `LifetimeChecker`
-- All-paths-return check: a non-void function or lambda whose body can fall off
-  the end without a `return`/`throw` is rejected ("not all code paths return a
-  value" / "…in lambda"). It reads `LifetimeChecker::branch_terminates()`, which
-  now recognizes an exhaustive no-`else` `when` (all arms terminating) and an
-  infinite loop as terminating. Infinite loops are recognized only for a literal
-  `while (true)` with no `break` reaching it (a constant-foldable condition such
-  as `while (1 == 1)` is not); coroutines are skipped (they `yield`, never return
-  a value), and constructors/destructors have their own body analyzers. Lambda
-  bodies are checked in `synthesize_lambda_call_fn` after body analysis (the
-  `=> expr` short body desugars to `{ return expr; }`, so only block-bodied
-  lambdas that fall off the end are flagged).
+### All-paths-return
 
-The analyzer shares its collaborators by reference (no back-reference to the
-analyzer itself): `ErrorReporter` (error collection/formatting), `TypeChecker`
-(pure type relations and coercions), `LifetimeChecker` (per-function move
-states and the branch-termination flag),
-`TraitSystem` (builtin trait registration, trait declarations, impl
-grouping/validation, default-method injection), `LambdaLifter` (lambda
-lifting and closure-capture analysis, including the capture rewrites on
-identifier/`self` references inside lambda bodies), and `GenericCallResolver`
-(type-arg unification/inference, generic function calls, template refs in
-value position, trait bounds, Phase B template-body checking with the
-active-type-param state the analyzer's type resolution and operator dispatch
-consult). Collaborators receive the shared `SemaContext` bundle (allocator,
-type_env, types, modules, symbols, reporter, checker); the analyzer
-*operations* they need — full TypeExpr resolution, plus walker re-entry for
-generic inference and Phase B bodies — are exposed through function-pointer
-thunks on the context (`SemaContext::resolve_type_expr` / `analyze_expr` /
-`analyze_stmt`), so no collaborator holds a reference to the analyzer itself.
+A non-void function or lambda whose body can fall off the end without a `return`/`throw` is rejected ("not all code paths return a value" / "…in lambda"). Termination comes from `LifetimeChecker::branch_terminates()`, which treats as terminating:
 
-All per-function analysis state — the `FunctionContext` slots (coroutine /
-delete-destructor / finally depth) and the `LifetimeChecker`'s move states and
-branch-termination flag — is pushed and popped as ONE unit by
-`FunctionContextScope` at every body-analysis entry point (free function,
-member body, synthesized lambda call function, Phase B generic template
-body). A nested body (a lambda analyzed mid-statement) gets a fresh default
-context: its `return` cannot read as "the enclosing branch terminates", and
-its `throw` is not "inside" the enclosing delete destructor. Three bugs of the
-"forgot one slot at one entry point" class motivated the single guard (the
-coroutine-method diagnostic gap, the lambda branch-terminates leak, the lambda
-in-delete-destructor leak).
+- an exhaustive no-`else` `when` whose arms all terminate;
+- an infinite loop — but only a literal `while (true)` with no `break` reaching it (`while (1 == 1)` does not count).
 
-Analysis results flow to the IR builder as in-place AST annotations
-(`resolved_type` plus name/flag fields, including several deliberate
-overloads such as the callee-type dispatch signal and the null-object module
-sentinel). The authoritative spec of that contract is the "semantic→IR
-annotation contract" comment above `struct Expr` in `compiler/parse/ast.hpp` — keep
-it updated when adding or overloading an annotation.
+Coroutines are skipped (they `yield`, never return a value). A `=> expr` lambda desugars to `{ return expr; }`, so only block-bodied lambdas can be flagged.
 
-Because analysis also *rewrites* the tree it walks (capture rewrites, generic
-TypeExpr mangling, lambda synthesis), it is non-idempotent, and the codified
-rule is: **an AST body is analyzed at most once** (`Decl::body_analyzed` +
-assert at the body-analysis entry points). Consumers that need to analyze the
-"same" code twice analyze two trees: the LSP lowers a fresh AST from the CST
-per analysis, generic instantiations deep-clone the pristine template, Phase B
-walks a throwaway identity-substitution clone, and trait default methods are
-cloned per implementing struct. The full rationale lives in the ast.hpp
-contract block ("the single-shot analysis rule").
+### Collaborators
 
-## Files
+The analyzer's collaborators — `ErrorReporter`, `TypeChecker`, `LifetimeChecker`, `TraitSystem`, `LambdaLifter`, `GenericCallResolver` (responsibilities summarized in `CLAUDE.md`) — share state through the `SemaContext` bundle and hold **no reference to the analyzer**. The analyzer operations they need (full TypeExpr resolution, walker re-entry for generic inference and Phase B bodies) are exposed as function-pointer thunks on the context (`SemaContext::resolve_type_expr` / `analyze_expr` / `analyze_stmt`).
 
-- `include/roxy/shared/lexer.hpp` - Lexer class
-- `src/roxy/shared/lexer.cpp` - Lexer implementation
-- `include/roxy/compiler/parse/parser.hpp` - Parser class
-- `src/roxy/compiler/parse/parser.cpp` - Parser implementation
-- `include/roxy/compiler/parse/ast.hpp` - AST node definitions
-- `include/roxy/compiler/sema/semantic.hpp` - Semantic analyzer
-- `src/roxy/compiler/sema/semantic.cpp` - Semantic analysis implementation
-- `include/roxy/compiler/sema/sema_context.hpp` - Shared collaborator context (state bundle + resolve_type_expr/analyze_expr/analyze_stmt thunks)
-- `include/roxy/compiler/sema/function_context.hpp` - Per-function context slots + the one-unit FunctionContextScope guard
-- `include/roxy/compiler/sema/type_checker.hpp` - Type relations and coercions
-- `src/roxy/compiler/sema/type_checker.cpp` - Type checker implementation
-- `include/roxy/compiler/sema/lifetime_checker.hpp` - Lifetime analysis (move states, termination, scope-exit checks)
-- `include/roxy/compiler/sema/lambda_lifter.hpp` - Lambda lifting and closure-capture analysis (`LambdaLifter`)
-- `src/roxy/compiler/sema/lifetime_checker.cpp` - Lifetime checker implementation
-- `include/roxy/compiler/sema/trait_system.hpp` - Trait machinery (builtin traits, trait decls, impl validation, default injection)
-- `src/roxy/compiler/sema/trait_system.cpp` - Trait system implementation
-- `include/roxy/compiler/sema/generic_call_resolver.hpp` - Generic-call machinery (inference, calls, template refs, bounds, Phase B)
-- `src/roxy/compiler/sema/generic_call_resolver.cpp` - Generic call resolver implementation
-- `include/roxy/compiler/support/error_reporter.hpp` - Error collection and formatting
-- `include/roxy/compiler/types/symbol_table.hpp` - Symbol table
-- `src/roxy/compiler/types/symbol_table.cpp` - Symbol table implementation
+### Per-function state is pushed as one unit
+
+All per-function analysis state — the `FunctionContext` slots (coroutine / delete-destructor / finally depth) and the `LifetimeChecker`'s move states and branch-termination flag — is pushed and popped together by `FunctionContextScope` at every body-analysis entry point (free function, member body, synthesized lambda call function, Phase B template body). A nested body (a lambda analyzed mid-statement) gets a fresh default context: its `return` cannot read as "the enclosing branch terminates", and its `throw` is not "inside" the enclosing delete destructor. The single guard exists because forgetting one slot at one entry point produced repeated bugs.
+
+### Sema → IR contract
+
+Analysis results flow to the IR builder as in-place AST annotations (`resolved_type` plus name/flag fields, including several deliberate overloads such as the callee-type dispatch signal and the null-object module sentinel). The authoritative spec is the "semantic→IR annotation contract" comment above `struct Expr` in `compiler/parse/ast.hpp` — keep it updated when adding or overloading an annotation.
+
+Because analysis also *rewrites* the tree it walks (capture rewrites, generic TypeExpr mangling, lambda synthesis), it is non-idempotent, and the codified rule is: **an AST body is analyzed at most once** (`Decl::body_analyzed` + assert at the body-analysis entry points). Consumers that need to analyze the "same" code twice analyze two trees: the LSP lowers a fresh AST from the CST per analysis, generic instantiations deep-clone the pristine template, Phase B walks a throwaway identity-substitution clone, and trait default methods are cloned per implementing struct. The full rationale lives in the ast.hpp contract block ("the single-shot analysis rule").

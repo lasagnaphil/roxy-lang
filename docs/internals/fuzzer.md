@@ -1,97 +1,50 @@
 # Fuzzing
 
 > **Status:** Byte-level coverage-guided fuzzing of the front-end (lexer, parser,
-> LSP error-recovering parser) is **implemented** — libFuzzer targets in
-> `tests/fuzz/` plus an always-on `Fuzz Regression` doctest replay. The
-> **structure-aware (type-directed) generator is also implemented** (stages 1–2
-> of the staged plan: scoping + types; see "Structural generator" below) — it
-> reaches sema, the IR builder, the optimizer, lowering, and the VM with
+> LSP error-recovering parser) and a **structure-aware (type-directed) generator**
+> (stages 1–2 of the staged plan below) are **implemented**. The generator reaches
+> sema, the IR builder, the optimizer, lowering, and the VM with
 > valid-by-construction programs, and doubles as the benchmark-corpus generator
 > (`roxy_gen`). Move-state/lifetime modeling and the VM-vs-C differential oracle
-> remain future work (see Roadmap).
+> remain future work (see "Roadmap: structure-aware fuzzing").
 
-Fuzzing feeds a large volume of automatically-generated inputs to a component and
-watches for any that make it misbehave (crash, hang, trip a sanitizer, exhaust
-memory). The front-end is the natural first target: it consumes untrusted text,
-and its failure modes — non-termination, buffer over-reads, integer overflow —
-are exactly what the generic oracles below detect. Practical build/run commands
-live in `tests/fuzz/README.md`; this document covers how it works and where it is
-going.
+The build/run quickstart — toolchain, `ENABLE_FUZZERS` flags, targets, libFuzzer
+options, crash triage — lives in [`tests/fuzz/README.md`](../../tests/fuzz/README.md).
+This document covers how it works and where it is going.
 
-## How coverage-guided fuzzing works
+The oracles are the generic libFuzzer ones: a **crash** (SIGSEGV/`abort`/failed
+`assert`), a **UBSan** abort (ASan too, when enabled), a **hang** (`-timeout`), or
+an **OOM** (`-rss_limit_mb`). Coverage guidance evolves inputs toward unexplored
+edges, so seeding from real `.roxy` files gives a large head start.
 
-Three pieces:
+## Byte-level harnesses
 
-- **Target** — a function taking raw bytes. Ours is the libFuzzer entry point
-  `LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)`, which the engine
-  calls millions of times, each with a different input. It forwards to a shared
-  harness body that runs one component over the bytes.
-- **Oracle** — how "bad" is decided. There are no hand-written
-  `assert(result == expected)` checks (there is no known-good output for random
-  input). Instead a bug manifests generically: the process **crashes**
-  (SIGSEGV/`abort`), a **sanitizer** aborts (UBSan on undefined behavior; ASan on
-  a memory error, when enabled), the input exceeds `-timeout` (a **hang**), or it
-  exceeds `-rss_limit_mb` (an **OOM**). libFuzzer saves the offending input as
-  `crash-*` / `timeout-*` / `oom-*` and stops.
-- **Engine** — the loop. Pure random bytes are hopeless for a parser (they die in
-  the lexer), so libFuzzer is *coverage-guided*: the compiler instruments every
-  branch (SanitizerCoverage), and libFuzzer keeps a corpus of inputs that
-  collectively maximize edge coverage. Each iteration mutates a corpus entry, runs
-  it, and — if it hit a **new** edge — adds it back to the corpus. The search
-  evolves inputs toward unexplored code, so seeding from real `.roxy` files gives
-  it a large head start over starting from empty.
-
-```
-Source text ── fuzz input ──▶ Lexer / Parser / LspParser
-                                     │
-                     coverage feedback (new edges → keep input)
-                                     │
-                          crash / hang / UBSan / OOM  → save reproducer
-```
-
-## Current implementation (byte-level)
-
-### Harnesses
-
-One body per component, so each fuzz executable links only the library it
-exercises (lexer-only coverage for the lexer target, etc.). Bodies are declared
-in `tests/fuzz/fuzz_targets.hpp` and defined in `fuzz_one_{lexer,parser,lsp_parser}.cpp`:
-
-| Target | Component | Body |
-|---|---|---|
-| `fuzz_lexer` | `rx::Lexer` — tokenize to `Eof` | `fuzz_one_lexer.cpp` |
-| `fuzz_parser` | `rx::Parser` — fail-fast AST parse | `fuzz_one_parser.cpp` |
-| `fuzz_lsp_parser` | `rx::LspParser` — error-recovering CST parse | `fuzz_one_lsp_parser.cpp` |
-
-The `LLVMFuzzerTestOneInput` entry points (`fuzz_{lexer,parser,lsp_parser}.cpp`)
-are three lines each — they just call the matching body. The LSP parser is the
-highest-value target: it is explicitly built to consume arbitrary/malformed input
-and must *never* crash or hang, so any input that breaks that is a bug.
+One harness body per component (`tests/fuzz/fuzz_one_*.cpp`, declared in
+`fuzz_targets.hpp`), so each fuzz executable links only the library it exercises;
+the `LLVMFuzzerTestOneInput` entry points just forward to them. The LSP parser is
+the highest-value byte-level target: it is explicitly built to consume
+arbitrary/malformed input and must *never* crash or hang.
 
 ### Input buffer design (`detail::SourceBuffer`)
 
-Two deliberate choices in the shared harness header:
-
 - **Exact-size copy plus one terminating `\0`.** The lexer's `peek()` relies on a
   `\0` sentinel at `length`, exactly as production source provides, so the buffer
-  is `size + 1` bytes with a NUL at the end (`SourceBuffer` in
-  `fuzz_targets.hpp`). Anything *past* the sentinel is still memory the harness
-  does not own, so a fresh heap allocation per input keeps a genuine over-read a
-  real out-of-bounds access a sanitizer can catch.
-- **Fresh `BumpAllocator` per input.** All AST/CST nodes for one input live in an
-  allocator destroyed at the end of the call, so no state leaks between inputs and
-  a saved reproducer replays deterministically.
+  is `size + 1` bytes with a NUL at the end. Anything *past* the sentinel is still
+  memory the harness does not own, so a fresh heap allocation per input keeps a
+  genuine over-read a real out-of-bounds access a sanitizer can catch.
+- **Fresh `BumpAllocator` per input**, so no state leaks between inputs and a
+  saved reproducer replays deterministically.
 
 Inputs larger than `UINT32_MAX` are rejected (the lexer's offsets are `u32`; input
 size is not the property under test).
 
 ### Regression replay (`tests/unit/test_fuzz_regression.cpp`)
 
-A plain doctest suite (`Fuzz Regression`) that replays *fixed, known* inputs — the
-seed corpus (`tests/fuzz/corpus/`), every `examples/*.roxy`, and inline adversarial
-cases — through all three harness bodies on every normal `roxy_tests` run. It needs
-no fuzzer toolchain and runs in-sandbox. Its purpose is not discovery but to keep
-found-and-fixed crashes fixed and stop the harnesses from bit-rotting. It shares
+The `Fuzz Regression` doctest suite replays *fixed, known* inputs — the seed corpus
+(`tests/fuzz/corpus/`), every `examples/*.roxy`, and inline adversarial cases —
+through all three byte-level harness bodies on every normal `roxy_tests` run. It
+needs no fuzzer toolchain. Its purpose is not discovery but to keep
+found-and-fixed crashes fixed and stop the harnesses from bit-rotting; it calls
 the exact `fuzz_one_*` functions the libFuzzer targets use, so the two cannot
 drift.
 
@@ -100,44 +53,13 @@ drift.
 > resource cap and would hang or exhaust memory on every test run. Such
 > reproducers are tracked in `TODO.md` and kept out of the corpus.
 
-### Build integration
+Worth knowing: the replay itself is a discovery channel — the LSP parser's two
+forward-progress hangs surfaced there (a valid example simply hung; see
+[lsp-server.md](lsp-server.md) → "Forward-progress invariant"), while the
+coverage-guided campaign surfaced lexer UB and an LSP-parser OOM that is still
+**open** (`TODO.md`).
 
-The `ENABLE_FUZZERS` CMake option (off by default) wires it up:
-
-- `-fsanitize=fuzzer-no-link,undefined` on **all** translation units → coverage
-  instrumentation so the fuzzer sees into the lexer/parser/LSP libraries, plus the
-  UBSan oracle. (`-fno-sanitize-recover=undefined` makes UBSan abort so libFuzzer
-  flags it as a crash.)
-- `-fsanitize=fuzzer` on each `fuzz_*` executable only → links the libFuzzer
-  driver (the `main()` and mutation engine).
-- ASan is **not** turned on automatically; it composes with the existing
-  `ENABLE_ASAN` flag for a platform where ASan works (currently broken on macOS
-  Tahoe — see `CLAUDE.md`). Without it, over-reads are only caught when they
-  happen to fault.
-
-**Toolchain:** libFuzzer needs a Clang that ships `libclang_rt.fuzzer`. Apple clang
-does **not** (the Xcode toolchain omits it); use Homebrew/upstream LLVM on macOS,
-or the LLVM `clang-cl` on Windows. See `tests/fuzz/README.md` for the exact
-`cmake`/`ninja` invocation.
-
-### Findings so far
-
-The initial campaign found four issues in code that hand-written tests never
-reached:
-
-| Finding | Component | Oracle | Status |
-|---|---|---|---|
-| Infinite loop on `when self.<member>` discriminant | LSP parser | hang (regression replay of `examples/lox/value.roxy`) | fixed |
-| Infinite loop on stray leading token (`}` `"` `,` `::` `0x` …) | LSP parser | hang | fixed |
-| Signed-overflow UB on out-of-range integer literals | lexer | UBSan | fixed |
-| ~2.9 GB allocation on ~8 KB adversarial input | LSP parser | OOM | **open** — see `TODO.md` |
-
-The two hangs traced to recovery loops that could fail to make forward progress;
-see `docs/internals/lsp-server.md` → "Forward-progress invariant". Note the split
-of mechanisms: the **hangs** surfaced via the *regression replay* (a valid example
-simply hung), while the *coverage-guided campaign* surfaced the **UB** and **OOM**.
-
-## Structural generator (implemented)
+## Structural generator
 
 `tests/fuzz/gen/` holds a **type-directed Roxy program generator** whose output
 is valid by construction: every emitted program must lex, parse, pass sema,
@@ -174,43 +96,21 @@ One generator, driven through the dual-mode `Entropy` source (`entropy.hpp`):
 
 - **Seeded PRNG** → `roxy_gen` CLI emits reproducible benchmark corpora at any
   scale (see `profiling.md` → "Benchmark corpora at scale"), and the always-on
-  `Structured Gen` doctest suite replays fixed seeds (compile + run on the VM)
-  so generator-vs-compiler drift is caught on every test run.
+  `Structured Gen` doctest suite (`tests/unit/test_structured_gen.cpp`) replays
+  fixed seeds (compile + run on the VM) so generator-vs-compiler drift is caught
+  on every test run.
 - **Fuzzer bytes** → the `fuzz_structured` libFuzzer target treats the input as
   an entropy stream; mutating bytes mutates *program structure*, and coverage
   feedback steers generation into unexplored compiler paths. A dry buffer
   degrades to a minimal program (choice index 0 is always terminal), so short
-  inputs stay valid.
-
-### Findings from the generator's first campaign (2026-07-17, all fixed)
-
-| Finding | Component | How it surfaced |
-|---|---|---|
-| Skip-load hole: commutative RK op with *both* operands constant (`97.9 == 97.7` as branch condition) left one constant unallocated | lowering | "SSA value used before allocation" on seed 1 |
-| Block merging rewrote a merged block's params only in its *own* instructions — a dominated block's use (scope-exit `str_release`) dangled | ir_optimize | same error, second minimization |
-| Branch folding orphaned scope-exit cleanup of partially-defined temps (`false && str_concat(...)`) | ir_optimize | same error, third minimization |
-| String self-assignment (`s = s`) released before retaining — freed the string at refcount zero, then resurrected a dead slot | ir_builder (+ field/element variants) | slab-allocator double-free assert at runtime |
-| Register overflow: call results never expired and windows only grew at the frame top, so call-dense functions hit the 255 cliff | lowering | the known TODO item, now fixed via `reserve_call_window` compaction |
+  inputs stay valid. This plays the role libprotobuf-mutator would, without a
+  protobuf schema.
 
 ## Roadmap: structure-aware fuzzing
 
-Byte-level fuzzing hammers the lexer and error recovery well, but has a ceiling:
-to reach the **semantic analyzer, IR builder, lowering, VM, or C backend**, an
-input must first be a syntactically (and usually semantically) valid program, and
-random mutation almost never produces one. All the Roxy-specific machinery
-(lifetime checking, `when` exhaustiveness, monomorphization, register allocation,
-drop-plan derivation, codegen) is effectively unreachable this way.
-
-Structure-aware fuzzing changes the unit of currency from bytes to a **Roxy AST**,
-generating inputs that are valid by construction so the budget is spent exploring
-the deep passes. Mutations operate on the tree (replace a subtree with another of
-the same kind, insert/delete a statement, swap operands, splice subtrees between
-corpus entries); the tree is unparsed to source and fed to the normal pipeline.
-
 ### The validity spectrum
 
-The crux for a *typed* language: how valid you generate determines which passes
-you reach. Each level is harder than the last and unlocks a deeper layer.
+How valid you generate determines which passes you reach:
 
 | Validity level | Must respect | Reaches |
 |---|---|---|
@@ -220,110 +120,40 @@ you reach. Each level is harder than the last and unlocks a deeper layer.
 | Type-correct | the type system | type checker, IR builder, lowering |
 | Lifetime-correct | `uniq`/`ref`/`weak`, move-state, `when` exhaustiveness | VM, C backend, drop plans, RAII codegen |
 
-### Keeping coverage guidance
+The generator is at "type-correct" today.
 
-There is no need to abandon libFuzzer's evolutionary search. Two standard ways to
-plug in a structural mutator:
+### Remaining Roxy-specific constraints
 
-- **`LLVMFuzzerCustomMutator`** — libFuzzer calls your mutator for the mutation
-  step; corpus entries are serialized trees you deserialize, mutate structurally,
-  and re-serialize. Coverage feedback and the evolving corpus are unchanged.
-- **libprotobuf-mutator (LPM)** — the pragmatic route (used by Chrome, SQLite).
-  Describe the AST as a protobuf schema; LPM provides a coverage-guided mutator
-  over protobuf messages for free. You write only the `proto → Roxy source`
-  converter:
-
-  ```proto
-  message Expr {
-    oneof e {
-      int64  int_lit = 1;
-      Binary binary  = 2;
-      VarRef var     = 3;   // index into in-scope vars, taken mod scope size
-      Call   call    = 4;
-    }
-  }
-  message Binary { BinOp op = 1; Expr lhs = 2; Expr rhs = 3; }
-  ```
-
-  ```cpp
-  DEFINE_PROTO_FUZZER(const roxy_fuzz::Program& p) {
-      std::string src = proto_to_roxy(p);  // the unparser you write
-      compile_and_run(src);                // reuse the existing E2E harness
-  }
-  ```
-
-### Type-directed generation
-
-Making a tree *semantically* valid means building it top-down while carrying a
-context — a type-checker run in reverse:
-
-```
-gen_expr(env, wanted_type):        # produce an expression of `wanted_type` valid in `env`
-    if wanted_type == i32:
-        choose from:
-          literal_i32()
-          VarRef(v)         for v in env.vars_of_type(i32)      # scoping
-          Binary(+, gen_expr(env,i32), gen_expr(env,i32))       # types
-          Call(f, args…)    for f in env.funcs_returning(i32)   # args by their types
-          Cast(i32, gen_expr(env, some_numeric))
-    pick one (weighted, under a depth budget so it terminates)
-```
-
-The `env` mirrors what sema tracks: variables in scope and their types; declared
-functions/structs/enums/traits; generic parameters; and — the Roxy-specific one —
-the **move-state** of `uniq` values. This is the Csmith approach (the C generator
-that found dozens of GCC/LLVM bugs) applied to Roxy's type system.
-
-### Roxy-specific constraints
-
-To get past sema and reach the back end, the generator must not emit a program
-sema would reject:
-
-- **Scoping** — only reference in-scope symbols (pick from an `env` list). Easy.
-- **Types** — the type-directed dispatch above. Medium.
 - **`uniq`/`ref`/`weak` + move-state** — the hard, high-value one. After
   consuming a `uniq` value, the generator must drop it from the usable pool or it
   emits a use-after-move and is rejected before reaching the IR builder. Modeling
   this is exactly the `LifetimeChecker` invariant, and it is where lifetime-,
   drop-, and RAII-codegen bugs hide.
-- **`when` exhaustiveness / tagged unions** — generate the enum and its variants
-  first, stash them in `env`, then emit `when` statements with matching cases.
+- **Tagged unions** — generate the enum and its variants first, then emit
+  variant-field structs and matching `when` statements.
 - **Generics + trait bounds** — only instantiate `<T: Add>` with types that
   implement `Add`; pick call args of the instantiated types.
 
-Build these incrementally: scoping + types first (reaches the IR builder), then
-move-state (reaches codegen).
-
 ### Richer oracles
 
-Once inputs are semantically valid, the oracle can be far stronger than
-crash/hang/OOM:
-
-- **Differential testing** — Roxy has both a VM (`compile_and_run`) and a C backend
-  (`compile_and_run_cpp`). Compile the *same* generated program both ways; the
-  results must match. Any divergence is a miscompilation in one backend — the class
-  of bug unit tests miss most. This is the single highest-value oracle a Roxy
-  structured fuzzer unlocks.
-- **Valid-program-shouldn't-crash-the-compiler** — any well-typed, lifetime-correct
-  program that makes sema/IR/lowering `assert` is a compiler bug by definition
-  (e.g. the since-fixed register-overflow bug: generate a huge function and watch
-  lowering fall over).
+- **Differential testing** — compile the *same* generated program with the VM
+  (`compile_and_run`) and the C backend (`compile_and_run_cpp`); the results must
+  match. Any divergence is a miscompilation in one backend — the class of bug unit
+  tests miss most. This is the single highest-value next oracle (the generated
+  `main` already prints a checksum as its observable output).
+- **Valid-program-shouldn't-crash-the-compiler** — already active: any
+  well-typed program that makes sema/IR/lowering `assert` is a compiler bug. It
+  found five compiler bugs (lowering, `ir_optimize`, string self-assignment,
+  register overflow) in the generator's first campaign.
 - **Round-trip stability** — with an AST→source printer, `parse(unparse(ast))`
-  should be structurally identical to `ast`, and `unparse` idempotent — catching
-  parser/printer disagreements.
+  should be structurally identical to `ast`, and `unparse` idempotent.
 
 ### Staged plan
 
 1. ~~**Syntactic generator**~~ — subsumed: the implemented generator went
-   straight to type-directed output (a custom entropy-driven generator instead
-   of protobuf + LPM; libFuzzer's byte mutation over the entropy stream plays
-   LPM's role).
-2. **Scoping + type-directed generation** — **implemented** (see "Structural
-   generator" above): produces programs that pass sema and reach the IR
-   builder / optimizer / lowering / VM. The valid-program-shouldn't-crash
-   oracle found five compiler bugs in its first campaign. The **VM-vs-C
-   differential** oracle is the next step (the generated `main` already prints
-   a checksum as its observable output).
+   straight to type-directed output.
+2. **Scoping + type-directed generation** — **implemented** (above). Next step:
+   the VM-vs-C differential oracle.
 3. **Move-state / lifetime modeling** — reach the RAII/drop/codegen paths that are
    hardest to cover with hand-written tests (`uniq`/`ref`/`weak`, use-after-move
    avoidance, exceptions, closures, coroutines in generated code).
@@ -335,21 +165,7 @@ cost — but the disagreements are themselves often bugs in one side or the othe
 
 ## Files
 
-| File | Role |
-|---|---|
-| `tests/fuzz/fuzz_targets.hpp` | Harness body declarations + `detail::SourceBuffer` |
-| `tests/fuzz/fuzz_one_{lexer,parser,lsp_parser,structured}.cpp` | Per-component harness bodies (`rx::fuzz::fuzz_one_*`) |
-| `tests/fuzz/fuzz_{lexer,parser,lsp_parser,structured}.cpp` | `LLVMFuzzerTestOneInput` entry points |
-| `tests/fuzz/gen/entropy.hpp` | Dual-mode decision source (seeded PRNG / fuzzer bytes) |
-| `tests/fuzz/gen/generator.{hpp,cpp}` | Type-directed program generator (`rx::gen`) |
-| `tests/fuzz/gen/gen_main.cpp` | `roxy_gen` benchmark-corpus CLI |
-| `tests/fuzz/corpus/` | Seed corpus + saved crash reproducers |
-| `tests/fuzz/README.md` | Build/run quickstart |
-| `tests/unit/test_fuzz_regression.cpp` | Always-on `Fuzz Regression` doctest replay |
-| `tests/unit/test_structured_gen.cpp` | Always-on `Structured Gen` fixed-seed replay (compile + run) |
-| `CMakeLists.txt` | `ENABLE_FUZZERS` option + fuzz executables; `roxy_gen_lib`/`roxy_gen` (always built) |
-
-The fuzz targets link `roxy_shared` (lexer), `roxy_compiler` (parser),
-`roxy_lsp` (LSP parser), and the full VM stack (`fuzz_structured`); the
-regression replays are compiled into `roxy_tests`. The generator library and
-`roxy_gen` CLI build in every configuration (no fuzzer toolchain needed).
+`tests/fuzz/` holds the harness bodies and entry points, `gen/` (generator,
+`entropy.hpp`, the `roxy_gen` CLI in `gen_main.cpp`), and `corpus/` (seed corpus +
+fixed crash reproducers). The generator library and `roxy_gen` CLI build in every
+configuration (no fuzzer toolchain needed).

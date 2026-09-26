@@ -28,9 +28,9 @@ print(my_struct);   // fallback: print(my_struct.to_string())
   under one local name; a local definition colliding with an import is a
   redefinition error, so a set never accretes members across modules.
 - Identical parameter lists (even with different return types) are
-  **redefinition errors**. This turned "user redefines a builtin native"
-  (e.g. `fun print(s: string)`) from a silent shadow into an error;
-  *extending* the set with a new signature (`fun print(m: Matrix)`) is allowed.
+  **redefinition errors** — so redefining a builtin native
+  (`fun print(s: string)`) is an error, while *extending* the set with a new
+  signature (`fun print(m: Matrix)`) is allowed.
 
 ## Symbol representation (symbol_table.{hpp,cpp})
 
@@ -58,15 +58,13 @@ $ol$<name>$<param1>$<param2>...     e.g.  $ol$print$i32, $ol$f$List$i32$string
   folds it to `_ol_print_i32`.
 - Param spellings come from `mangle_type_name` (the same canonical
   type-component speller generics use). Return types are excluded.
-- **Single definitions are never mangled** — their behavior (symbol name, IR
-  name, `vm_call(&vm, "main")`, embedder lookups) is byte-identical to before
-  overloading existed. Module-local mangling composes outside:
-  `mod::$ol$f$i32`.
+- **Single definitions are never mangled**, so symbol names, IR names,
+  `vm_call(&vm, "main")` and embedder lookups are unaffected by overloading.
+  Module-local mangling composes outside: `mod::$ol$f$i32`.
 
 Script members record their mangle in `FunDecl::overload_mangled_name`
 (back-filled on every member when a set first reaches size 2); native members
-are keyed by it in the registry (`NativeFunctionEntry::name`) with the
-source-visible name in `NativeFunctionEntry::source_name`.
+are keyed by it in the registry, with the source-visible name kept separately.
 
 ## Resolution (semantic.cpp: analyze_overloaded_call)
 
@@ -92,11 +90,10 @@ never enter this path.
      gets a chance.
    - A deferred function-ref argument (generic-template or overloaded ref)
      matches any function-typed position and coerces against the winner.
-3. **Phase C** — commit: assignability diagnostics + literal coercion against
-   the winner's params, noncopyable-argument consumption, and the sema→IR
-   annotations: `CallExpr.mangled_name` = the member's flat name (registry
-   key for natives), callee `resolved_sym` = the winning member, callee
-   `resolved_type` = its function type.
+3. **Phase C** — commit against the winner: assignability diagnostics,
+   literal coercion, noncopyable-argument consumption, and the sema→IR
+   annotation `CallExpr.mangled_name` (the member's flat name — the registry
+   key for natives).
 
 Known determinism edge (documented, intended): `f(i64)` + `f(f32)` called
 with literal `42` → settles i32 (no exact match), both assignable →
@@ -106,12 +103,10 @@ ambiguity error.
 
 When no `print` overload matches, the single argument is plain, and
 `type_implements_printable(arg)` holds, sema rewrites the call to
-`print(arg.to_string())`: a hand-annotated GetExpr+CallExpr wrapper around the
-already-analyzed argument (never re-analyzed — single-shot rule; precedent:
-`inject_default_method`), resolved to the `$ol$print$string` member. The tree
-is indistinguishable from user-written `print(x.to_string())`, so string-temp
-lifetimes come free. This is what makes `print(vec)` / `print(color)` /
-`print(items)` work for every Printable struct, enum, and container.
+`print(arg.to_string())`: a hand-annotated wrapper around the
+already-analyzed argument (never re-analyzed — single-shot rule), resolved to
+the `$ol$print$string` member. The tree is indistinguishable from user-written
+`print(x.to_string())`, so string-temp lifetimes come free.
 
 ## Overloaded references in value position
 
@@ -120,27 +115,19 @@ A bare reference to an overloaded name (`var g = f`) can't pick a member —
 (mirroring the generic-template-ref deferral). `coerce_overloaded_fun_ref`
 fires at the same four sites (var init, return, call arg, struct field) and
 picks the member whose interned function type equals the expected type
-(pointer equality), stashing the flat name in `IdentifierExpr.mangled_name`
-and the member in `resolved_sym`. No target type → "reference to overloaded
+(pointer equality). No target type → "reference to overloaded
 function is ambiguous" (the var-init site checks even without an annotation).
 This is what keeps `greet_via(print, "hello")` and `var p: fun(string) =
 print` working.
 
 ## IR / backends
 
-- `build_function` emits members under `overload_mangled_name`; the member's
-  return type is read from its own chain symbol (the head's would be the
-  wrong member's).
-- `gen_call_direct` uses `CallExpr.mangled_name` as the callable name — a
-  registry key probes as CallNative, otherwise a plain Call (module-local
-  wrapped for non-pub members via the winner's `resolved_sym`). The
-  imported-alias rewrite (`original_name`) only applies when sema recorded no
-  mangled name.
-- `gen_identifier_expr` builds Native/ImportedNative/Script/ImportedScript
-  `FunctionRefTarget`s for coerced refs from `resolved_sym` + `mangled_name`.
-- The C emitter's static native map carries a row per `$ol$print$*` key →
-  `roxy_print_*` runtime functions. There is **no registry entry literally
-  named "print"** anymore.
+- IR names each member by `overload_mangled_name`; calls use
+  `CallExpr.mangled_name` (a registry key becomes CallNative, otherwise a plain
+  Call). A member's return type must be read from its own chain symbol, not the
+  head's.
+- The C emitter maps each `$ol$print$*` key to a `roxy_print_*` runtime
+  function. There is **no registry entry literally named "print"**.
 
 ## Modules
 

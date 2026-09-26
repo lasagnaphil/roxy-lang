@@ -8,11 +8,7 @@ Structs are value types laid out sequentially in memory (slot-based, no padding)
 
 `uniq T` fields break the cycle: they are pointer-sized (2 slots = 8 bytes) regardless of `T`'s layout. `uniq` is also nullable — `nil` can be assigned to `uniq` variables and fields — providing the natural base case for recursion.
 
-Three things make recursive types work:
-
-1. **Self-reference resolution.** The semantic analyzer registers struct names in Pass 1, so a field of type `uniq Node` inside `Node` resolves in Pass 2. `get_type_slot_count()` returns 2 for any `uniq T` without resolving `T`'s full layout, which breaks the recursion in slot-count computation. Mutually recursive structs (A contains `uniq B`, B contains `uniq A`) resolve the same way.
-2. **Cycle detection.** A direct value-type cycle without indirection produces a clear "infinite size" error instead of looping forever.
-3. **Recursive destruction.** Cleanup of recursive ownership chains is descriptor-driven, so deep chains destroy without overflowing the native stack.
+Self-reference resolves because struct names are registered before members, and `get_type_slot_count()` returns 2 for any `uniq T` without resolving `T`'s layout. Mutually recursive structs (A contains `uniq B`, B contains `uniq A`) resolve the same way.
 
 ## Syntax
 
@@ -37,23 +33,6 @@ fun main(): i32 {
 ```
 
 ## Patterns
-
-### Linked List
-
-```roxy
-struct ListNode {
-    value: i32;
-    next: uniq ListNode;
-}
-
-fun list_push(node: ref ListNode, value: i32) {
-    var current: ref ListNode = node;
-    while (current.next != nil) {
-        current = current.next;
-    }
-    current.next = uniq ListNode { value = value, next = nil };
-}
-```
 
 ### Binary Tree
 
@@ -127,24 +106,14 @@ error: recursive struct type 'Node' has infinite size; use 'uniq Node' for indir
 
 When a `uniq` owner goes out of scope, its destructor runs and the object is freed; for a recursive structure this cascades through owned `uniq` fields until `nil` is reached.
 
-Originally each node re-entered the bytecode interpreter to run its destructor (`interpret()` → `call_cleanup_destructor` → `delete_value` → `interpret()` …), pushing a full interpreter stack frame per ownership level — a 500-node linked list overflowed the native stack.
+Re-entering the bytecode interpreter per node to run its destructor pushes a full interpreter frame per ownership level (a 500-node list overflowed the native stack), so cleanup is **descriptor-driven** where possible: parentless structs with a synthetic (compiler-generated) default destructor encode their owned-field cleanup as data — a `BCDeleteDesc` with `WalkFields` cleanup listing each owned field as a `(slot_offset, field_desc)` action, with discriminant-guarded actions for tagged-union variant fields. The runtime walks these directly in C++ (`delete_value`, `vm/interpreter.cpp`), exactly as `List`/`Map` element cleanup does. Descriptors are memoized per type in `lowering.cpp` with reservation-before-recursion, so a self-referential struct yields a finite, self-referencing descriptor. Deep lists destroy cleanly into the tens of thousands of nodes.
 
-**Descriptor-driven cleanup.** Parentless structs with a synthetic (compiler-generated) default destructor encode their owned-field cleanup as data: a `BCDeleteDesc` with cleanup `WalkFields` (plus `free_obj` for a heap object) listing each owned field as a `(slot_offset, field_desc)` action, with discriminant-guarded actions for tagged-union (`when`-clause) variant fields. The runtime walks these fields directly in C++ (`delete_value`, `vm/interpreter.cpp`) instead of running a bytecode destructor, exactly as `List`/`Map` element cleanup does. The descriptor is built once per type and memoized (`m_delete_desc_cache` in `lowering.cpp`) with reservation-before-recursion, so a self-referential struct yields a finite, self-referencing descriptor.
-
-This removes the heavyweight `interpret()` re-entry per node: destruction now recurses only through small `delete_value` frames, raising the practical depth limit by ~100× (deep linked lists destroy cleanly into the tens of thousands of nodes). Structs with a **user-defined** destructor, or that use **inheritance**, keep the original bytecode-destructor path — their bodies must run via the interpreter, and inherited-field cleanup chains through parent destructors.
+Structs with a **user-defined** destructor, or that use **inheritance**, keep the bytecode-destructor path — their bodies must run via the interpreter, and inherited-field cleanup chains through parent destructors.
 
 **Remaining limit.** `delete_value` is still recursive in C++, so a sufficiently deep chain (hundreds of thousands of nodes) can still overflow. A fully bounded fix would make `delete_value` iterative via an explicit work-stack; this is deliberately deferred as it is not needed in practice.
 
 ### Reassigning a `uniq` field
 
-Assigning to a `uniq` field that already holds a value (`node.next = uniq Node { ... }`) deletes the old value first — recursively cleaning up the old subtree, with a null check that skips deletion when the field is `nil` — then stores the new pointer. This is the same behavior as any other `uniq` field reassignment.
+Assigning to a `uniq` field that already holds a value (`node.next = uniq Node { ... }`) deletes the old value first — recursively cleaning up the old subtree, with a null check that skips deletion when the field is `nil` — then stores the new pointer.
 
-## Files
-
-| File | Purpose |
-|---|---|
-| `src/roxy/compiler/sema/semantic.cpp` | Self-reference resolution, direct value-cycle detection |
-| `src/roxy/compiler/codegen/lowering.cpp` | `BCDeleteDesc` construction, `m_delete_desc_cache` memoization |
-| `include/roxy/vm/bytecode.hpp` | `BCDeleteDesc` definition (`WalkFields` cleanup, `free_obj`) |
-| `src/roxy/vm/interpreter.cpp` | `delete_value` descriptor-driven cleanup |
-| `tests/e2e/test_recursive_types.cpp` | E2E tests |
+**Tests:** `tests/e2e/test_recursive_types.cpp`
