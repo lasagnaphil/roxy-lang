@@ -58,9 +58,7 @@ throw_stmt   = "throw" expression ";" ;
 
 ## Exception Trait
 
-The `Exception` trait is registered as a built-in during semantic analysis (same pattern as `Printable` and `Hash`). It requires a single method, `message(): string`.
-
-The analyzer checks that each thrown expression's type implements `Exception`, failing with `"thrown type 'X' does not implement the Exception trait"` otherwise.
+`Exception` is a builtin trait (like `Printable` and `Hash`) requiring `message(): string`; every thrown type must implement it.
 
 **Catch-all type:** A `catch (e)` with no type annotation gives `e` the opaque `ExceptionRef` type (`TypeKind::ExceptionRef`). Only `message()` is callable on it — field access and other method calls are rejected. This needs only a single stored function index, avoiding a `dyn Trait` mechanism.
 
@@ -87,17 +85,15 @@ try {
 }
 ```
 
-**Registration.** `KeyError` and `IndexError` are registered once in the shared
-`TypeEnv` during semantic analysis (`register_builtin_exception_types`, right
-after the `Exception` trait), as decl-less, fieldless structs implementing
-`Exception`. Because they live in the shared `TypeEnv`, every module — and every
-single-source compile path — can name them in a `catch` without a per-module
-symbol or a prelude module. Their `message()` bodies are synthesized on demand by
-the IR builder like container `to_string` (`request_exception_message` →
-`build_exception_messages`, a module-local `KeyError$$message` returning a fixed
-string). The C backend needs the struct definitions too, so the throw / message
-sites call `register_backend_exception_type` to push the type into
-`IRModule::struct_types` (the VM ignores that list).
+**Registration.** `KeyError` and `IndexError` are decl-less, fieldless structs
+implementing `Exception`, registered once in the shared `TypeEnv`
+(`register_builtin_exception_types`) so every module — and every single-source
+compile path — can name them in a `catch` without a per-module symbol or a prelude
+module. Their `message()` bodies are synthesized on demand by the IR builder, like
+container `to_string` (`request_exception_message`). The C backend also needs the
+struct definitions, so the throw / message sites push the type into
+`IRModule::struct_types` (`register_backend_exception_type`; the VM ignores that
+list).
 
 > The messages are intentionally generic — `KeyError` does not embed the
 > offending key (arbitrary key types can't be formatted uniformly) and
@@ -112,12 +108,9 @@ stay single-probe: a new `IROp::IndexTryAddr` (VM opcode `INDEX_TRYADDR_MAP`; C
 branches on `ptr == 0` to a `throw KeyError` block, and the hit path loads the
 value from `ptr` (`LoadPtr` for an inline value; a struct value re-reads via
 `IndexGet`, the uncommon case). Both throws reuse the ordinary `New` + `Throw` +
-unwinding machinery, so `finally`, cross-frame propagation, and both backends
-work for free.
+unwinding machinery, so `finally` and cross-frame propagation need nothing extra.
 
 ## Pipeline
-
-The lexer recognizes four keywords (`KwTry`, `KwCatch`, `KwThrow`, `KwFinally`). The parser produces `ThrowStmt`, `TryStmt`, and `CatchClause` AST nodes (see `ast.hpp`); semantic analysis validates thrown/caught types against `Exception`, resolves catch variable types, enforces catch-all-last, and assigns `ExceptionRef` to catch-all variables.
 
 **IR generation.** `throw` emits `IROp::Throw` (unary operand = exception pointer) followed by an `Unreachable` terminator. A `try/catch/finally` generates this control flow:
 
@@ -129,24 +122,12 @@ The lexer recognizes four keywords (`KwTry`, `KwCatch`, `KwThrow`, `KwFinally`).
    └─ no match       → re-throw
 ```
 
-Handler/finally metadata is recorded on `IRFunction` as `IRExceptionHandler` (try-block range, handler block, `type_id` to match with 0 = catch-all, type name) and `IRFinallyInfo` (see `ssa_ir.hpp`). `finally` is realized by duplicating the finally body per exit path. Variables modified inside try/catch/finally bodies are propagated to the after-try merge via block arguments, like `if`/`when`.
+Handler/finally metadata is recorded on `IRFunction` (`IRExceptionHandler`, `IRFinallyInfo`; `type_id` 0 = catch-all). `finally` is realized by duplicating the finally body per exit path. Variables modified inside try/catch/finally bodies are propagated to the after-try merge via block arguments, like `if`/`when`.
 
-**Bytecode lowering.** `IROp::Throw` lowers to the `THROW` opcode (`0xD2`, ABC: throw `regs[a]`). Handler metadata is translated from block IDs to PC offsets as `BCExceptionHandler` (protected `[try_start_pc, try_end_pc)` range, `handler_pc`, `type_id`, and the `exception_reg` to receive the exception pointer in the handler — see `bytecode.hpp`).
+**Bytecode lowering / runtime.** Handler metadata is translated from block IDs to PC ranges (`BCExceptionHandler`). `THROW` stows the exception pointer and its header `type_id` as the VM's in-flight exception, then unwinds: in each frame it scans the handler table in order for a range covering the PC whose `type_id` matches (or is catch-all); on a match it jumps to the handler with the exception in `exception_reg`, otherwise it runs the frame's PC-range cleanup records (`execute_cleanup`), pops the frame, and continues in the caller. The matched-handler path also runs the cleanup records for the scopes it exits. An empty call stack frees the exception and fails with "Unhandled exception".
 
-**Runtime.** `THROW` reads the exception pointer from a register, extracts `type_id` from its `ObjectHeader`, and stows both in VM state (`in_flight_exception`, `in_flight_exception_type_id`) before entering the unwinding loop:
-
-1. Take the current frame's function and PC offset.
-2. Scan `exception_handlers` in order for a handler whose range covers the PC (`try_start_pc <= pc < try_end_pc`) and whose `type_id` matches (or is catch-all, `type_id == 0`).
-3. If found: set PC to `handler_pc`, store the exception pointer in `exception_reg`, clear `in_flight_exception`, resume.
-4. If not: run the frame's PC-range cleanup records (`execute_cleanup`), pop it, and continue unwinding in the caller. (The matched-handler path in step 3 also runs the cleanup records for scopes it exits.)
-5. If the call stack empties: free the exception object, set `vm->error = "Unhandled exception"`, and return false.
-
-**C backend.** The AOT path can't use the VM's runtime PC-range handler table, so
-it lowers the same IR (handlers, `finally` duplication, `cleanup_info`) with a
-**checked-return** model: a thread-local in-flight exception, per-try
-`__dispatch_<id>` labels reached by `throw` / a pending-after-call check, and
-null-guarded per-frame cleanup reusing `emit_typed_delete`. See
-`docs/internals/c-backend.md` ("Exceptions").
+**C backend.** With no runtime PC-range table, the AOT path lowers the same IR with a
+**checked-return** model; see [c-backend.md → Exceptions](c-backend.md#exceptions).
 
 ## Exception object lifetime
 
@@ -169,9 +150,7 @@ paths carry an **in-flight guard**: the VM's `object_free` / `delete_value` skip
 `roxy_exception_current()`. So a catch scope's cleanup record firing during a
 re-throw's unwind is a no-op for the object being re-thrown; the eventual handler
 frees it once. This makes `throw e`, `throw new` (frees the old, unwinds the new),
-and conditional re-throw all correct without per-path bookkeeping. (Lifetime audit
-finding 9a; tests in the `E2E Exceptions` suite assert dtor ordering/count on both
-backends.)
+and conditional re-throw all correct without per-path bookkeeping.
 
 ## RPO Block Reordering
 
@@ -190,26 +169,9 @@ Catch (handler) blocks are not reachable through normal control flow — they're
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `include/roxy/shared/token_kinds.hpp` | `KwTry`, `KwCatch`, `KwThrow`, `KwFinally` tokens |
-| `include/roxy/compiler/parse/ast.hpp` | `ThrowStmt`, `TryStmt`, `CatchClause` AST nodes |
-| `src/roxy/compiler/parse/parser.cpp` | `throw_statement()`, `try_statement()` |
-| `include/roxy/compiler/types/types.hpp` | `TypeKind::ExceptionRef` |
-| `src/roxy/compiler/sema/semantic.cpp` | Exception trait registration, `register_builtin_exception_types` (KeyError/IndexError), throw/try analysis |
-| `src/roxy/compiler/ir/ir_builder.cpp` | `emit_throw_builtin_exception`, `emit_list_bounds_check`, `request_exception_message`/`build_exception_messages`, `register_backend_exception_type` |
-| `include/roxy/vm/bytecode.hpp` / `src/roxy/vm/interpreter.cpp` | `INDEX_TRYADDR_MAP` opcode (nullable map find) |
-| `tests/e2e/test_index_exceptions.cpp` | Index-operator exception E2E suite (both backends) |
-| `include/roxy/compiler/ir/ssa_ir.hpp` | `IROp::Throw`, `IRExceptionHandler`, `IRFinallyInfo` |
-| `src/roxy/compiler/ir/ir_builder_stmt.cpp` | `gen_throw_stmt()`, `gen_try_stmt()` (registers the caught exception as a catch-scope owned local — finding 9a) |
-| `src/roxy/compiler/ir/ir_builder_lifetime.cpp` | `emit_implicit_destroy` (catch-all `ExceptionRef` type-erased free) |
-| `src/roxy/compiler/ir/ssa_ir.cpp` | RPO reordering with handler block seeding |
-| `include/roxy/vm/bytecode.hpp` | `THROW` opcode, `BCExceptionHandler` |
-| `src/roxy/compiler/codegen/lowering.cpp` | Throw lowering, handler table PC translation |
-| `include/roxy/vm/vm.hpp` | `in_flight_exception`, `in_flight_exception_type_id` |
-| `src/roxy/vm/interpreter.cpp` | THROW handler, unwinding loop |
-| `src/roxy/vm/object.cpp` | `object_free` in-flight guard (skip the exception under unwind — finding 9a) |
-| `src/roxy/compiler/codegen/c_emitter.cpp` | `emit_cleanup_records` in-flight guard (`roxy_exception_current()`) |
-| `src/roxy/rt/roxy_rt.{h,cpp}` | `roxy_exception_current()` (C-backend in-flight accessor) |
-| `src/roxy/compiler/ir/ir_validator.cpp` | Throw/handler validation |
-| `tests/e2e/test_exceptions.cpp` | E2E test suite (incl. exception-lifecycle cases: dtor once, re-throw hand-off, new-throw, return/finally, catch-all reclamation) |
+- `compiler/ir/ir_builder_stmt.cpp` — `gen_throw_stmt`, `gen_try_stmt` (catch-scope ownership of the caught exception)
+- `compiler/ir/ir_builder.cpp` — index-operator throws, synthesized `message()` bodies
+- `compiler/codegen/lowering.cpp` — handler-table PC translation
+- `vm/interpreter.cpp` — `THROW` and the unwinding loop; `vm/object.cpp` — in-flight guard
+- `compiler/ir/ssa_ir.cpp` — RPO reordering with handler seeding
+- `tests/e2e/test_exceptions.cpp`, `tests/e2e/test_index_exceptions.cpp`

@@ -95,26 +95,13 @@ var r = identity(42);        // r : i32
 
 - **In declarations** (`fun name<`, `struct Name<`): always generic params — unambiguous after the keyword.
 - **In type annotations** (after `:`): always generic args — `type_expression()` runs only in type position, where `<` is never comparison.
-- **In expression position** (`identifier<types>(` vs `a < b`):
-  1. Save parser state (tokens + lexer position).
-  2. Try parsing comma-separated type expressions, then `>`.
-  3. If `>` is followed by `(`, `{`, or `.` → commit as generic call/literal/named constructor.
-  4. Otherwise → restore state, parse `<` as comparison.
+- **In expression position** (`identifier<types>(` vs `a < b`): save parser + lexer state, try parsing a type list and `>`; commit as a generic call/literal/named constructor only if `>` is followed by `(`, `{`, or `.`, otherwise restore and parse `<` as comparison.
 
 ## Monomorphization
 
 Each unique instantiation generates specialized code, named by mangling:
 
-```
-function<T>       -> function$T
-function<T, U>    -> function$T$U
-Struct<T>         -> Struct$T
-Struct<T>.method  -> Struct$T$$method
-```
-
-So `identity<i32>` → `identity$i32`, `Pair<i32, f64>` → `Pair$i32$f64`, `Box<i32>.get` → `Box$i32$$get`.
-
-Slot layout is computed per instantiation: `Pair<i32, i32>` is 2 slots, `Pair<i64, i32>` is 3, `Pair<Point, f64>` is 4 (if `Point` is 2 slots).
+`identity<i32>` → `identity$i32`, `Pair<i32, f64>` → `Pair$i32$f64`, `Box<i32>.get` → `Box$i32$$get`. Layout is computed per instantiation.
 
 ### How it works
 
@@ -123,8 +110,6 @@ Generic functions and structs are registered as **templates** in `GenericInstant
 Lambdas inside template bodies clone like everything else: the cloner substitutes the lambda's parameter/return `TypeExpr`s, deep-clones its body and capture list, and resets the analysis annotations so each instantiation synthesizes its own env struct and lifted call function. For cross-module instances (drained by `Compiler::analyze_all`'s fixed-point loop), those synthesized call functions are persisted into the owning module's `synthetic_decls` so the IR builder emits them.
 
 A post-Pass-3 **worklist loop** processes pending instances (structs first, then functions) until none remain, since generic function bodies can trigger further struct instantiations. A generic struct's fields and method signatures are resolved inline on first instantiation (not deferred) so same-pass users can access them; method/ctor/dtor *bodies* are analyzed later in the worklist.
-
-The core records — `TypeSubstitution` (param names → concrete types), `GenericFunInstance`, and `GenericStructInstance` (mangled name, original/instantiated decls, concrete `Type*`, cloned methods/ctors/dtors) — live in `compiler/types/generics.hpp`.
 
 ## Trait bounds
 
@@ -139,7 +124,7 @@ struct HashBox<T: Hash> { value: T; }
 
 ### Instantiation-site checking (Phase A)
 
-At every instantiation site, the compiler verifies the concrete type satisfies each bound. The five sites are: explicit/inferred generic function calls, explicit generic struct constructor calls, and explicit/inferred generic struct literals.
+At every instantiation site (`check_type_arg_bounds`), the compiler verifies the concrete type satisfies each bound. The five sites are: explicit/inferred generic function calls, explicit generic struct constructor calls, and explicit/inferred generic struct literals. Bounds are resolved to `TraitBound` records in Pass 1.9 (`resolve_generic_bounds`).
 
 ```roxy
 identity_printable<i32>(42);      // OK: i32 implements Printable
@@ -178,16 +163,9 @@ bodies work there — `max2<T: Ord>` with `a < b` or `a.lt(b)` runs at `i32`,
 
 Phase B is check-only, but the analysis walkers rewrite the tree they walk (the single-shot analysis rule — see the annotation contract in `ast.hpp`), and the template's pristine AST is the clone source for every later instantiation. So the walk operates on throwaways, and its artifacts are quarantined:
 
-- The body (and each param/return TypeExpr) is an **identity-substitution clone** — the template itself is never touched. Walking the template in place used to corrupt it for any instantiation triggered after the walk (lambda captures rewritten to `__env` reads, generic TypeExprs mangled with `type_args` cleared).
+- The body (and each param/return TypeExpr) is an **identity-substitution clone** — the template itself is never touched. Walking it in place corrupts it for any later instantiation (lambda captures rewritten to `__env` reads, generic TypeExprs mangled with `type_args` cleared).
 - Lambdas synthesized during the walk are dropped from the synthetic-decl list afterwards (each real instantiation synthesizes its own closure from its own clone).
 - A generic struct named with a type-param argument (`Holder<T>` in the body) produces an **abstract instance** (`is_abstract` on `GenericStructInstance`) that exists only to give the walk field/method types. Abstract instances are skipped by the IR builder and by the member-body worklist, and their mangled names use a reserved `$`-prefixed argument segment (`Holder$$T`) so they can never collide with a concrete instance (a user struct literally named `T` mangles to the distinct `Holder$T`).
-
-### Pipeline
-
-- **Parsing:** `parse_type_params()` parses `: Trait1 + Trait2<Args>` after each parameter name.
-- **Resolution:** `resolve_generic_bounds()` (Pass 1.9) resolves bound expressions to `TraitBound` records in `GenericInstantiator`.
-- **Phase A:** `check_type_arg_bounds()` at the five instantiation sites.
-- **Phase B:** `analyze_generic_template_body()` during `analyze_function_bodies()` for bounded generic functions.
 
 ## Grammar
 
@@ -214,14 +192,7 @@ type_expr       -> ( "uniq" | "ref" | "weak" )? Identifier generic_args? ;
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `include/roxy/compiler/types/generics.hpp` | `GenericInstantiator`, `TypeSubstitution`, instance records |
-| `src/roxy/compiler/types/generics.cpp` | Instantiation, AST cloning with substitution, name mangling |
-| `include/roxy/compiler/parse/ast.hpp` | `TypeParam`, `type_params`/`type_args` on decls and exprs |
-| `include/roxy/compiler/types/types.hpp` | `TypeKind::TypeParam` for unresolved type parameters |
-| `include/roxy/shared/lexer.hpp` | `save_position()` / `restore_position()` for trial-parse backtracking |
-| `src/roxy/compiler/sema/generic_call_resolver.cpp` | Type-arg unification/inference, generic call analysis, template refs, bounds resolution/checking, Phase B body checking (`GenericCallResolver`) |
-| `src/roxy/compiler/sema/semantic.cpp` | Template registration (Pass 1), generic-instance worklists, generic struct field resolution |
-| `src/roxy/compiler/ir/ir_builder.cpp` | IR generation for generic instances |
-| `tests/e2e/test_generics.cpp` | E2E tests (incl. Phase A/B trait bounds and generic struct methods) |
+- `compiler/types/generics.{hpp,cpp}` — `GenericInstantiator`, instance records, AST cloning with substitution
+- `compiler/sema/generic_call_resolver.cpp` — unification/inference, generic calls, bounds, Phase B
+- `compiler/sema/semantic.cpp` — template registration and the instance worklists
+- `tests/e2e/test_generics.cpp`

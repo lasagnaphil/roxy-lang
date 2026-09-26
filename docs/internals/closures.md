@@ -67,13 +67,11 @@ A function value is a `uniq` pointer to a heap-allocated **env struct** (2 slots
 [ObjectHeader][__call_idx: u32][capture_0]...[capture_N]
 ```
 
-`__call_idx` (slot 0) is the target function's index; `CALL_INDIRECT` reads it to dispatch. Captures follow in declaration order with their natural slot counts. Function values are `uniq`-flavored — owned by one variable, moved when passed, shared via `ref fun(...)` — so the existing move tracker, cleanup records, and typed delete handle destruction, including a synthesized destructor for noncopyable captures.
-
-`TypeKind::Function` is the user-facing signature type; at codegen, function values are 2-slot pointers, type-erased from their concrete `__lambda_<id>_env` type. Closures reuse the `Ptr` value variant — no new runtime type.
+Captures follow `__call_idx` in declaration order. Function values are `uniq`-flavored — owned by one variable, moved when passed, shared via `ref fun(...)` — so the existing move tracker, cleanup records, and typed delete handle destruction, including a synthesized destructor for noncopyable captures. `TypeKind::Function` is the user-facing signature type; at codegen, function values are type-erased from their concrete `__lambda_<id>_env` type.
 
 ### Calling a borrowed function (`ref fun`)
 
-A `ref fun(...)` / `weak fun(...)` borrows a function value. Since a borrow shares the env-pointer representation, it is **callable**: the call paths (`analyze_regular_fun_call`, and the IR builder's local-var / struct-field / general indirect-call dispatch) unwrap the borrow with `base_type()` before reading `__call_idx`, then emit the same `CALL_INDIRECT`. This is what lets `List<fun>` indexing return a `borrowed fun` (= `ref fun`, see [lifetimes.md → The `borrowed` type modifier](lifetimes.md#the-borrowed-type-modifier)) that callers can both store and invoke without moving the closure out of the list.
+A `ref fun(...)` / `weak fun(...)` borrows a function value. Since a borrow shares the env-pointer representation, it is **callable**: every call path unwraps the borrow with `base_type()` before reading `__call_idx`. This is what lets `List<fun>` indexing return a `borrowed fun` (= `ref fun`, see [lifetimes.md → The `borrowed` type modifier](lifetimes.md#the-borrowed-type-modifier)) that callers can both store and invoke without moving the closure out of the list.
 
 A bare `fun` value also **converts** to `ref fun` / `weak fun` (`can_convert_ref`, mirroring `uniq → ref` / `uniq → weak` — a closure value is a heap env pointer), so passing a function to a borrowed-function parameter works and the caller keeps ownership. `fun → weak fun` runs through `WeakCreate` (`maybe_wrap_weak`) to capture the env's generation.
 
@@ -94,7 +92,7 @@ fun make_adder(n: i32): fun(i32) -> i32 {
 }
 ```
 
-The analyzer synthesizes the env struct type and the lifted `__lambda_<id>_call` function per lambda. The IR builder emits `IROp::Closure` (allocate env, store `__call_idx` + captures) and `IROp::CallIndirect` for calls through a function-typed value. Lowering expands `Closure` into `NEW_OBJ` + `SET_FIELD`s and emits `CALL_INDIRECT` (0xDD); the interpreter reads `__call_idx`, places the env pointer in the callee's first register, and copies the explicit args after it.
+The analyzer (`LambdaLifter`) synthesizes the env struct type and the lifted `__lambda_<id>_call` function per lambda. The IR builder emits `IROp::Closure` (allocate env, store `__call_idx` + captures) and `IROp::CallIndirect` for calls through a function-typed value; at runtime `CALL_INDIRECT` reads `__call_idx` and passes the env pointer as the callee's first argument.
 
 ### Function references
 
@@ -110,12 +108,8 @@ Trampolines are cached per target name. Generic templates are monomorphized at t
 
 ### C backend
 
-Closures also work through the AOT C backend. Lifted call functions and env
-structs emit like ordinary functions/structs; `CallIndirect` dispatches through a
-per-module `g_closure_fns[]` table indexed by `__call_idx` (the AOT analogue of the
-VM's function table), and a type-erased `__closure_delete` runs env destructors.
-`AssertHeap` maps to a `roxy_heap_owns` trap. See `docs/internals/c-backend.md`
-("Closures").
+The C backend dispatches through a per-module `g_closure_fns[]` table indexed by
+`__call_idx`; see [c-backend.md → Closures](c-backend.md#closures).
 
 ### Nested closures
 
@@ -130,12 +124,6 @@ Captures flow through every enclosing lambda boundary: an inner lambda capturing
 
 ## Files
 
-| File | Purpose |
-|---|---|
-| `src/roxy/compiler/parse/parser.cpp` | `fun(T)->R` types, lambda + capture-list parsing |
-| `src/roxy/compiler/sema/lambda_lifter.cpp` | capture analysis, lambda lifting, env-struct synthesis, self-capture modes (`LambdaLifter`, driven by the semantic analyzer) |
-| `src/roxy/compiler/ir/ir_builder_expr.cpp` | `IROp::Closure` / `CallIndirect`, function-reference trampolines |
-| `src/roxy/compiler/codegen/lowering.cpp` | `Closure` → `NEW_OBJ` + `SET_FIELD`; `CALL_INDIRECT` |
-| `include/roxy/vm/bytecode.hpp` | `CALL_INDIRECT` (0xDD), `ASSERT_HEAP` (0xDE) |
-| `src/roxy/vm/interpreter.cpp` | `CALL_INDIRECT` / `ASSERT_HEAP` handlers |
-| `tests/e2e/test_closures.cpp` | E2E tests |
+- `compiler/sema/lambda_lifter.cpp` — capture analysis, lifting, env-struct synthesis, self-capture modes
+- `compiler/ir/ir_builder_expr.cpp` — `Closure` / `CallIndirect`, function-reference trampolines
+- `tests/e2e/test_closures.cpp`
