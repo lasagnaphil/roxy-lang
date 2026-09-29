@@ -1479,9 +1479,12 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
         short_circuit_args[0] = {false_val};
         finish_block_branch(left, right_block->id, merge_block->id, {}, short_circuit_args);
 
-        // Evaluate right side, pass result to merge
+        // Evaluate right side, pass result to merge. Its temporaries exist only
+        // on this path, so they die here (see release_temps_since).
         set_current_block(right_block);
+        u32 rhs_temps = m_ownership.count();
         ValueId right = gen_expr(binary_expr.right);
+        release_temps_since(rhs_temps);
         Span<BlockArgPair> right_args = alloc_span<BlockArgPair>(1);
         right_args[0] = {right};
         finish_block_goto(merge_block->id, right_args);
@@ -1504,9 +1507,12 @@ ValueId IRBuilder::gen_binary_expr(Expr* expr) {
         short_circuit_args[0] = {true_val};
         finish_block_branch(left, merge_block->id, right_block->id, short_circuit_args, {});
 
-        // Evaluate right side, pass result to merge
+        // Evaluate right side, pass result to merge (temporaries die here, as
+        // for `&&`).
         set_current_block(right_block);
+        u32 rhs_temps = m_ownership.count();
         ValueId right = gen_expr(binary_expr.right);
+        release_temps_since(rhs_temps);
         Span<BlockArgPair> right_args = alloc_span<BlockArgPair>(1);
         right_args[0] = {right};
         finish_block_goto(merge_block->id, right_args);
@@ -1559,25 +1565,49 @@ ValueId IRBuilder::gen_ternary_expr(Expr* expr) {
 
     finish_block_branch(cond, then_block->id, else_block->id);
 
-    // Then branch
-    set_current_block(then_block);
-    ValueId then_val = gen_expr(ternary_expr.then_expr);
-    {
+    // Each branch's temporaries exist only on that branch, so they die at its
+    // end (see release_temps_since) — including the one that may *be* the
+    // branch's result. When the result type carries counts, the branch first
+    // hands the merge a value with counts of its own (a retained copy of a
+    // string, a clone of a struct), and the merged value is tracked as a
+    // temporary below. (Sema rejects move-only results, so there is no
+    // ownership to transfer — only counts to acquire.)
+    bool owned_string = result_type && result_type->kind == TypeKind::String;
+    bool owned_struct = result_type && result_type->is_struct() && tracked_for_cleanup(result_type);
+    auto gen_branch = [&](Expr* branch_expr) -> ValueId {
+        u32 branch_temps = m_ownership.count();
+        ValueId val = gen_expr(branch_expr);
+        if (owned_string) {
+            // A distinct value: releasing the branch temp Nullifies `val`, which
+            // the C backend lowers to zeroing it.
+            ValueId handoff = emit_copy(val, result_type);
+            pin_tracked_value(handoff);
+            emit_str_retain(handoff);
+            val = handoff;
+        } else if (owned_struct) {
+            u32 slot_count = result_type->struct_info.slot_count;
+            ValueId handoff = emit_stack_alloc(slot_count, result_type);
+            emit_struct_copy(handoff, val, slot_count, result_type, StructCopyKind::Clone);
+            val = handoff;
+        }
+        release_temps_since(branch_temps);
         Vector<BlockArgPair> args;
-        args.push_back({then_val});
+        args.push_back({val});
         finish_block_goto(merge_block->id, alloc_span(args));
-    }
+        return val;
+    };
 
-    // Else branch
+    set_current_block(then_block);
+    gen_branch(ternary_expr.then_expr);
     set_current_block(else_block);
-    ValueId else_val = gen_expr(ternary_expr.else_expr);
-    {
-        Vector<BlockArgPair> args;
-        args.push_back({else_val});
-        finish_block_goto(merge_block->id, alloc_span(args));
-    }
+    gen_branch(ternary_expr.else_expr);
 
     set_current_block(merge_block);
+    if (owned_string) {
+        track_string_temp(phi, result_type);
+    } else if (owned_struct) {
+        track_noncopyable_call_temp(phi, result_type);
+    }
     return phi;
 }
 

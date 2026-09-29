@@ -925,6 +925,14 @@ private:
     // Emit cleanup (implicit destruction) for all live owned locals at or above min_scope_depth
     void emit_scope_cleanup(u32 min_scope_depth);
 
+    // Release every temporary tracked since ownership entry `first_entry`, in
+    // the current block. For an expression evaluated on only some paths (the
+    // RHS of `&&`/`||`, a ternary branch): its temporaries must die on the path
+    // that created them, not at scope exit, where the other paths would release
+    // a register that was never written — or, in a loop, one still holding an
+    // earlier iteration's already-released value.
+    void release_temps_since(u32 first_entry);
+
     // The current block's id, or the last created block's when the current
     // block is already closed — the end of a cleanup-record range.
     BlockId current_or_last_block_id() const;

@@ -736,6 +736,27 @@ void IRBuilder::emit_discriminant_reassign_cleanup(ValueId obj, const WhenClause
 // removed — all container/element cleanup is now handled by the typed
 // IROp::Delete instruction which lowers to the DELETE bytecode opcode.
 
+void IRBuilder::release_temps_since(u32 first_entry) {
+    if (!m_current_block)
+        return;
+    for (i32 i = static_cast<i32>(m_ownership.count()) - 1; i >= static_cast<i32>(first_entry);
+         i--) {
+        OwnedLocalInfo& info = m_ownership.entry(static_cast<u32>(i));
+        if (!info.is_temporary || info.is_moved)
+            continue;
+        emit_implicit_destroy(info);
+        // emit_implicit_destroy narrows the exception record only for
+        // pointer-shaped values; a value-struct temp is otherwise dropped where
+        // its record ends anyway (scope exit). Released early, its record would
+        // stay open to scope exit and a later throw would drop it again. Nothing
+        // reads a branch temporary after its branch, so the C backend's memset
+        // of the storage is harmless here.
+        if (info.type && info.type->is_struct() && info.initial_value.is_valid()) {
+            emit_nullify(info.initial_value);
+        }
+    }
+}
+
 void IRBuilder::emit_scope_cleanup(u32 min_scope_depth) {
     if (!m_current_block)
         return; // Block already terminated

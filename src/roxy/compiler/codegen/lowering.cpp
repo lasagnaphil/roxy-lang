@@ -690,10 +690,10 @@ void BytecodeBuilder::build_cleanup_records(IRFunction* ir_func) {
         // call would then unwind through a record naming an uninitialized
         // register.
         //
-        // That was survivable while every tracked local was pointer-shaped:
-        // registers start zeroed and a Delete of null is a no-op. A value struct
-        // has no such null form — its register holds an address — so a stale
-        // register (a live loop counter, say) got dereferenced as a struct.
+        // The VM does not clear a callee's registers (poison_fresh_registers,
+        // interpreter.hpp), so an unwritten register holds whatever an earlier
+        // call — or, for a value struct, a live loop counter — left there, and
+        // firing the record dereferences it.
         // Narrow the start to just past the defining instruction, the same
         // correction `call_borrow` already makes for a receiver borrow.
         record.live_start_pc = record.scope_start_pc;
@@ -756,7 +756,61 @@ void BytecodeBuilder::build_cleanup_records(IRFunction* ir_func) {
             record.delete_desc_idx = build_delete_desc(ir_cleanup.type);
         }
 
+        // Cut blocks the value's definition cannot reach out of the main
+        // interval (see m_cleanup_reachable_blocks). The head keeps the part
+        // before the first such block; each later reachable stretch becomes an
+        // extension record. Only the throw test is affected in practice: a
+        // handler that catches a throw from the live region is reachable from
+        // it, so no handler ever sits in a removed block.
+        u32 main_scope_end = record.scope_end_pc;
+        Vector<BCCleanupRecord> split_pieces;
+        if (ci_index < m_cleanup_reachable_blocks.size() &&
+            !m_cleanup_reachable_blocks[ci_index].empty()) {
+            const Vector<bool>& reachable = m_cleanup_reachable_blocks[ci_index];
+            u32 code_size = static_cast<u32>(m_current_func->code.size());
+            u32 piece_lo = record.live_start_pc;
+            bool head_closed = false;
+            auto close_piece = [&](u32 piece_hi) {
+                if (!head_closed) {
+                    record.scope_end_pc = piece_hi > piece_lo ? piece_hi : piece_lo;
+                    head_closed = true;
+                } else if (piece_hi > piece_lo) {
+                    BCCleanupRecord piece = record;
+                    piece.scope_start_pc = piece_lo;
+                    piece.live_start_pc = piece_lo;
+                    piece.scope_end_pc = piece_hi;
+                    piece.is_extension = true;
+                    split_pieces.push_back(piece);
+                }
+            };
+            for (u32 b = 0; b < reachable.size(); b++) {
+                if (reachable[b])
+                    continue;
+                u32 b_start = block_offset(b);
+                if (b_start == NO_OFFSET)
+                    continue;
+                u32 b_end = code_size;
+                for (u32 next = b + 1; next < reachable.size(); next++) {
+                    u32 next_off = block_offset(next);
+                    if (next_off != NO_OFFSET) {
+                        b_end = next_off;
+                        break;
+                    }
+                }
+                u32 gap_lo = b_start > piece_lo ? b_start : piece_lo;
+                u32 gap_hi = b_end < main_scope_end ? b_end : main_scope_end;
+                if (gap_lo >= gap_hi)
+                    continue;
+                close_piece(gap_lo);
+                piece_lo = gap_hi;
+            }
+            if (head_closed)
+                close_piece(main_scope_end);
+        }
+
         m_current_func->cleanup_records.push_back(record);
+        for (const BCCleanupRecord& piece : split_pieces)
+            m_current_func->cleanup_records.push_back(piece);
 
         // Extension records: the value's unwind coverage
         // (compute_cleanup_coverage) can include blocks laid out past the main
@@ -793,7 +847,7 @@ void BytecodeBuilder::build_cleanup_records(IRFunction* ir_func) {
                 // Only the part beyond the main interval is new coverage; the
                 // part inside it is already covered, and anything before its
                 // scope_start would predate the value's live range.
-                u32 lo = run_start > record.scope_end_pc ? run_start : record.scope_end_pc;
+                u32 lo = run_start > main_scope_end ? run_start : main_scope_end;
                 if (lo < run_end) {
                     BCCleanupRecord ext;
                     ext.scope_start_pc = lo;
@@ -988,9 +1042,10 @@ u8 BytecodeBuilder::allocate_register(ValueId value) {
     }
 
     // Determine if this value can reuse a freed register.
-    // Cross-block values must always get fresh registers because the IR may have
-    // partially-defined values (e.g., AND/OR short-circuit) where a value is only
-    // defined on one branch. Fresh registers are zero-initialized by the VM.
+    // Cross-block values always get fresh registers. (This once also served
+    // values defined on only one branch, on the belief that fresh registers read
+    // as zero; the VM does not clear them, so nothing may read a register its
+    // path never wrote — see poison_fresh_registers.)
     bool can_reuse = (value.id < m_value_same_block.size() && m_value_same_block[value.id]);
 
     u8 reg;
@@ -1354,11 +1409,14 @@ void BytecodeBuilder::compute_const_use_modes(IRFunction* ir_func) {
 // unwind must not also fire (see execute_cleanup in interpreter.cpp).
 void BytecodeBuilder::compute_cleanup_coverage(IRFunction* ir_func) {
     m_cleanup_covered_blocks.clear();
+    m_cleanup_reachable_blocks.clear();
     u32 record_count = ir_func->cleanup_info.size();
     if (record_count == 0)
         return;
-    for (u32 i = 0; i < record_count; i++)
+    for (u32 i = 0; i < record_count; i++) {
         m_cleanup_covered_blocks.push_back({});
+        m_cleanup_reachable_blocks.push_back({});
+    }
 
     u32 num_blocks = ir_func->blocks.size();
     if (num_blocks == 0)
@@ -1544,6 +1602,32 @@ void BytecodeBuilder::compute_cleanup_coverage(IRFunction* ir_func) {
                 if (cover)
                     pending.push_back(ir_func->exception_handlers[h].handler_block.id);
             }
+        }
+
+        // Reachability from the start block along every edge, kills ignored
+        // (see m_cleanup_reachable_blocks). Unlike coverage this never stops at
+        // a kill or skips a handler, so it only ever excludes blocks where the
+        // value cannot have been defined — it cannot shrink a record anywhere
+        // the value might still be owned.
+        Vector<bool>& reachable = m_cleanup_reachable_blocks[record_index];
+        reachable.reserve(num_blocks);
+        for (u32 i = 0; i < num_blocks; i++)
+            reachable.push_back(false);
+        worklist.clear_keep_capacity();
+        worklist.push_back(info.start_block.id);
+        reachable[info.start_block.id] = true;
+        while (!worklist.empty()) {
+            u32 b = worklist.back();
+            worklist.pop_back();
+            auto visit = [&](BlockId succ) {
+                if (succ.is_valid() && succ.id < num_blocks && !reachable[succ.id]) {
+                    reachable[succ.id] = true;
+                    worklist.push_back(succ.id);
+                }
+            };
+            for_each_successor(b, visit);
+            for (u32 h : block_to_handlers[b])
+                visit(ir_func->exception_handlers[h].handler_block);
         }
 
         // Sort: block ids equal layout positions post-RPO, so sorted order is
@@ -1773,11 +1857,10 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
 
     // Compute same-block flags: a value is same-block if its def_point and
     // last_use_point fall within the same block's range.
-    // Cross-block values (used in a different block than defined) must NOT
-    // have their registers reused from the free list, because the IR may have
-    // partially-defined values (e.g., AND/OR short-circuit patterns where a
-    // value is only defined on one branch). Fresh registers are zero-initialized
-    // by the VM, preserving correct behavior for such patterns.
+    // Cross-block values (used in a different block than defined) do not reuse
+    // registers from the free list. Note that a fresh register is NOT known to
+    // be zero: the VM leaves callee registers uncleared, so correctness never
+    // rests on reading one before its path writes it.
     m_value_same_block.clear_keep_capacity();
     m_value_same_block.reserve(num_values);
     for (u32 value_index = 0; value_index < num_values; value_index++) {
@@ -1809,7 +1892,7 @@ void BytecodeBuilder::compute_liveness(IRFunction* ir_func) {
 
     // Force block params cross-block.
     // Block params receive values from predecessor blocks, so they must not
-    // reuse freed registers (need fresh zero-initialized regs).
+    // reuse freed registers.
     // With RPO ordering, their liveness is now correct, so they CAN be freed
     // after their last use (unlike before where they were permanently pinned).
     for (IRBlock* block : ir_func->blocks) {
@@ -3558,7 +3641,7 @@ u16 BytecodeBuilder::build_delete_desc(Type* type) {
     // anything the current machinery actually cleans, the predicate must also flag.
     // (Only this direction is asserted: `needs_drop()` is transitive, while the
     // descriptor is a single-level decision.)
-    bool desc_does_something = desc.cleanup != BCDeleteDesc::None || desc.free_obj;
+    [[maybe_unused]] bool desc_does_something = desc.cleanup != BCDeleteDesc::None || desc.free_obj;
     assert((!desc_does_something || type->needs_drop()) &&
            "needs_drop() predicate weaker than delete descriptor");
 

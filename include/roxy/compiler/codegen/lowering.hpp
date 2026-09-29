@@ -249,6 +249,17 @@ private:
     // covered PC runs outside the main interval. Empty for records the
     // machinery doesn't apply to (call borrows, Unpin, whole-function refs).
     Vector<Vector<u32>> m_cleanup_covered_blocks;
+    // Per cleanup record, the blocks reachable from its start block along any
+    // edge — normal successors and every exception edge, ignoring kills. A
+    // block outside this set is one no execution reaches after the value's
+    // definition, so the register holds nothing the record owns there (it was
+    // never written on that path). build() cuts such blocks out of the main
+    // interval: a throw-only branch taken *before* the definition (an early
+    // argument check, say) is laid out after it by RPO and otherwise falls
+    // inside [live_start, scope_end), where the unwinder would delete whatever
+    // the unwritten register held. Same eligibility and emptiness as
+    // m_cleanup_covered_blocks.
+    Vector<Vector<bool>> m_cleanup_reachable_blocks;
     void compute_cleanup_coverage(IRFunction* ir_func);
 
     // Ownership-ending PCs per tracked cleanup value: every Nullify annotation

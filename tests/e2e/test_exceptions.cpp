@@ -1933,4 +1933,56 @@ TEST_SUITE("E2E Exceptions") {
         CHECK(r.stdout_output == "finally: len=1\nbad\n");
     }
 
+    // A throw-only branch taken *before* an owned local is defined (an early
+    // argument check) is laid out by RPO after the definition, inside the local's
+    // cleanup-record interval when the scope continues past it (here, the catch
+    // block). The unwinder then ran the record on a register that was never
+    // written on that path. Debug builds used to zero fresh registers, making it
+    // a harmless delete of null; release builds do not clear them, so it deleted
+    // whatever an earlier call left there (examples/lox crashed this way). Debug
+    // now poisons fresh registers, so this case segfaults without the fix.
+    TEST_CASE_TEMPLATE("throw before an owned local's definition does not clean it up", Backend,
+                       RX_E2E_BACKENDS) {
+        auto r = Backend::run(R"(
+            struct Boom { code: i32; }
+            fun Boom.message(): string for Exception { return "boom"; }
+            struct Soft { code: i32; }
+            fun Soft.message(): string for Exception { return "soft"; }
+            struct Holder { s: string; n: i32; }
+
+            fun step(n: i32) {
+                if (n == 5) { throw Soft { code = n }; }
+            }
+
+            fun work(bad: bool, n: i32): i32 {
+                if (bad) {
+                    throw Boom { code = n };
+                }
+                var h: Holder = Holder { s = f"v{n}", n = n };
+                try {
+                    step(n);
+                } catch (e: Soft) {
+                    h.n = 0;
+                }
+                if (h.n > 3) {
+                    h.n = h.n + 1;
+                }
+                return h.n;
+            }
+
+            fun main(): i32 {
+                print(f"{work(false, 1)}");
+                print(f"{work(false, 5)}");
+                try {
+                    work(true, 2);
+                } catch (e: Boom) {
+                    print(f"caught {e.code}");
+                }
+                return 0;
+            }
+        )");
+        CHECK(r.success == true);
+        CHECK(r.stdout_output == "1\n0\ncaught 2\n");
+    }
+
 } // TEST_SUITE("E2E Exceptions")

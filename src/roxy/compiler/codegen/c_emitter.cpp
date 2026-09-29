@@ -2013,6 +2013,14 @@ void CEmitter::emit_instruction(const IRInst* inst, String& out) {
                 out.append("_struct, 0, sizeof(");
                 emit_value(inst->unary, out);
                 out.append("_struct));\n");
+            } else if (val_type && val_type->is_struct() && !is_pointer_value(inst->unary)) {
+                // A struct held by value (a small struct returned by value):
+                // `= 0` is ill-formed on a struct.
+                out.append("    memset(&");
+                emit_value(inst->unary, out);
+                out.append(", 0, sizeof(");
+                emit_value(inst->unary, out);
+                out.append("));\n");
             } else {
                 // For primitives/pointers
                 out.append("    ");
@@ -3320,15 +3328,32 @@ void CEmitter::emit_function(const IRFunction* func, String& out) {
         }
     }
 
-    // Declare block parameter values (non-entry blocks)
+    // Declare block parameter values (non-entry blocks). A cleanup-tracked one
+    // (a caught exception bound by its handler block, a local rebound at a
+    // merge) is zero-initialized like the instruction results above: __unwind
+    // replays every record behind a null guard, and a throw that reaches it
+    // before the block ever ran — an early throw ahead of a try — would
+    // otherwise free whatever the uninitialized variable held.
     for (u32 b = 1; b < func->blocks.size(); b++) {
         const IRBlock* block = func->blocks[b];
         for (u32 p = 0; p < block->params.size(); p++) {
+            Type* param_type = block->params[p].type;
+            ValueId param_value = block->params[p].value;
             out.append("    ");
-            emit_type(block->params[p].type, out);
+            emit_type(param_type, out);
             out.push_back(' ');
-            emit_value(block->params[p].value, out);
-            out.append(";\n");
+            emit_value(param_value, out);
+            if (!m_cleanup_values.count(param_value.id)) {
+                out.append(";\n");
+            } else if (param_type && param_type->is_struct()) {
+                out.append("; memset(&");
+                emit_value(param_value, out);
+                out.append(", 0, sizeof(");
+                emit_value(param_value, out);
+                out.append("));\n");
+            } else {
+                out.append(" = 0;\n");
+            }
         }
     }
 

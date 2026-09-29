@@ -968,15 +968,13 @@ bool run_local_cse(IRFunction* func) {
 
 // After reorder_blocks_rpo() drops unreachable blocks (branch folding severed
 // their edges), surviving blocks can still hold cleanup of values those blocks
-// defined. The IR builder emits exactly one such cross-block pattern
-// deliberately: scope-exit cleanup (StrRelease / RefDec / Delete, plus their
-// Nullify narrowing annotations) of a *partially-defined* temp — one defined
-// only on a conditional path, e.g. an owned str_concat temp inside the RHS of
-// `&&`. At runtime that pattern is sound because fresh registers are
-// zero-initialized, so the cleanup no-ops on paths where the temp was never
-// created. Once the defining block is deleted, though, the value has no
-// definition anywhere and lowering would fault allocating it. No surviving
-// definition proves the cleanup can never have anything to clean — remove it.
+// defined: scope-exit cleanup (StrRelease / RefDec / Delete, plus their
+// Nullify narrowing annotations) of a temp whose defining block was folded
+// away. The IR builder no longer emits cleanup of a *partially-defined* temp
+// (the RHS of `&&`/`||` and ternary arms release their temps on their own path
+// — release_temps_since), which was unsound anyway: the VM does not zero fresh
+// registers. This pass remains as a guard: a value with no surviving definition
+// would fault lowering, and no definition proves there is nothing to clean.
 static bool run_orphaned_cleanup_elim(IRFunction* func) {
     const u32 num_values = func->next_value_id;
     Vector<bool> defined(num_values, false);

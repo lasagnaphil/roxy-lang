@@ -819,13 +819,25 @@ pointer-shaped (null-safe to delete):
   **extension records** (`BCCleanupRecord::is_extension`) for covered PC runs outside
   the main interval. The unwinder treats a head record plus its extensions as one
   group: every interval is consulted and the action runs at most once.
+- **The interval can also contain blocks the definition never reaches.** A throw-only
+  branch taken *before* the definition (an early argument check) is laid out after it
+  and can land inside `[live_start, scope_end)`. The unwinder would then fire on a
+  register never written on that path — which the VM does not clear, so it held an
+  earlier call's data. Lowering cuts every block not reachable from the record's start
+  block (along any edge, kills ignored) out of the head interval, splitting the rest
+  into extension records. Ignoring kills keeps this purely subtractive where the value
+  cannot exist; the handler-in-scope test is unaffected, since a handler catching a
+  throw from the live region is reachable from it.
 - **A moved argument's kill is anchored at the consuming call's boundary** (the word
   after the `CALL`), not at its later `Nullify`. A throw escaping the callee surfaces
   at that boundary, when the callee already owns (and on unwind frees) the value, so
   covering the gap double-frees.
 
-The C backend is unaffected: it replays every `IRCleanupInfo` record once from its
-`__unwind` label with null guards, which is layout-independent.
+The C backend is unaffected by layout: it replays every `IRCleanupInfo` record once
+from its `__unwind` label with null guards. That relies on every cleanup-tracked
+variable — block parameters included (a caught exception bound by its handler) — being
+zero-initialized at declaration, so a throw that reaches `__unwind` before the value
+exists skips it.
 
 ## Limitations and future directions
 

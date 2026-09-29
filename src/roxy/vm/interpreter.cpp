@@ -1711,7 +1711,7 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
 
     OP(CALL) {
         u8 dst = decode_a(instr);
-        u8 arg_count = decode_c(instr);
+        [[maybe_unused]] u8 arg_count = decode_c(instr);
         u32 func_idx = *pc++;
 
         assert(func_idx < vm->function_count);
@@ -1737,12 +1737,7 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
         // Copy arguments first (memcpy is safe since src/dst don't overlap)
         memcpy(callee_regs, &regs[first_arg], callee->param_register_count * sizeof(u64));
 
-        // Zero remaining registers (debug only — SSA guarantees write-before-read)
-#ifndef NDEBUG
-        for (u32 i = callee->param_register_count; i < callee->register_count; i++) {
-            callee_regs[i] = 0;
-        }
-#endif
+        poison_fresh_registers(callee_regs, callee->param_register_count, callee->register_count);
 
         u32 local_stack_base = (vm->local_stack_top + 3) & ~3u;
         if (local_stack_base + callee->local_stack_slots > vm->local_stack_size) {
@@ -1838,11 +1833,7 @@ bool interpret(RoxyVM* vm, u32 stop_depth) {
             memcpy(&callee_regs[1], &regs[first_arg], explicit_param_regs * sizeof(u64));
         }
 
-#ifndef NDEBUG
-        for (u32 i = callee->param_register_count; i < callee->register_count; i++) {
-            callee_regs[i] = 0;
-        }
-#endif
+        poison_fresh_registers(callee_regs, callee->param_register_count, callee->register_count);
 
         u32 local_stack_base = (vm->local_stack_top + 3) & ~3u;
         if (local_stack_base + callee->local_stack_slots > vm->local_stack_size) {

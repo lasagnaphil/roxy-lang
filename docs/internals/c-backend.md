@@ -99,7 +99,7 @@ it uses a **checked-return** model instead (no setjmp/longjmp, no C++ EH):
 - **Cleanup.** Per-frame cleanup reuses `emit_typed_delete`, null-guarded
   (`if (v) { … v = 0; }`) and LIFO. A dispatch cleans owned locals created inside
   its try body; `__unwind` cleans the whole frame. Correctness rests on every
-  cleanup-tracked owned-local pointer being **zero-initialized** at declaration,
+  cleanup-tracked owned-local pointer — block parameters included — being **zero-initialized** at declaration,
   **nulled after** a normal scope-exit `Delete`, and nulled on move — so the guard
   skips not-yet-created, already-freed, and moved values. Cross-frame unwinding
   falls out naturally: a callee's `__unwind` cleans its frame and returns, then

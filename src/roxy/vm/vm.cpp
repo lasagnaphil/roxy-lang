@@ -302,10 +302,9 @@ bool vm_call_index(RoxyVM* vm, u32 func_index, Span<Value> args) {
     u64* registers = &vm->register_file[vm->register_top];
     vm->register_top += func->register_count;
 
-    // Clear registers (debug only — SSA guarantees write-before-read)
-#ifndef NDEBUG
-    memset(registers, 0, func->register_count * sizeof(u64));
-#endif
+    // Not cleared: generated code never reads a register before writing it
+    // (see poison_fresh_registers, which makes debug builds check that).
+    poison_fresh_registers(registers, 0, func->register_count);
 
     // Copy arguments to registers R0, R1, ...
     for (u32 i = 0; i < args.size(); i++) {

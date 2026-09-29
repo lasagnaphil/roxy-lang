@@ -605,4 +605,42 @@ TEST_SUITE("E2E Lifetime Regressions") {
         CHECK(ref_result.success);
         CHECK(ref_result.value == 6);
     }
+
+    // A temporary created where only some paths evaluate — the RHS of `&&`/`||`,
+    // one arm of `?:` — used to be released at scope exit on every path. On a
+    // path that skipped it, that released a register never written in this
+    // call (in release builds: whatever an earlier call left there), and inside
+    // a loop, the previous iteration's already-released value: a double release
+    // that freed a live string. These run in loops so each path is taken after
+    // the other; the VM run also asserts the teardown leak census.
+    TEST_CASE_TEMPLATE("F11 short-circuit and ternary temporaries die on their own path", Backend,
+                       RX_E2E_BACKENDS) {
+        auto result = Backend::run(R"(
+            struct Box { s: string; n: i32; }
+            fun mk(n: i32): Box { return Box { s = f"m{n}", n = n }; }
+            fun main(): i32 {
+                var t: string = f"t{1}";
+                var fixed: Box = Box { s = f"f{0}", n = 0 };
+                var hits: i32 = 0;
+                for (var i: i32 = 0; i < 4; i = i + 1) {
+                    var c: bool = i % 2 == 0;
+                    if (c && str_len(t + "x") > 1) { hits = hits + 1; }
+                    if (!c || f"{i}" == "1") { hits = hits + 10; }
+                    var keep: string = f"k{i}";
+                    var p: string = c ? t + "a" : t + "b";
+                    var b: Box = c ? Box { s = f"lit{i}", n = i } : fixed;
+                    var len: i32 = c ? str_len(mk(i).s) : 0;
+                    print(f"{keep} {p} {b.s} {len} {(c ? mk(i) : fixed).s}");
+                }
+                print(f"hits={hits} t={t} fixed={fixed.s}");
+                return 0;
+            }
+        )");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "k0 t1a lit0 2 m0\n"
+                                      "k1 t1b f0 0 f0\n"
+                                      "k2 t1a lit2 2 m2\n"
+                                      "k3 t1b f0 0 f0\n"
+                                      "hits=22 t=t1 fixed=f0\n");
+    }
 }
