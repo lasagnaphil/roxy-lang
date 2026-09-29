@@ -3,11 +3,7 @@
 
 # Build directories
 build/
-build-fuzz/
-build-profile/
-build-bcprofile/
-build-tracy/
-build-tracy-tools/
+build-*/
 cmake-build-*/
 
 # libFuzzer artifacts (crash/oom/leak/timeout reproducers, working corpora)
