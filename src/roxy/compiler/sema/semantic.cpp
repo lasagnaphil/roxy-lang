@@ -1662,6 +1662,7 @@ Type* SemanticAnalyzer::analyze_var_initializer(VarDecl& var_decl, Decl* decl, T
         } else {
             // Coerce int literals to the annotated type
             m_checker.coerce_numeric_literal(var_decl.initializer, var_type);
+            reject_ref_to_fresh_owner(var_type, var_decl.initializer, decl->loc);
         }
 
         // Consume noncopyable source (field-move check + mark source as moved)
@@ -4768,6 +4769,38 @@ Type* SemanticAnalyzer::analyze_assign_expr(Expr* expr) {
     } else {
         m_checker.check_assignable(target_type, value_type, assign_expr.value->loc);
         m_checker.coerce_numeric_literal(assign_expr.value, target_type);
+        // An index target is typed as the *borrowed* element (`xs[i]` of a
+        // `List<uniq T>` reads as `ref T`), but storing into it moves into the
+        // container's owning slot. Check against the slot's declared type, which
+        // is a real `ref` only for a container of borrows.
+        Type* slot_type = target_type;
+        if (assign_expr.target->kind == AstKind::ExprIndex) {
+            Type* container_type = assign_expr.target->index.object->resolved_type;
+            if (container_type)
+                container_type = container_type->base_type();
+            if (container_type && container_type->is_list()) {
+                slot_type = container_type->list_info.element_type;
+            } else if (container_type && container_type->is_map()) {
+                slot_type = container_type->map_info.value_type;
+            }
+        }
+        if (reject_ref_to_fresh_owner(slot_type, assign_expr.value, assign_expr.value->loc))
+            return m_types.error_type();
+        // A `ref` parameter borrows the caller's object for the whole call: its
+        // count is taken at entry and released at every exit against that
+        // object, so rebinding it (`p = q`) would release the wrong one. A `ref`
+        // local can be rebound; a parameter cannot.
+        if (target_type->kind == TypeKind::Ref &&
+            assign_expr.target->kind == AstKind::ExprIdentifier) {
+            Symbol* target_sym = m_symbols.lookup(assign_expr.target->identifier.name);
+            if (target_sym && target_sym->kind == SymbolKind::Parameter) {
+                error_fmt(expr->loc,
+                          "cannot reassign 'ref' parameter '{}'; it borrows the caller's "
+                          "object for the whole call (bind a 'ref' local instead)",
+                          assign_expr.target->identifier.name);
+                return m_types.error_type();
+            }
+        }
     }
 
     // Reject self-assignment of noncopyables (e.g. `x = x` on a uniq variable):
@@ -5046,6 +5079,7 @@ void SemanticAnalyzer::check_struct_literal_fields(Expr* expr, StructLiteralExpr
             Type* value_type = analyze_expr(fi.value);
             Type* field_type = type->struct_info.fields[field_idx].type;
             coerce_and_check_value(fi.value, field_type, value_type, fi.loc);
+            reject_ref_to_fresh_owner(field_type, fi.value, fi.loc);
 
             // Consume noncopyable source (field-move check + mark source as moved)
             if (field_type && field_type->noncopyable()) {
@@ -5327,6 +5361,27 @@ Type* SemanticAnalyzer::get_unary_result_type(UnaryOp op, Type* operand, SourceL
     }
 
     return m_types.error_type();
+}
+
+bool SemanticAnalyzer::reject_ref_to_fresh_owner(Type* target, Expr* source, SourceLocation loc) {
+    if (!target || target->kind != TypeKind::Ref || !source)
+        return false;
+    Expr* inner = source;
+    while (inner->kind == AstKind::ExprGrouping)
+        inner = inner->grouping.expr;
+    Type* source_type = inner->resolved_type;
+    if (!source_type)
+        return false;
+    bool owning = source_type->kind == TypeKind::Uniq || source_type->is_list() ||
+                  source_type->is_map() || source_type->kind == TypeKind::Function ||
+                  source_type->kind == TypeKind::Coroutine;
+    // A place (`x`, `o.f`, `xs[i]`, `self`) names an existing owner, which is
+    // exactly what a `ref` borrows.
+    if (!owning || is_lvalue(inner) || inner->kind == AstKind::ExprThis)
+        return false;
+    error(loc, "a 'ref' cannot bind a temporary owner that nothing else holds; "
+               "store it in a variable first and borrow that");
+    return true;
 }
 
 bool SemanticAnalyzer::is_lvalue(Expr* expr) const {

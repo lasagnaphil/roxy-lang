@@ -2425,4 +2425,97 @@ TEST_SUITE("E2E Lifetimes") {
         CHECK(result.success == true);
         CHECK(result.stdout_output == "dynamic\n");
     }
+
+    // A `ref` binding never takes a fresh owner — an owning rvalue nothing else
+    // holds. The borrow took no count on it and nobody would free it, so these
+    // compiled and then died at runtime ("ref_dec: reference count already zero",
+    // or "object has active borrows" when the unowned value was freed under it).
+    TEST_CASE("a ref cannot bind a fresh owner") {
+        const char* sources[] = {
+            // reassigning a ref parameter to a new container / uniq
+            "fun f(r: ref List<i32>) { r = List<i32>(); }\n"
+            "fun main() { var l = List<i32>(); f(l); }",
+            "struct P { x: i32; }\n"
+            "fun f(p: ref P) { p = uniq P { x = 2 }; }\n"
+            "fun main() { var u: uniq P = uniq P { x = 1 }; f(u); }",
+            // initializing a ref local from a new owner / an owner-returning call
+            "struct P { x: i32; }\n"
+            "fun main() { var r: ref P = uniq P { x = 1 }; }",
+            "fun main() { var r: ref List<i32> = List<i32>(); }",
+            "struct P { x: i32; }\n"
+            "fun mk(): uniq P { return uniq P { x = 3 }; }\n"
+            "fun main() { var r: ref P = mk(); }",
+            // a ref global, a ref struct field, a container-of-borrows slot
+            "struct P { x: i32; }\n"
+            "var g: ref P = uniq P { x = 1 };\n"
+            "fun main() {}",
+            "struct P { x: i32; }\n"
+            "struct H { r: ref P; }\n"
+            "fun main() { var h: H = H { r = uniq P { x = 1 } }; }",
+            "struct P { x: i32; }\n"
+            "fun main() {\n"
+            "    var a: uniq P = uniq P { x = 1 };\n"
+            "    var l: List<ref P> = List<ref P>();\n"
+            "    l.push(a);\n"
+            "    l[0] = uniq P { x = 9 };\n"
+            "}",
+            // a lambda literal bound to a `ref fun` local
+            "fun main() { var k: i32 = 3; var f: ref fun(i32) -> i32 = fun(x: i32): i32 => x + k; "
+            "}",
+        };
+        for (const char* source : sources) {
+            CAPTURE(source);
+            BumpAllocator allocator(65536);
+            CHECK(compile(allocator, source) == nullptr);
+        }
+    }
+
+    // A ref parameter's count is taken at entry and released at each exit
+    // against the caller's object, so rebinding it released the wrong one.
+    TEST_CASE("a ref parameter cannot be reassigned") {
+        const char* source = R"(
+            struct P { x: i32; }
+            fun f(p: ref P, q: ref P) { p = q; }
+            fun main() {
+                var a: uniq P = uniq P { x = 1 };
+                var b: uniq P = uniq P { x = 2 };
+                f(a, b);
+            }
+        )";
+        BumpAllocator allocator(65536);
+        CHECK(compile(allocator, source) == nullptr);
+    }
+
+    // What stays legal: rebinding a ref *local* to another existing owner,
+    // borrowing into a ref field / List<ref T> slot from a named owner, passing a
+    // temporary as a ref argument, and binding a ref-returning call. The VM run
+    // also asserts every count balanced (teardown census).
+    TEST_CASE_TEMPLATE("ref bindings from existing owners still work", Backend, RX_E2E_BACKENDS) {
+        auto result = Backend::run(R"(
+            struct P { x: i32; }
+            struct H { r: ref P; }
+            struct Owner { p: uniq P; }
+            fun Owner.get(): ref P { return self.p; }
+            fun len_of(l: ref List<i32>): i32 { return l.len(); }
+            fun main(): i32 {
+                var a: uniq P = uniq P { x = 1 };
+                var b: uniq P = uniq P { x = 2 };
+                var r: ref P = a;
+                print(f"{r.x}");
+                r = b;
+                print(f"{r.x}");
+                var h: H = H { r = a };
+                var l: List<ref P> = List<ref P>();
+                l.push(a);
+                l[0] = b;
+                print(f"{h.r.x} {l[0].x} {len_of(List<i32>())}");
+                var o: uniq Owner = uniq Owner { p = uniq P { x = 5 } };
+                var got: ref P = o.get();
+                print(f"{got.x}");
+                return 0;
+            }
+        )");
+        CHECK(result.success);
+        CHECK(result.stdout_output == "1\n2\n1 2 0\n5\n");
+    }
 }

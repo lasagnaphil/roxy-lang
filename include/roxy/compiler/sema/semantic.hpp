@@ -343,6 +343,14 @@ private:
     // Lvalue checking for assignment
     bool is_lvalue(Expr* expr) const;
 
+    // A `ref` binding (local, global, field) may only borrow an owner that
+    // outlives it. Reject initializing or assigning one from a fresh owning
+    // rvalue — a new `uniq`, container, closure or coroutine that nobody else
+    // holds: the borrow would take no count on it, and the binding's release
+    // would underflow (or the unowned value would be freed under it). Reports
+    // and returns true when `source` is such an rvalue and `target` is `ref`.
+    bool reject_ref_to_fresh_owner(Type* target, Expr* source, SourceLocation loc);
+
     BumpAllocator& m_allocator;
     TypeEnv& m_type_env;
     TypeCache& m_types; // Cached ref to m_type_env.types() to minimize churn

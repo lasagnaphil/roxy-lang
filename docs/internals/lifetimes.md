@@ -418,9 +418,15 @@ Two consequences inherited from `ref`:
   takes `ref_count` (blocks free), `inout xs[i]` takes the container's
   `borrow_count` (blocks realloc). See
   [Container element lvalues](#container-element-lvalues).
-- Rebinding a `ref` to a fresh owner (`fun f(r: ref List<i32>) { r = List<i32>(); }`)
-  type-checks and then fails at runtime — a general `ref`-rebinding hole (`uniq`
-  behaves identically); see `TODO.md`.
+- A `ref` never binds a **fresh owner** — an owning rvalue nothing else holds
+  (`r = List<i32>()`, `var r: ref P = uniq P {...}`, a struct field or global
+  initialized from `mk()`): the borrow takes no count on it and nobody would free
+  it, so the binding's release would underflow. Sema rejects it at every binding
+  site (`reject_ref_to_fresh_owner`); passing one as a `ref` *argument* is fine, as
+  the caller's frame owns the temporary for the call. A `ref` **parameter** also
+  cannot be reassigned at all: its count is taken at entry and released at every
+  exit against the caller's object. A `ref` *local* can be rebound to another
+  existing owner or borrow (the rebind releases the old count and takes a new one).
 
 ### Containers of borrows hold counted borrows
 

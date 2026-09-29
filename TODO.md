@@ -65,35 +65,28 @@ now compiles and runs verbatim. Per-bug records are in this file's git history.*
   would be released once. Owned and string temporaries have the same
   loop-condition shape; theirs is invisible because a delayed free only costs
   memory, whereas a delayed borrow blocks a `delete`.
-- [ ] **Rebinding a `ref` binding to a fresh owner compiles and then traps at
-  runtime**: `fun f(r: ref List<i32>) { r = List<i32>(); }` (and the identical
-  `fun f(p: ref P) { p = uniq P(); }`) type-checks — the source converts to the
-  target `ref` type — but the rebind neither releases the old borrow's count nor
-  takes one on the new object, so the program dies with "ref_dec: reference
-  count already zero". Pre-existing for `uniq`, verified 2026-08-02 on an
-  unmodified tree; the container-borrow work made the same shape reachable for
-  `List`/`Map`. The model has no stated rule for rebinding a live borrow: either
-  reject assignment to a `ref`-typed binding whose source is an owning value, or
-  make the rebind emit `RefDec(old)` + `RefInc(new)`. Rejecting is the smaller
-  change and matches "a `ref` names one object for its lifetime".
-  Binding a `ref` *local* to an unowned temporary (`var r: ref P = uniq P();`,
-  `var r: ref List<i32> = List<i32>();`) fails the same way and is the same
-  family — nobody owns the temporary, so the local's scope-exit `RefDec` has no
-  matching increment. Also verified pre-existing for `uniq`. Passing a temporary
-  as a borrow *argument* (`take(List<i32>())`) is fine: the caller frame keeps
-  and drops it.
-
----
-
-## Low Priority
-
-- [ ] **Call depth is capped at 1024 frames with no way to raise it**:
-  `VMConfig::max_call_depth` defaults to 1024 (`vm/vm.hpp`) and `roxy.cpp` never
-  overrides it, so a recursive program deeper than ~1020 frames dies with
-  "Call stack overflow" and the only recourse is rewriting it with an explicit
-  stack. An embedder can set the config; a CLI user can't. A `--max-call-depth`
-  flag (and the matching `--register-file-size`, currently 65536) would cost
-  little. Verified 2026-07-17: `depth(1000)` returns, `depth(10000)` overflows.
+- [ ] **A lambda passed straight to a `ref fun` parameter leaks its env**:
+  `apply(fun(x: i32): i32 => x + 1, 5)` with `apply(rf: ref fun(i32) -> i32, …)`
+  runs correctly but `--check-leaks` reports one `__lambda_0_env` alive after
+  `main` (verified 2026-09-29). Passing a temporary `List<i32>()` to a
+  `ref List<i32>` parameter is dropped correctly, so the closure-argument path
+  is missing the caller-side drop that containers get.
+- [ ] **A variant-field trap prints its prefix twice**: `Runtime error: Runtime
+  error: variant field access with wrong discriminant`. `interpreter.cpp`'s TRAP
+  handler bakes "Runtime error: " into `vm->error`, and the CLI (`roxy.cpp`)
+  prefixes every VM error with it again. Drop it from the TRAP message.
+- [ ] **An error in a `print` argument cascades into an overload error**:
+  `print(undefined_thing)` reports the undefined identifier, then "ambiguous call
+  to overloaded function 'print'" plus all eight candidates. An `error_type`
+  argument should suppress overload resolution (the `error_type` sentinel exists
+  for exactly this — `docs/internals/error-handling.md`), as other call sites do.
+- [ ] **No Roxy-level backtrace on a VM crash**: a segfault or runtime error inside
+  interpreted code reports no Roxy function or line, so debugging it needs lldb on
+  the interpreter plus `--dump-bc` to map PCs back to source (how the 2026-09-26
+  unwind-cleanup bug was found). The call stack already has each frame's function
+  and PC; what is missing is a PC → source-line table in `BCFunction`. The IR has
+  the lines (`IRInst::source_line`, which the C backend turns into `#line`), but
+  lowering drops them.
 - [ ] **String stdlib gaps**: the primitives are `str_len`, `str_char_at`,
   `str_substr`, `str_concat`, `str_eq`/`str_ne`, `str_from_code`, `str_to_f64` —
   no `split`, no integer parse (only `str_to_f64`), so any text handling starts
