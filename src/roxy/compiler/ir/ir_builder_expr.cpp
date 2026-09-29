@@ -1010,6 +1010,10 @@ ValueId IRBuilder::gen_lambda_expr(Expr* expr) {
     inst->closure.env_struct_name = le.env_struct_name;
     inst->closure.call_function_name = mangle_module_local(le.call_function_name);
     inst->closure.captures = m_allocator.alloc_span(capture_values);
+    // The env is a fresh owned allocation. Binding it or passing it to an owning
+    // `fun` parameter consumes the temp; passing it to a `ref fun` parameter only
+    // borrows it, so without tracking nothing would ever delete it.
+    track_noncopyable_call_temp(inst->result, expr->resolved_type);
     return inst->result;
 }
 
@@ -1169,6 +1173,8 @@ ValueId IRBuilder::gen_function_ref(Expr* expr, const FunctionRefTarget& target)
     inst->closure.env_struct_name = env_struct_name;
     inst->closure.call_function_name = trampoline_name;
     inst->closure.captures = Span<ValueId>();
+    // A fresh owned env, like a lambda's (see gen_lambda_expr).
+    track_noncopyable_call_temp(inst->result, expr->resolved_type);
     return inst->result;
 }
 

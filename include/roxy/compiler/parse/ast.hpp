@@ -474,7 +474,8 @@ struct Type;
 //     cleared;
 //   - LambdaExpr gets env_struct_name / call_function_name / env_struct_type /
 //     resolved_captures backfilled for closure emission (see LambdaExpr), and
-//     lambda analysis synthesizes call-function decls and env struct types as
+//     lambda analysis synthesizes call-function decls (with
+//     FunDecl::resolved_return_type set) and env struct types as
 //     side effects.
 // These rewrites are non-idempotent, so the rule is: an AST body is analyzed
 // AT MOST ONCE (enforced by Decl::body_analyzed + assert at the body-analysis
@@ -693,6 +694,11 @@ struct FunDecl {
     // Empty for single-definition names — their behavior is byte-identical
     // to before overloading existed.
     StringView overload_mangled_name;
+    // Set by the lambda lifter on the call function it synthesizes, which has no
+    // symbol for the IR builder to read its return type from. The IR builder
+    // prefers it over resolving `return_type` by name, which cannot express a
+    // `fun(...)` return type. Null on every other FunDecl.
+    Type* resolved_return_type = nullptr;
 };
 
 // Struct field declaration

@@ -4,7 +4,7 @@ This document tracks known technical debt, incomplete implementations, and plann
 improvements. Completed items are removed as they land — the per-item records
 (measurements, rationale, regression-test pointers) live in this file's git history.
 
-Last updated: 2026-09-26
+Last updated: 2026-09-29
 
 ---
 
@@ -65,12 +65,6 @@ now compiles and runs verbatim. Per-bug records are in this file's git history.*
   would be released once. Owned and string temporaries have the same
   loop-condition shape; theirs is invisible because a delayed free only costs
   memory, whereas a delayed borrow blocks a `delete`.
-- [ ] **A lambda passed straight to a `ref fun` parameter leaks its env**:
-  `apply(fun(x: i32): i32 => x + 1, 5)` with `apply(rf: ref fun(i32) -> i32, …)`
-  runs correctly but `--check-leaks` reports one `__lambda_0_env` alive after
-  `main` (verified 2026-09-29). Passing a temporary `List<i32>()` to a
-  `ref List<i32>` parameter is dropped correctly, so the closure-argument path
-  is missing the caller-side drop that containers get.
 - [ ] **A variant-field trap prints its prefix twice**: `Runtime error: Runtime
   error: variant field access with wrong discriminant`. `interpreter.cpp`'s TRAP
   handler bakes "Runtime error: " into `vm->error`, and the CLI (`roxy.cpp`)

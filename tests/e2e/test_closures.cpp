@@ -1441,6 +1441,50 @@ TEST_SUITE("E2E Closures") {
             CHECK(result.value == 52);
         }
 
+        SUBCASE("a temporary closure passed to a ref fun parameter is dropped") {
+            // A `ref fun` parameter only borrows, so the caller still owns the
+            // env of a lambda or function reference written inline as the
+            // argument and must drop it. Both leaked their env before they were
+            // tracked as temporaries; the VM harness's teardown leak check is
+            // the assertion here. The loop checks the env is dropped once per
+            // iteration, not once per scope.
+            const char* source = R"(
+            fun apply(rf: ref fun(i32) -> i32, x: i32): i32 {
+                return rf(x);
+            }
+            fun inc(x: i32): i32 { return x + 1; }
+            fun main(): i32 {
+                var k: i32 = 10;
+                var total: i32 = apply(fun(x: i32): i32 => x + k, 5);   // 15
+                total = total + apply(inc, 5);                          // 21
+                for (var i: i32 = 0; i < 3; i = i + 1) {
+                    total = total + apply(fun(x: i32): i32 => x * 2, i); // 0 + 2 + 4
+                }
+                return total;   // 27
+            }
+        )";
+            auto result = Backend::run(source);
+            CHECK(result.success);
+            CHECK(result.value == 27);
+        }
+
+        SUBCASE("a temporary closure passed to an owning fun parameter is moved") {
+            // The owning path consumes the temporary, so the callee's drop is
+            // the only one: no double free.
+            const char* source = R"(
+            fun apply_owned(f: fun(i32) -> i32, x: i32): i32 {
+                return f(x);
+            }
+            fun main(): i32 {
+                var k: i32 = 40;
+                return apply_owned(fun(x: i32): i32 => x + k, 2);   // 42
+            }
+        )";
+            auto result = Backend::run(source);
+            CHECK(result.success);
+            CHECK(result.value == 42);
+        }
+
         SUBCASE("pass a fun to a weak fun parameter and call it") {
             // `fun -> weak fun` captures the env generation via WeakCreate.
             const char* source = R"(

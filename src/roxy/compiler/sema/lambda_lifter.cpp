@@ -584,6 +584,7 @@ Decl* LambdaLifter::synthesize_lambda_call_fn(Expr* expr, LambdaExpr& le, String
     fd.name = fun_name;
     fd.type_params = Span<TypeParam>();
     fd.return_type = le.return_type;
+    fd.resolved_return_type = ret_type;
     fd.body = le.body;
     fd.is_pub = false;
     fd.is_native = false;

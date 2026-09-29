@@ -675,8 +675,8 @@ IRFunction* IRBuilder::build_function(FunDecl* decl) {
     // For an overload-set member, resolve_return_type's symbol-table shortcut
     // would read the chain HEAD's function type (wrong member) — walk the
     // chain to THIS decl's symbol instead.
-    Type* return_type = nullptr;
-    if (!decl->overload_mangled_name.empty()) {
+    Type* return_type = decl->resolved_return_type;
+    if (!return_type && !decl->overload_mangled_name.empty()) {
         for (Symbol* sym = m_symbols.lookup(decl->name); sym; sym = sym->next_overload) {
             if (sym->decl && &sym->decl->fun_decl == decl && sym->type &&
                 sym->type->is_function()) {
